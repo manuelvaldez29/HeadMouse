@@ -13,11 +13,12 @@ Controles:
 """
 
 import time
-import json
-import cv2
-import numpy as np
-from vision_engine  import VisionEngine
-from gesture_engine import GestureEngine, GestureConfig
+import argparse
+import logging
+from contextlib import ExitStack
+from config import ROOT, load_config, configure_logging
+from profiles import ProfileStore
+from gesture_engine import GestureEngine
 
 C_WHITE  = (255, 255, 255)
 C_GRAY   = (150, 150, 150)
@@ -36,34 +37,40 @@ def put_bg(frame, text, pos, scale=0.6, color=C_WHITE, thickness=1):
     cv2.putText(frame, text, (x, y), font, scale, color, thickness, cv2.LINE_AA)
 
 
-def main():
-    # Cargar calibración para ver el neutral real
-    try:
-        with open("calibration.json") as f:
-            cal = json.load(f)
-        neutral_x = cal.get("neutral_nose_x", 0.5)
-        neutral_y = cal.get("neutral_nose_y", 0.5)
-        print(f"Neutral nariz cargado: x={neutral_x:.3f}, y={neutral_y:.3f}")
-    except FileNotFoundError:
-        neutral_x, neutral_y = 0.5, 0.5
-        print("calibration.json no encontrado — usando neutral=0.5")
+def main(argv=None):
+    parser = argparse.ArgumentParser(description="Diagnóstico nasal sin controlar el SO")
+    parser.add_argument("--user", default="default")
+    parser.add_argument("--config")
+    parser.add_argument("--camera", type=int)
+    parser.add_argument("--log-level", choices=["DEBUG", "INFO", "WARNING", "ERROR"], default="INFO")
+    args = parser.parse_args(argv)
+    configure_logging(args.log_level)
+    global cv2
+    import cv2
+    from vision_engine import VisionEngine
+    profile = ProfileStore().load(args.user, ROOT / "calibration.json" if args.user == "default" else None)
+    config = load_config(args.config, profile.get("settings", {}))
+    if args.camera is not None:
+        config.vision.camera_index = args.camera
+        config.vision.__post_init__()
+    neutral_x = profile.get("neutral_nose_x", config.gesture.neutral_x)
+    neutral_y = profile.get("neutral_nose_y", config.gesture.neutral_y)
+    with ExitStack() as cleanup:
+        cleanup.callback(cv2.destroyAllWindows)
+        vision = VisionEngine(config=config.vision)
+        cleanup.callback(vision.stop)
+        vision.start()
+        vision.wait_ready()
+        gesture = GestureEngine(vision, config=config.gesture, calibration=profile)
+        logging.info("Diagnóstico: no mueve el cursor; Q para salir")
+        _preview(vision, gesture, neutral_x, neutral_y)
+    return 0
 
-    vision = VisionEngine(camera_index=0, target_fps=30)
-    vision.start()
-    time.sleep(1.0)
 
-    SENSITIVITY  = 80.0
-    ACCELERATION = 600.0
-    DEAD_ZONE    = 0.03
-    ALPHA        = 0.35
-
-    smooth_x = neutral_x
-    smooth_y = neutral_y
-
-    print("\nMostrando diagnóstico del cursor (sin mover el cursor real).")
-    print("Presioná Q para salir.\n")
-
+def _preview(vision, gesture, neutral_x, neutral_y):
     while True:
+        if vision.error or not vision.is_alive():
+            raise RuntimeError("Captura detenida") from vision.error
         frame = vision.get_frame()
         if frame is None:
             time.sleep(0.01)
@@ -72,23 +79,14 @@ def main():
         fd = vision.get_face_data()
         h, w = frame.shape[:2]
 
-        if fd.detected:
-            # Suavizado
-            smooth_x = ALPHA * smooth_x + (1 - ALPHA) * fd.nose_x
-            smooth_y = ALPHA * smooth_y + (1 - ALPHA) * fd.nose_y
-
-            # Delta desde neutral
-            dx_raw = smooth_x - neutral_x
-            dy_raw = smooth_y - neutral_y
-
-            # Zona muerta
-            dz = DEAD_ZONE
-            dx = 0.0 if abs(dx_raw) < dz else dx_raw - dz * (1 if dx_raw > 0 else -1)
-            dy = 0.0 if abs(dy_raw) < dz else dy_raw - dz * (1 if dy_raw > 0 else -1)
-
-            # Delta en píxeles — curva lineal + cuadrática
-            px = dx * SENSITIVITY + (dx * abs(dx)) * ACCELERATION
-            py = dy * SENSITIVITY + (dy * abs(dy)) * ACCELERATION
+        events = gesture.update(fd)
+        if fd.fresh(gesture.config.stale_after_s):
+            cursor = next((e for e in events if e.type == "CURSOR_MOVE"), None)
+            px, py = (cursor.dx, cursor.dy) if cursor else (0., 0.)
+            dx_raw = gesture._smooth_x - neutral_x
+            dy_raw = gesture._smooth_y - neutral_y
+            dz = gesture.config.dead_zone
+            dx = 0 if abs(dx_raw) <= dz else dx_raw
 
             # Dibujar punto de la nariz en el frame
             nx = int(fd.nose_x * w)
@@ -152,8 +150,12 @@ def main():
         if cv2.waitKey(1) & 0xFF == ord("q"):
             break
 
-    vision.stop()
-    cv2.destroyAllWindows()
 
 if __name__ == "__main__":
-    main()
+    try:
+        raise SystemExit(main())
+    except KeyboardInterrupt:
+        pass
+    except (OSError, ValueError, RuntimeError, ImportError) as exc:
+        logging.error("Diagnóstico detenido: %s", exc)
+        raise SystemExit(1)

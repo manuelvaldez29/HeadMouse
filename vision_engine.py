@@ -22,10 +22,16 @@ Uso desde otro módulo:
 """
 
 import os
+import logging
+from pathlib import Path
+from dataclasses import replace
+from config import ROOT, VisionConfig
+from face_data import FaceData
+
+logger = logging.getLogger(__name__)
 import threading
 import time
 import urllib.request
-from dataclasses import dataclass, field
 from typing import Optional
 
 import cv2
@@ -43,7 +49,7 @@ MODEL_URL = (
     "https://storage.googleapis.com/mediapipe-models/"
     "face_landmarker/face_landmarker/float16/1/face_landmarker.task"
 )
-MODEL_PATH = os.path.join("models", "face_landmarker.task")
+MODEL_PATH = str(ROOT / "models" / "face_landmarker.task")
 
 # Índices de landmarks clave del Face Mesh de MediaPipe (478 puntos total)
 # Referencia: https://developers.google.com/mediapipe/solutions/vision/face_landmarker
@@ -76,47 +82,6 @@ LM_IDX = {
 # DATACLASS DE DATOS FACIALES
 # ══════════════════════════════════════════════════════════════════════════════
 
-@dataclass
-class FaceData:
-    """
-    Snapshot de datos faciales para un frame.
-    Es lo que el Vision Engine entrega al Gesture Engine en cada ciclo.
-
-    Todas las coordenadas están normalizadas [0.0, 1.0] relativas al frame.
-    Los ratios están normalizados por la escala facial (distancia entre orejas)
-    para ser invariantes a la distancia del usuario a la cámara.
-    """
-
-    detected: bool                  # False si no hay cara en el cuadro
-
-    # ── Cursor ────────────────────────────────────────────────────────────────
-    nose_x: float = 0.5             # posición X de la nariz [0=izq, 1=der]
-    nose_y: float = 0.5             # posición Y de la nariz [0=arr, 1=aba]
-
-    # ── Ojos (ratio apertura, normalizado por escala facial) ──────────────────
-    # ~0.10-0.15 = guiño / cerrado
-    # ~0.25-0.35 = abierto normal
-    eye_left_ratio:  float = 0.3
-    eye_right_ratio: float = 0.3
-
-    # ── Cejas (elevación relativa al puente nasal, normalizada) ───────────────
-    # >0 = ceja levantada; ~0 = posición neutral; <0 = ceja fruncida
-    brow_left_lift:  float = 0.0
-    brow_right_lift: float = 0.0
-
-    # ── Boca ──────────────────────────────────────────────────────────────────
-    # ~0.0 = cerrada; >0.15 = claramente abierta
-    mouth_open: float = 0.0
-
-    # ── Metadata ──────────────────────────────────────────────────────────────
-    face_scale:    float = 1.0      # distancia oreja-oreja (para debug)
-    timestamp_ms:  int   = 0        # timestamp del frame en ms
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# VISION ENGINE
-# ══════════════════════════════════════════════════════════════════════════════
-
 class VisionEngine(threading.Thread):
     """
     Hilo de captura y detección facial.
@@ -130,10 +95,19 @@ class VisionEngine(threading.Thread):
         target_fps:   FPS objetivo de captura
     """
 
-    def __init__(self, camera_index: int = 0, target_fps: int = 30):
+    def __init__(self, camera_index: int = 0, target_fps: int = 30, config=None, metrics=None):
         super().__init__(daemon=True, name="VisionEngine")
-        self.camera_index = camera_index
-        self.target_fps   = target_fps
+        self.config = config or VisionConfig(camera_index=camera_index, target_fps=target_fps)
+        self.config.__post_init__()
+        self.camera_index = self.config.camera_index
+        self.target_fps = self.config.target_fps
+        self.metrics = metrics
+        self.error = None
+        self.ready = threading.Event()
+        self._stop_requested = threading.Event()
+        self.model_path = Path(self.config.model_path)
+        if not self.model_path.is_absolute():
+            self.model_path = ROOT / self.model_path
 
         # ── Estado compartido ─────────────────────────────────────────────────
         self._lock      = threading.Lock()
@@ -146,7 +120,7 @@ class VisionEngine(threading.Thread):
         self._stopped = threading.Event()
 
         # ── Asegurar modelo descargado ────────────────────────────────────────
-        self._ensure_model()
+        self._ensure_model(self.model_path)
 
     # ── API pública ───────────────────────────────────────────────────────────
 
@@ -156,7 +130,7 @@ class VisionEngine(threading.Thread):
             return self._face_data
 
     def get_fps(self) -> float:
-        """Devuelve los FPS reales del pipeline. Thread-safe."""
+        """FPS de captura en la última ventana de un segundo, no inferencia."""
         with self._lock:
             return self._fps
 
@@ -165,83 +139,86 @@ class VisionEngine(threading.Thread):
         with self._lock:
             return self._frame.copy() if self._frame is not None else None
 
-    def stop(self):
-        """Detiene el hilo limpiamente. Bloquea hasta que termina (max 3s)."""
-        self._running = False
-        self._stopped.wait(timeout=3.0)
-        print("[VisionEngine] Detenido.")
+    def wait_ready(self, timeout=None):
+        if not self.ready.wait(self.config.startup_timeout_s if timeout is None else timeout):
+            raise TimeoutError("La cámara/MediaPipe no entregó un frame a tiempo")
+        if self.error is not None:
+            raise RuntimeError("No se pudo iniciar VisionEngine") from self.error
 
-    # ── Loop principal ────────────────────────────────────────────────────────
+    def stop(self):
+        self._stop_requested.set()
+        self._running = False
+        if self.ident is not None and threading.current_thread() is not self:
+            self.join(timeout=3.0)
+            if self.is_alive():
+                raise RuntimeError("El driver de cámara no respondió al cierre en 3 s")
 
     def run(self):
-        self._running = True
-
-        # Configurar Face Landmarker en modo LIVE_STREAM
-        options = mp_vision.FaceLandmarkerOptions(
-            base_options=mp_python.BaseOptions(
-                model_asset_path=MODEL_PATH
-            ),
-            running_mode=mp_vision.RunningMode.LIVE_STREAM,
-            num_faces=1,
-            min_face_detection_confidence=0.5,
-            min_face_presence_confidence=0.5,
-            min_tracking_confidence=0.5,
-            output_face_blendshapes=False,
-            output_facial_transformation_matrixes=False,
-            result_callback=self._on_result,    # callback asíncrono
-        )
-
-        cap = cv2.VideoCapture(self.camera_index)
-        if not cap.isOpened():
-            print(f"[VisionEngine] Error: no se pudo abrir la cámara {self.camera_index}")
+        cap = None
+        self._running = not self._stop_requested.is_set()
+        try:
+            if self._stop_requested.is_set():
+                return
+            options = mp_vision.FaceLandmarkerOptions(
+                base_options=mp_python.BaseOptions(model_asset_path=str(self.model_path)),
+                running_mode=mp_vision.RunningMode.LIVE_STREAM,
+                num_faces=1,
+                min_face_detection_confidence=self.config.detection_confidence,
+                min_face_presence_confidence=self.config.presence_confidence,
+                min_tracking_confidence=self.config.tracking_confidence,
+                output_face_blendshapes=False,
+                output_facial_transformation_matrixes=False,
+                result_callback=self._on_result,
+            )
+            cap = cv2.VideoCapture(self.camera_index)
+            if not cap.isOpened():
+                raise RuntimeError(f"No se pudo abrir la cámara {self.camera_index}")
+            logger.info("Cámara %s abierta; FPS objetivo %s", self.camera_index, self.target_fps)
+            cap.set(cv2.CAP_PROP_FPS, self.target_fps)
+            failures = 0
+            previous_ts = 0
+            fps_times = []
+            with mp_vision.FaceLandmarker.create_from_options(options) as detector:
+                while not self._stop_requested.is_set():
+                    started = time.monotonic()
+                    ok, frame = cap.read()
+                    if not ok:
+                        failures += 1
+                        with self._lock:
+                            self._face_data = FaceData(False)
+                        if failures >= self.config.capture_failure_limit:
+                            raise RuntimeError("La cámara dejó de entregar frames")
+                        self._stop_requested.wait(0.01)
+                        continue
+                    failures = 0
+                    frame = cv2.flip(frame, 1)  # conservar espejo y landmark nasal
+                    ts_ms = max(previous_ts + 1, int(time.monotonic() * 1000))
+                    previous_ts = ts_ms
+                    rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                    mp_img = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
+                    detector.detect_async(mp_img, ts_ms)
+                    fps_times.append(started)
+                    fps_times = [t for t in fps_times if started - t < 1]
+                    with self._lock:
+                        self._frame = frame
+                        self._fps = float(len(fps_times))
+                    self._stop_requested.wait(max(0, 1 / self.target_fps - (time.monotonic() - started)))
+        except Exception as exc:
+            self.error = exc
+            logger.exception("VisionEngine detenido por error")
+        finally:
+            try:
+                if cap is not None:
+                    cap.release()
+            except Exception as exc:
+                self.error = self.error or exc
+                logger.exception("Error al liberar cámara")
+            with self._lock:
+                self._frame = None
+                self._face_data = FaceData(False)
             self._running = False
+            self.ready.set()
             self._stopped.set()
-            return
-
-        cap.set(cv2.CAP_PROP_FPS, self.target_fps)
-        print(f"[VisionEngine] Cámara abierta. FPS objetivo: {self.target_fps}")
-
-        # Buffer para calcular FPS suavizado
-        fps_times = []
-        frame_idx = 0
-
-        with mp_vision.FaceLandmarker.create_from_options(options) as detector:
-            while self._running:
-                ok, frame = cap.read()
-                if not ok:
-                    time.sleep(0.01)
-                    continue
-
-                t_now = time.perf_counter()
-
-                # Espejo horizontal: sin esto la cámara captura vista "ventana"
-                # y los lados izq/der de MediaPipe no coinciden con los del usuario.
-                # Con el flip el frame llega espejado a MediaPipe, sus etiquetas
-                # left/right coinciden con la perspectiva física del usuario, y el
-                # cursor se mueve correctamente (cabeza izq → cursor izq).
-                frame = cv2.flip(frame, 1)
-
-                # Timestamp en ms (debe ser monotónicamente creciente)
-                ts_ms = int(t_now * 1000)
-
-                # Enviar frame al detector (resultado llega por callback)
-                rgb    = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                mp_img = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
-                detector.detect_async(mp_img, ts_ms)
-
-                # Actualizar frame y FPS
-                fps_times.append(t_now)
-                fps_times = [t for t in fps_times if t_now - t < 1.0]
-                fps = len(fps_times)
-
-                with self._lock:
-                    self._frame = frame
-                    self._fps   = fps
-
-                frame_idx += 1
-
-        cap.release()
-        self._stopped.set()
 
     # ── Callback de resultados ────────────────────────────────────────────────
 
@@ -250,9 +227,28 @@ class VisionEngine(threading.Thread):
         Callback interno llamado por MediaPipe cuando el resultado está listo.
         Corre en el hilo del detector, NO en el hilo principal.
         """
-        face_data = self._extract(result, timestamp_ms)
-        with self._lock:
-            self._face_data = face_data
+        if self._stop_requested.is_set():
+            return
+        try:
+            face_data = self._extract(result, timestamp_ms)
+            now = time.monotonic()
+            face_data = replace(face_data, detected_at=now,
+                                processing_ms=max(0, (now - timestamp_ms / 1000) * 1000))
+            if face_data.detected and not face_data.valid():
+                face_data = FaceData(False, timestamp_ms=timestamp_ms, detected_at=now,
+                                     processing_ms=face_data.processing_ms)
+            with self._lock:
+                if timestamp_ms <= self._face_data.timestamp_ms:
+                    return
+                self._face_data = face_data
+            if self.metrics:
+                self.metrics.frame(face_data)
+            self.ready.set()
+        except Exception as exc:
+            self.error = exc
+            self._stop_requested.set()
+            self.ready.set()
+            logger.exception("Error procesando callback facial")
 
     # ── Extracción de datos faciales ──────────────────────────────────────────
 
@@ -263,11 +259,13 @@ class VisionEngine(threading.Thread):
             return FaceData(detected=False, timestamp_ms=timestamp_ms)
 
         lms = result.face_landmarks[0]
+        if len(lms) < 455 or not all(np.isfinite(p.x) and np.isfinite(p.y) for p in lms):
+            return FaceData(False, timestamp_ms=timestamp_ms)
 
         # Escala facial: distancia entre orejas (invariante a distancia cámara)
         scale = abs(lms[LM_IDX["ear_left"]].x - lms[LM_IDX["ear_right"]].x)
-        if scale < 1e-6:
-            scale = 1.0
+        if scale <= 1e-6:
+            return FaceData(False, timestamp_ms=timestamp_ms)
 
         # Nariz
         nose = lms[LM_IDX["nose_tip"]]
@@ -313,6 +311,8 @@ class VisionEngine(threading.Thread):
             mouth_open      = mouth_open,
             face_scale      = scale,
             timestamp_ms    = timestamp_ms,
+            landmarks       = tuple((float(lms[i].x), float(lms[i].y)) for i in
+                                    (1, 159, 145, 386, 374, 70, 105, 107, 336, 334, 300, 13, 14)),
         )
 
     @staticmethod
@@ -323,16 +323,29 @@ class VisionEngine(threading.Thread):
     # ── Descarga del modelo ───────────────────────────────────────────────────
 
     @staticmethod
-    def _ensure_model():
-        if os.path.exists(MODEL_PATH):
-            return
-        os.makedirs("models", exist_ok=True)
-        print("[VisionEngine] Descargando modelo Face Landmarker (~30 MB)...")
+    def _ensure_model(path=MODEL_PATH):
+        if not Path(path).is_file() or Path(path).stat().st_size == 0:
+            raise FileNotFoundError(
+                f"Falta el modelo local: {path}. Ejecutar python main.py --download-model "
+                "durante la preparación con Internet.")
 
-        def progress(count, block_size, total):
-            pct = min(count * block_size * 100 / total, 100)
-            bar = "█" * int(pct / 5) + "░" * (20 - int(pct / 5))
-            print(f"\r  [{bar}] {pct:.0f}%", end="", flush=True)
-
-        urllib.request.urlretrieve(MODEL_URL, MODEL_PATH, reporthook=progress)
-        print(f"\n[VisionEngine] Modelo guardado en {MODEL_PATH}")
+    @staticmethod
+    def download_model(path=MODEL_PATH):
+        """Descarga explícita de preparación; nunca durante uso normal."""
+        import tempfile
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = None
+        try:
+            with urllib.request.urlopen(MODEL_URL, timeout=30) as response:
+                with tempfile.NamedTemporaryFile(dir=path.parent, delete=False) as stream:
+                    temporary = stream.name
+                    while chunk := response.read(1024 * 1024):
+                        stream.write(chunk)
+            if not Path(temporary).stat().st_size:
+                raise ValueError("Modelo descargado vacío")
+            os.replace(temporary, path)
+        finally:
+            if temporary and os.path.exists(temporary):
+                os.unlink(temporary)
+        logger.info("Modelo preparado: %s", path)

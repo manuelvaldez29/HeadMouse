@@ -19,12 +19,14 @@ Controles:
 
 import argparse
 import time
-import cv2
-import numpy as np
+import logging
+from contextlib import ExitStack
+from config import ROOT, load_config, configure_logging
+from profiles import ProfileStore
+from metrics import SessionMetrics
+from action_mapping import ActionMapping
 
-from vision_engine  import VisionEngine
-from gesture_engine import GestureEngine, GestureConfig
-from control_engine import ControlEngine, ControlConfig
+logger = logging.getLogger(__name__)
 
 
 # ── Colores overlay ───────────────────────────────────────────────────────────
@@ -36,8 +38,10 @@ C_ORANGE = ( 30, 160, 255)
 C_DARK   = ( 15,  15,  15)
 
 
-def draw_overlay(stats) -> np.ndarray:
-    """Genera el frame del overlay de estado (220×200 px)."""
+def draw_overlay(stats):
+    """Genera el frame del overlay de estado (230×185 px)."""
+    import cv2
+    import numpy as np
     w, h = 230, 185
     frame = np.zeros((h, w, 3), dtype=np.uint8)
     frame[:] = C_DARK
@@ -86,93 +90,89 @@ def draw_overlay(stats) -> np.ndarray:
     return frame
 
 
-def main():
-    parser = argparse.ArgumentParser(description="HeadMouse — Control de PC por movimiento de cabeza")
-    parser.add_argument("--camera",     type=int,  default=0,
-                        help="Índice de cámara (default: 0)")
-    parser.add_argument("--no-overlay", action="store_true",
-                        help="No mostrar ventana de estado")
-    args = parser.parse_args()
-
-    print("══════════════════════════════════════════════════════════════")
-    print("  HeadMouse — UNSTA 2026")
-    print("  Bloj · Domfrocht · Petrelli · Valdez")
-    print("══════════════════════════════════════════════════════════════")
-    print()
-
-    # ── Módulo 1: Vision Engine ───────────────────────────────────────────────
-    print("[1/3] Iniciando Vision Engine...")
-    vision = VisionEngine(camera_index=args.camera, target_fps=30)
-    vision.start()
-    time.sleep(1.2)
-
-    # ── Módulo 2: Gesture Engine ──────────────────────────────────────────────
-    print("[2/3] Iniciando Gesture Engine...")
-    gesture_config = GestureConfig(
-        sensitivity     = 80.0,
-        acceleration    = 600.0,
-        dead_zone       = 0.03,
-        smoothing_alpha = 0.35,
-    )
-    gesture = GestureEngine(
-        vision,
-        calibration_path = "calibration.json",
-        config           = gesture_config,
-    )
-
-    # ── Módulo 3: Control Engine ──────────────────────────────────────────────
-    print("[3/3] Iniciando Control Engine...")
-    control_config = ControlConfig(
-        scroll_lines    = 3,
-        face_timeout_s  = 2.0,
-        max_cursor_delta= 60.0,
-        loop_hz         = 60.0,
-    )
-    control = ControlEngine(vision, gesture, control_config)
-    control.start()
-
-    print()
-    print("══════════════════════════════════════════════════════════════")
-    print("  Sistema activo. Controlá el cursor con tu cabeza.")
-    print("  Ambas cejas levantadas → pausar / reanudar")
-    print("  Cursor a esquina sup-izq → detener (failsafe)")
-    print("  Ctrl+C → detener")
-    print("══════════════════════════════════════════════════════════════")
-    print()
-
-    # ── Overlay de estado ─────────────────────────────────────────────────────
-    win_name = "HeadMouse — Estado"
-
+def main(argv=None):
+    parser = argparse.ArgumentParser(description="HEADMOUSE v0.2 — BASELINE Y CONSOLIDACIÓN")
+    parser.add_argument("--camera", type=int, help="Índice de cámara; sobreescribe configuración")
+    parser.add_argument("--user", default="default", help="Perfil en data/profiles")
+    parser.add_argument("--config", help="Archivo JSON de configuración")
+    parser.add_argument("--legacy-calibration", help="Leer calibration.json antiguo para el usuario indicado")
+    parser.add_argument("--log-level", choices=["DEBUG", "INFO", "WARNING", "ERROR"])
+    parser.add_argument("--no-overlay", action="store_true")
+    parser.add_argument("--no-metrics", action="store_true")
+    parser.add_argument("--check", action="store_true", help="Validar imports/config/perfil sin cámara ni control")
+    parser.add_argument("--download-model", action="store_true", help="Preparar modelo con Internet y salir")
+    args = parser.parse_args(argv)
+    configure_logging(args.log_level or "INFO")
     try:
-        while True:
-            time.sleep(0.1)
-
-            if not args.no_overlay:
-                stats = control.get_stats()
-                overlay = draw_overlay(stats)
-                cv2.imshow(win_name, overlay)
-
-                key = cv2.waitKey(1) & 0xFF
-                if key == ord("q"):
-                    break
-
+        config = load_config(args.config)
+        if args.download_model:
+            from vision_engine import VisionEngine
+            path = ROOT / config.vision.model_path
+            VisionEngine.download_model(path)
+            return 0
+        # Solo el usuario default puede buscar el archivo global automáticamente.
+        legacy = args.legacy_calibration or (ROOT / "calibration.json" if args.user == "default" else None)
+        profile = ProfileStore().load(args.user, legacy_path=legacy)
+        if profile.get("status") == "draft":
+            raise ValueError("Perfil pendiente de calibración")
+        config = load_config(args.config, profile.get("settings", {}))
+        if args.camera is not None:
+            config.vision.camera_index = args.camera
+            config.vision.__post_init__()
+        if args.log_level:
+            config.log_level = args.log_level
+        logging.getLogger().setLevel(config.log_level)
+        if args.no_metrics:
+            config.metrics_enabled = False
+        from vision_engine import VisionEngine
+        from gesture_engine import GestureEngine
+        from control_engine import ControlEngine
+        import cv2
+        import pyautogui  # verificar dependencia antes de abrir cámara
+        if args.check:
+            VisionEngine._ensure_model(ROOT / config.vision.model_path)
+            logger.info("Imports, configuración, perfil y modelo local verificados; hardware no probado")
+            return 0
+        metrics = SessionMetrics(args.user, enabled=config.metrics_enabled)
+        with ExitStack() as cleanup:
+            cleanup.callback(metrics.close)
+            cleanup.callback(cv2.destroyAllWindows)
+            vision = VisionEngine(config=config.vision, metrics=metrics)
+            cleanup.callback(vision.stop)
+            vision.start()
+            vision.wait_ready()
+            gesture = GestureEngine(vision, config=config.gesture, calibration=profile)
+            control = ControlEngine(vision, gesture, config.control, metrics=metrics,
+                                    mapping=ActionMapping(config.actions.bindings))
+            cleanup.callback(control.stop)
+            control.start()
+            logger.info("Inicio PAUSADO. Ambas cejas: activar/pausar; esquina: failsafe; Ctrl+C: salir")
+            try:
+                while control.get_stats().running:
+                    if vision.error:
+                        raise RuntimeError("Falló VisionEngine") from vision.error
+                    if not vision.is_alive():
+                        raise RuntimeError("VisionEngine terminó inesperadamente")
+                    if not args.no_overlay:
+                        cv2.imshow("HeadMouse — Estado", draw_overlay(control.get_stats()))
+                        if cv2.waitKey(1) & 0xFF == ord("q"):
+                            break
+                    time.sleep(.05)
+                if control.error:
+                    raise RuntimeError("Falló ControlEngine") from control.error
+            except KeyboardInterrupt:
+                logger.info("Interrupción del usuario")
+        logger.info("Sesión finalizada: %s", metrics.snapshot())
+        return 0
+    except (OSError, ValueError, RuntimeError, ImportError, TimeoutError) as exc:
+        logger.error("No se pudo ejecutar HeadMouse: %s", exc)
+        if isinstance(exc, FileNotFoundError):
+            logger.error("Preparación: main.py --download-model; luego calibrate.py --user %s", args.user)
+        return 1
     except KeyboardInterrupt:
-        print("\n[main] Ctrl+C detectado — deteniendo...")
-
-    finally:
-        control.stop()
-        vision.stop()
-        cv2.destroyAllWindows()
-        print("[main] HeadMouse detenido.")
-
-        # Resumen final
-        stats = control.get_stats()
-        print()
-        print("── Resumen de sesión ────────────────────────────────────────")
-        print(f"  Clicks totales : {stats.clicks_total}")
-        print(f"  Scrolls totales: {stats.scrolls_total}")
-        print(f"  Eventos totales: {stats.events_total}")
+        logger.info("Inicio cancelado por el usuario")
+        return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

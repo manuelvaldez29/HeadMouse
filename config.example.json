@@ -1,0 +1,58 @@
+{
+  "vision": {
+    "camera_index": 0,
+    "target_fps": 30,
+    "model_path": "models/face_landmarker.task",
+    "startup_timeout_s": 10
+  },
+  "gesture": {
+    "sensitivity": 80,
+    "sensitivity_x": null,
+    "sensitivity_y": null,
+    "acceleration": 600,
+    "dead_zone": 0.03,
+    "smoothing_alpha": 0.35,
+    "stale_after_s": 0.25,
+    "blink_hold_ms": 60,
+    "blink_cooldown_ms": 600,
+    "brow_hold_ms": 120,
+    "brow_cooldown_ms": 220,
+    "both_brows_hold_ms": 180,
+    "both_brows_cooldown_ms": 1000,
+    "mouth_hold_ms": 150,
+    "mouth_cooldown_ms": 800
+  },
+  "control": {
+    "scroll_lines": 3,
+    "face_timeout_s": 2,
+    "max_cursor_delta": 60,
+    "loop_hz": 60
+  },
+  "calibration": {
+    "countdown_s": 3,
+    "measuring_s": 4,
+    "min_samples": 20,
+    "threshold_fraction": 0.6,
+    "min_separation": 0.002,
+    "noise_multiplier": 3,
+    "validation_timeout_s": 30,
+    "validation_neutral_s": 2
+  },
+  "ui": {
+    "show_overlay": true,
+    "show_landmarks": true,
+    "tracking_method": "nose"
+  },
+  "actions": {
+    "bindings": {
+      "LEFT_WINK": "LEFT_CLICK",
+      "RIGHT_WINK": "RIGHT_CLICK",
+      "LEFT_BROW": "SCROLL_UP",
+      "RIGHT_BROW": "SCROLL_DOWN",
+      "BOTH_BROWS": "PAUSE",
+      "MOUTH_OPEN": "OPEN_START_MENU"
+    }
+  },
+  "log_level": "INFO",
+  "metrics_enabled": true
+}

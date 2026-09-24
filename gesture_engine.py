@@ -24,12 +24,25 @@ Uso desde Control Engine:
             print(event.type, event.dx, event.dy)
 """
 
-import json
+from __future__ import annotations
+
+import logging
+from copy import deepcopy
 import time
 from dataclasses import dataclass, field
 from typing import Optional
 
-from vision_engine import VisionEngine, FaceData
+from typing import TYPE_CHECKING
+from face_data import FaceData
+from config import GestureConfig, DEFAULT_THRESHOLDS
+from profiles import load_legacy, validate_profile
+from tracking import NoseTrackingStrategy
+from action_mapping import LEGACY_GESTURES
+
+if TYPE_CHECKING:
+    from vision_engine import VisionEngine
+
+logger = logging.getLogger(__name__)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -45,7 +58,10 @@ class GestureEvent:
     type: str          # tipo de evento (ver constantes abajo)
     dx:   float = 0.0  # desplazamiento X en píxeles (solo CURSOR_MOVE)
     dy:   float = 0.0  # desplazamiento Y en píxeles (solo CURSOR_MOVE)
-    ts:   float = field(default_factory=time.time)  # timestamp
+    ts:   float = field(default_factory=time.monotonic)  # timestamp
+    source_timestamp_ms: int = 0
+    detected_at: float = 0.0
+    gesture: str = ""  # identidad independiente de la acción, sin romper type legacy
 
     def __repr__(self):
         if self.type == "CURSOR_MOVE":
@@ -67,41 +83,6 @@ EV_MOUTH_OPEN   = "MOUTH_OPEN"
 # CONFIGURACIÓN
 # ══════════════════════════════════════════════════════════════════════════════
 
-@dataclass
-class GestureConfig:
-    """
-    Parámetros de comportamiento del Gesture Engine.
-    Independientes de los umbrales de calibración (que vienen del JSON).
-    """
-    # ── Cursor ────────────────────────────────────────────────────────────────
-    sensitivity:     float = 80.0   # amplificación del movimiento (más = más rápido)
-    acceleration:    float = 600.0  # componente cuadrática (da velocidad en movimientos grandes)
-    dead_zone:       float = 0.06   # zona muerta alrededor del centro [0-0.5]
-    smoothing_alpha: float = 0.35   # suavizado exponencial [0=instantáneo, 1=congelado]
-    neutral_x:       float = 0.5    # posición neutral de la nariz en X
-    neutral_y:       float = 0.5    # posición neutral de la nariz en Y
-
-    # ── Timing de gestos ──────────────────────────────────────────────────────
-    # hold_ms: el gesto debe mantenerse este tiempo antes de disparar
-    # cooldown_ms: tiempo de espera antes de poder disparar de nuevo
-    blink_hold_ms:    float = 60     # ms
-    blink_cooldown_ms:float = 600
-    brow_hold_ms:     float = 120
-    brow_cooldown_ms: float = 220    # más corto: scroll es continuo
-    mouth_hold_ms:    float = 150
-    mouth_cooldown_ms:float = 800
-    both_brows_hold_ms:    float = 180
-    both_brows_cooldown_ms:float = 1000
-
-    # ── Scroll ────────────────────────────────────────────────────────────────
-    screen_w: int = 1920            # resolución de pantalla (se actualiza en runtime)
-    screen_h: int = 1080
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# DETECTOR DE GESTO INDIVIDUAL
-# ══════════════════════════════════════════════════════════════════════════════
-
 class SingleGestureDetector:
     """
     Máquina de estados para un único gesto binario.
@@ -115,7 +96,8 @@ class SingleGestureDetector:
     El estado COOLDOWN evita ráfagas de eventos repetidos.
     """
 
-    def __init__(self, event_type: str, hold_ms: float, cooldown_ms: float):
+    def __init__(self, event_type: str, hold_ms: float, cooldown_ms: float, clock=time.monotonic):
+        self._clock = clock
         self.event_type  = event_type
         self.hold_ms     = hold_ms
         self.cooldown_ms = cooldown_ms
@@ -134,7 +116,7 @@ class SingleGestureDetector:
         Returns:
             GestureEvent si el gesto se disparó en este ciclo, None si no.
         """
-        now = time.monotonic() * 1000  # ms
+        now = self._clock() * 1000  # ms
 
         if self._state == "IDLE":
             if active:
@@ -185,11 +167,27 @@ class GestureEngine:
     def __init__(self,
                  vision:             VisionEngine,
                  calibration_path:   str = "calibration.json",
-                 config:             GestureConfig = None):
+                 config:             GestureConfig = None,
+                 calibration=None, strategy=None, clock=time.monotonic):
 
         self.vision  = vision
-        self.config  = config or GestureConfig()
-        self._thresholds = self._load_calibration(calibration_path)
+        self.config = deepcopy(config or GestureConfig())
+        self.config.__post_init__()
+        self._clock = clock
+        self.strategy = strategy or NoseTrackingStrategy()
+        self._last_timestamp = 0
+        if calibration is None:
+            try:
+                calibration = load_legacy(calibration_path)
+            except FileNotFoundError:
+                logger.warning("Sin calibración: umbrales genéricos; calibrar antes de usar")
+                calibration = {"thresholds": DEFAULT_THRESHOLDS.copy()}
+        validate_profile(calibration)
+        if calibration.get("status") == "draft":
+            raise ValueError("El perfil aún no está calibrado")
+        self._thresholds = calibration["thresholds"].copy()
+        self.config.neutral_x = calibration.get("neutral_nose_x", self.config.neutral_x)
+        self.config.neutral_y = calibration.get("neutral_nose_y", self.config.neutral_y)
 
         # ── Suavizado del cursor ───────────────────────────────────────────────
         self._smooth_x = self.config.neutral_x
@@ -206,38 +204,29 @@ class GestureEngine:
             "both_brows":  SingleGestureDetector(EV_BOTH_BROWS,  c.both_brows_hold_ms,c.both_brows_cooldown_ms),
         }
 
-        # Cargar neutral de nariz desde calibración si está disponible
-        try:
-            with open(calibration_path, encoding="utf-8") as f:
-                raw = __import__('json').load(f)
-            if "neutral_nose_x" in raw:
-                self.config.neutral_x = raw["neutral_nose_x"]
-                self.config.neutral_y = raw["neutral_nose_y"]
-                self._smooth_x = self.config.neutral_x
-                self._smooth_y = self.config.neutral_y
-        except Exception:
-            pass
-
-        print(f"[GestureEngine] Calibración cargada:")
-        for k, v in self._thresholds.items():
-            print(f"  {k:15s}: {v:.4f}")
-        print(f"  neutral_x      : {self.config.neutral_x:.3f}")
-        print(f"  neutral_y      : {self.config.neutral_y:.3f}")
+        for detector in self._detectors.values():
+            detector._clock = clock
+        logger.debug("Thresholds: %s", self._thresholds)
 
     # ── API pública ───────────────────────────────────────────────────────────
 
-    def update(self) -> list:
+    def update(self, fd=None) -> list:
         """
         Procesa el FaceData más reciente y devuelve la lista de eventos
         ocurridos en este ciclo. Llamar una vez por frame desde el Control Engine.
         """
-        fd = self.vision.get_face_data()
+        fd = self.vision.get_face_data() if fd is None else fd
 
-        if not fd.detected:
+        if not fd.fresh(self.config.stale_after_s, self._clock()):
             # Sin cara: resetear suavizado al centro para evitar deriva
-            self._smooth_x = self.config.neutral_x
-            self._smooth_y = self.config.neutral_y
+            self.reset()
             return []
+
+        if fd.timestamp_ms <= self._last_timestamp:
+            return []
+        if self._last_timestamp and fd.timestamp_ms - self._last_timestamp > self.config.stale_after_s * 1000:
+            self.reset()  # Una pausa del consumidor tampoco debe completar un hold.
+        self._last_timestamp = fd.timestamp_ms
 
         events = []
 
@@ -250,7 +239,23 @@ class GestureEngine:
         gesture_evs = self._update_gestures(fd)
         events.extend(gesture_evs)
 
+        for event in events:
+            event.source_timestamp_ms = fd.timestamp_ms
+            event.detected_at = fd.detected_at
+            event.gesture = LEGACY_GESTURES.get(event.type, event.type)
         return events
+
+    def diagnostic(self):
+        return dict(smooth_x=self._smooth_x, smooth_y=self._smooth_y,
+                    normalized_dx=self._smooth_x - self.config.neutral_x,
+                    normalized_dy=self._smooth_y - self.config.neutral_y,
+                    thresholds=self._thresholds.copy(), states=self.get_detector_states())
+
+    def reset(self):
+        self._smooth_x = self.config.neutral_x
+        self._smooth_y = self.config.neutral_y
+        for detector in self._detectors.values():
+            detector.reset()
 
     def update_screen_size(self, w: int, h: int):
         """Actualiza la resolución de pantalla para el cálculo de velocidad."""
@@ -275,9 +280,11 @@ class GestureEngine:
         """
         alpha = self.config.smoothing_alpha
 
+        x, y = self.strategy.position(fd)
+
         # Suavizado exponencial de la posición de la nariz
-        self._smooth_x = alpha * self._smooth_x + (1 - alpha) * fd.nose_x
-        self._smooth_y = alpha * self._smooth_y + (1 - alpha) * fd.nose_y
+        self._smooth_x = alpha * self._smooth_x + (1 - alpha) * x
+        self._smooth_y = alpha * self._smooth_y + (1 - alpha) * y
 
         # Desviación desde el centro neutral
         dx = self._smooth_x - self.config.neutral_x
@@ -301,8 +308,10 @@ class GestureEngine:
         s   = self.config.sensitivity
         acc = self.config.acceleration
 
-        px = dx * s + (dx * abs(dx)) * acc
-        py = dy * s + (dy * abs(dy)) * acc
+        sx = s if self.config.sensitivity_x is None else self.config.sensitivity_x
+        sy = s if self.config.sensitivity_y is None else self.config.sensitivity_y
+        px = dx * sx + (dx * abs(dx)) * acc
+        py = dy * sy + (dy * abs(dy)) * acc
 
         return GestureEvent(type=EV_CURSOR_MOVE, dx=px, dy=py)
 
@@ -316,9 +325,11 @@ class GestureEngine:
         brow_r_active = fd.brow_right_lift > t["brow_right"]
         both_brows    = brow_l_active and brow_r_active
 
+        both_eyes = (fd.eye_left_ratio < t["blink_left"] and
+                     fd.eye_right_ratio < t["blink_right"])
         active = {
-            "blink_left":  fd.eye_left_ratio  < t["blink_left"],
-            "blink_right": fd.eye_right_ratio < t["blink_right"],
+            "blink_left":  fd.eye_left_ratio  < t["blink_left"] and not both_eyes,
+            "blink_right": fd.eye_right_ratio < t["blink_right"] and not both_eyes,
             # Si ambas cejas están levantadas, suprimir las individuales
             # para evitar SCROLL_UP + SCROLL_DOWN simultáneos
             "brow_left":   brow_l_active and not both_brows,
@@ -339,21 +350,8 @@ class GestureEngine:
 
     @staticmethod
     def _load_calibration(path: str) -> dict:
-        """Carga los umbrales desde calibration.json."""
         try:
-            with open(path, encoding="utf-8") as f:
-                cal = json.load(f)
-            return cal["thresholds"]
+            return load_legacy(path)["thresholds"]
         except FileNotFoundError:
-            print(f"[GestureEngine] ADVERTENCIA: '{path}' no encontrado.")
-            print("  Corré primero: python calibrate.py")
-            print("  Usando umbrales genéricos de fallback.")
-            return {
-                "blink_left":  0.045,
-                "blink_right": 0.045,
-                "brow_left":   0.290,
-                "brow_right":  0.290,
-                "mouth_open":  0.180,
-            }
-        except (KeyError, json.JSONDecodeError) as e:
-            raise ValueError(f"[GestureEngine] Error en calibration.json: {e}")
+            logger.warning("Calibración ausente: %s", path)
+            return DEFAULT_THRESHOLDS.copy()

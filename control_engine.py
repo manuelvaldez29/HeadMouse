@@ -27,14 +27,22 @@ Uso:
     # ... corre en background hasta ce.stop()
 """
 
+from __future__ import annotations
+
+import logging
+import math
 import threading
 import time
 from dataclasses import dataclass
-from typing import Optional
 
-import pyautogui
+from config import ControlConfig
+from action_mapping import ActionMapping
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from vision_engine import VisionEngine
 
-from vision_engine  import VisionEngine
+logger = logging.getLogger(__name__)
+
 from gesture_engine import GestureEngine, GestureEvent
 from gesture_engine import (EV_CURSOR_MOVE, EV_LEFT_CLICK, EV_RIGHT_CLICK,
                              EV_SCROLL_UP, EV_SCROLL_DOWN,
@@ -43,26 +51,6 @@ from gesture_engine import (EV_CURSOR_MOVE, EV_LEFT_CLICK, EV_RIGHT_CLICK,
 
 # ══════════════════════════════════════════════════════════════════════════════
 # CONFIGURACIÓN DE PYAUTOGUI
-# ══════════════════════════════════════════════════════════════════════════════
-
-pyautogui.PAUSE    = 0        # sin delay entre llamadas (default = 0.1s → laggy)
-pyautogui.FAILSAFE = True     # mover cursor a esquina sup-izq detiene el programa
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# CONFIGURACIÓN DEL CONTROL ENGINE
-# ══════════════════════════════════════════════════════════════════════════════
-
-@dataclass
-class ControlConfig:
-    scroll_lines:     int   = 3      # líneas por evento de scroll
-    face_timeout_s:   float = 2.0    # segundos sin cara → auto-pausa
-    max_cursor_delta: float = 60.0   # píxeles máximos por frame (anti-spike)
-    loop_hz:          float = 60.0   # frecuencia del loop de control
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# ESTADÍSTICAS EN TIEMPO REAL
 # ══════════════════════════════════════════════════════════════════════════════
 
 @dataclass
@@ -95,16 +83,31 @@ class ControlEngine:
     def __init__(self,
                  vision:  VisionEngine,
                  gesture: GestureEngine,
-                 config:  ControlConfig = None):
+                 config:  ControlConfig = None, backend=None, metrics=None, mapping=None):
 
         self.vision  = vision
         self.gesture = gesture
         self.config  = config or ControlConfig()
+        self.config.__post_init__()
+        if backend is None:
+            import pyautogui
+            backend = pyautogui
+        self.backend = backend
+        self.backend.PAUSE = 0
+        self.backend.FAILSAFE = True
+        self.metrics = metrics
+        self.mapping = mapping or ActionMapping()
+        self.last_events = ()
+        self.last_actions = ()
+        self.output_allowed = threading.Event()
+        self.output_allowed.set()  # CLI legacy; GUI no construye este motor sin autorización
+        self.error = None
+        self._stop_requested = threading.Event()
 
         # Resolución de pantalla
-        self._screen_w, self._screen_h = pyautogui.size()
+        self._screen_w, self._screen_h = self.backend.size()
         self.gesture.update_screen_size(self._screen_w, self._screen_h)
-        print(f"[ControlEngine] Pantalla: {self._screen_w}×{self._screen_h}")
+        logger.info(f"[ControlEngine] Pantalla: {self._screen_w}×{self._screen_h}")
 
         # Estado
         self._paused        = True    # arranca pausado — activar con BOTH_BROWS
@@ -115,7 +118,6 @@ class ControlEngine:
         # Estadísticas
         self._stats      = ControlStats()
         self._stats_lock = threading.Lock()
-        self._fps_times  = []
 
         # Hilo
         self._thread = threading.Thread(
@@ -130,20 +132,25 @@ class ControlEngine:
         """Arranca el loop de control en background."""
         self._running = True
         self._thread.start()
-        print("[ControlEngine] Iniciado. BOTH_BROWS = pausar/reanudar.")
-        print("  Failsafe: mover cursor a esquina superior izquierda detiene todo.")
+        logger.info("[ControlEngine] Iniciado. BOTH_BROWS = pausar/reanudar.")
+        logger.info("  Failsafe: mover cursor a esquina superior izquierda detiene todo.")
 
     def stop(self):
         """Detiene el loop de control."""
         self._running = False
-        self._thread.join(timeout=2.0)
-        print("[ControlEngine] Detenido.")
+        self.output_allowed.clear()
+        self._stop_requested.set()
+        if self._thread.ident is not None:
+            self._thread.join(timeout=2.0)
+            if self._thread.is_alive():
+                raise RuntimeError("ControlEngine no respondió al cierre")
+        logger.info("[ControlEngine] Detenido.")
 
     def toggle_pause(self):
         """Pausa o reanuda el control manualmente."""
         self._paused = not self._paused
         state = "PAUSADO" if self._paused else "ACTIVO"
-        print(f"[ControlEngine] Control {state}.")
+        logger.info(f"[ControlEngine] Control {state}.")
 
     def get_stats(self) -> ControlStats:
         """Devuelve un snapshot de las estadísticas actuales. Thread-safe."""
@@ -174,59 +181,73 @@ class ControlEngine:
 
             try:
                 self._tick()
-            except pyautogui.FailSafeException:
-                print("\n[ControlEngine] Failsafe activado — deteniendo.")
+            except self.backend.FailSafeException:
+                logger.info("\n[ControlEngine] Failsafe activado — deteniendo.")
                 self._running = False
                 break
             except Exception as e:
-                print(f"[ControlEngine] Error inesperado: {e}")
+                self.error = e
+                logger.exception("ControlEngine detenido por error")
+                self._running = False
+                break
 
             # Mantener frecuencia objetivo
             elapsed = time.perf_counter() - t0
             sleep   = max(0.0, interval - elapsed)
-            time.sleep(sleep)
+            self._stop_requested.wait(sleep)
 
     def _tick(self):
         """Un ciclo del loop de control."""
         now    = time.monotonic()
-        events = self.gesture.update()
-        fd     = self.vision.get_face_data()
+        fd = self.vision.get_face_data()
+        fresh = fd.fresh(self.gesture.config.stale_after_s, now)
+        events = self.gesture.update(fd)
+        self.last_events = tuple(events)
+        self.last_actions = ()
+        if self.metrics:
+            self.metrics.tracking(fresh)
+            self.metrics.generated(events)
 
         # ── Timeout de cara ───────────────────────────────────────────────────
-        if fd.detected:
+        if fresh:
             self._face_last_ok  = now
             self._auto_paused   = False
         else:
             if now - self._face_last_ok > self.config.face_timeout_s:
                 if not self._auto_paused:
                     self._auto_paused = True
-                    print("[ControlEngine] Sin cara — control auto-pausado.")
+                    logger.info("[ControlEngine] Sin cara — control auto-pausado.")
 
         # ── Ejecutar eventos ──────────────────────────────────────────────────
-        for ev in events:
-            # BOTH_BROWS siempre funciona (incluso pausado) → toggle
-            if ev.type == EV_BOTH_BROWS:
-                self.toggle_pause()
-                continue
-
-            if self.paused:
-                continue
-
-            self._execute(ev)
+        # Toggle tiene prioridad sobre todas las acciones del mismo frame.
+        actions = [self.mapping.resolve(ev) for ev in events]
+        toggle = next((ev for ev in actions if ev.type == "PAUSE"), None)
+        if toggle is not None and fresh and self.output_allowed.is_set():
+            self.toggle_pause()
+            self._log_event(EV_BOTH_BROWS)
+            if self.metrics:
+                self.metrics.action(toggle)
+            self.last_actions = (toggle,)
+        elif fresh and not self.paused and self.output_allowed.is_set():
+            for ev in actions:
+                if not self.output_allowed.is_set():
+                    break
+                self._execute(ev)
+                if ev.type != "NONE":
+                    self.last_actions += (ev,)
 
         # ── Estadísticas ──────────────────────────────────────────────────────
-        t_now = time.perf_counter()
-        self._fps_times.append(t_now)
-        self._fps_times = [t for t in self._fps_times if t_now - t < 1.0]
-
         with self._stats_lock:
-            self._stats.face_detected = fd.detected
-            self._stats.fps           = len(self._fps_times)
+            self._stats.face_detected = fresh
+            self._stats.fps           = self.vision.get_fps()
 
     # ── Ejecución de acciones ─────────────────────────────────────────────────
 
     def _execute(self, ev: GestureEvent):
         """Convierte un GestureEvent en una acción real de Windows."""
+
+        if not math.isfinite(ev.dx) or not math.isfinite(ev.dy):
+            raise ValueError("Delta no finito")
 
         if ev.type == EV_CURSOR_MOVE:
             # Limitar delta máximo para evitar saltos bruscos
@@ -234,33 +255,49 @@ class ControlEngine:
                      min(self.config.max_cursor_delta, ev.dx))
             dy = max(-self.config.max_cursor_delta,
                      min(self.config.max_cursor_delta, ev.dy))
-            if dx != 0.0 or dy != 0.0:
-                pyautogui.moveRel(int(dx), int(dy), _pause=False)
+            if int(dx) != 0 or int(dy) != 0:
+                self.backend.moveRel(int(dx), int(dy), _pause=False)
+                if self.metrics:
+                    self.metrics.action(ev)
             return   # no loguear CURSOR_MOVE para no spamear
 
         elif ev.type == EV_LEFT_CLICK:
-            pyautogui.click(_pause=False)
+            self.backend.click(_pause=False)
             self._log_event("LEFT_CLICK", clicks=True)
 
         elif ev.type == EV_RIGHT_CLICK:
-            pyautogui.rightClick(_pause=False)
+            self.backend.rightClick(_pause=False)
             self._log_event("RIGHT_CLICK", clicks=True)
 
         elif ev.type == EV_SCROLL_UP:
-            pyautogui.scroll(self.config.scroll_lines, _pause=False)
+            self.backend.scroll(self.config.scroll_lines, _pause=False)
             self._log_event("SCROLL_UP", scrolls=True)
 
         elif ev.type == EV_SCROLL_DOWN:
-            pyautogui.scroll(-self.config.scroll_lines, _pause=False)
+            self.backend.scroll(-self.config.scroll_lines, _pause=False)
             self._log_event("SCROLL_DOWN", scrolls=True)
 
-        elif ev.type == EV_MOUTH_OPEN:
-            pyautogui.hotkey("win", _pause=False)
+        elif ev.type in (EV_MOUTH_OPEN, "OPEN_START_MENU"):
+            self.backend.hotkey("win", _pause=False)
             self._log_event("MOUTH_OPEN (Win)")
+
+        elif ev.type == "DOUBLE_CLICK":
+            self.backend.doubleClick(interval=0.1, _pause=False)
+            self._log_event("DOUBLE_CLICK", clicks=True)
+        elif ev.type in ("KEY_ENTER", "KEY_ESCAPE", "KEY_SPACE"):
+            self.backend.press({"KEY_ENTER": "enter", "KEY_ESCAPE": "esc", "KEY_SPACE": "space"}[ev.type], _pause=False)
+            self._log_event(ev.type)
+        elif ev.type == "NONE":
+            return
+
+        else:
+            raise ValueError(f"Evento desconocido: {ev.type}")
+        if self.metrics:
+            self.metrics.action(ev)
 
     def _log_event(self, name: str,
                    clicks: bool = False, scrolls: bool = False):
-        print(f"  [{time.strftime('%H:%M:%S')}] {name}")
+        logger.info(f"  [{time.strftime('%H:%M:%S')}] {name}")
         with self._stats_lock:
             self._stats.last_event  = name
             self._stats.events_total += 1

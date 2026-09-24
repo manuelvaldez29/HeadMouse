@@ -4,8 +4,8 @@ HeadMouse — Calibración automática por usuario
 Tesis UNSTA 2026 — Bloj · Domfrocht · Petrelli · Valdez
 
 Mide los valores neutros y extremos de cada gesto para cada usuario
-y calcula los umbrales óptimos automáticamente. Guarda el resultado
-en calibration.json, que el Gesture Engine carga al arrancar.
+y calcula umbrales personalizados automáticamente. Guarda el resultado
+en data/profiles/<usuario>.json después de validación interactiva.
 
 Uso:
     python calibrate.py
@@ -16,17 +16,23 @@ Controles:
     Q     → salir sin guardar
 """
 
+from __future__ import annotations
+
 import argparse
-import json
-import os
 import time
-from dataclasses import dataclass, field
-from typing import Optional
 from datetime import datetime
 
-import cv2
-import numpy as np
-from vision_engine import VisionEngine, FaceData
+import logging
+from contextlib import ExitStack
+from dataclasses import asdict
+from face_data import FaceData
+from config import ROOT, CalibrationConfig, load_config, configure_logging
+from calibration_logic import Samples, compute_thresholds, build_calibration
+from calibration_validation import CalibrationValidation
+from profiles import ProfileStore, validate_user_id
+from gesture_engine import GestureEngine
+
+logger = logging.getLogger(__name__)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -43,11 +49,11 @@ C_PURPLE = (200,  80, 220)
 C_GRAY   = (160, 160, 160)
 C_DARK   = ( 20,  20,  20)
 
-OUTPUT_PATH = "calibration.json"
+OUTPUT_PATH = "data/profiles/<usuario>.json"
 
 # Duración de cada fase en segundos
-COUNTDOWN_SECS  = 3    # cuenta regresiva antes de medir
-MEASURING_SECS  = 4    # tiempo de medición
+COUNTDOWN_SECS  = CalibrationConfig().countdown_s    # cuenta regresiva antes de medir
+MEASURING_SECS  = CalibrationConfig().measuring_s    # tiempo de medición
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -110,75 +116,6 @@ PHASES = [
 # RECOLECTOR DE MUESTRAS
 # ══════════════════════════════════════════════════════════════════════════════
 
-@dataclass
-class Samples:
-    eye_left:   list = field(default_factory=list)
-    eye_right:  list = field(default_factory=list)
-    brow_left:  list = field(default_factory=list)
-    brow_right: list = field(default_factory=list)
-    mouth:      list = field(default_factory=list)
-    nose_x:     list = field(default_factory=list)
-    nose_y:     list = field(default_factory=list)
-
-    def add(self, fd: FaceData):
-        if not fd.detected:
-            return
-        self.eye_left.append(fd.eye_left_ratio)
-        self.eye_right.append(fd.eye_right_ratio)
-        self.brow_left.append(fd.brow_left_lift)
-        self.brow_right.append(fd.brow_right_lift)
-        self.mouth.append(fd.mouth_open)
-        self.nose_x.append(fd.nose_x)
-        self.nose_y.append(fd.nose_y)
-
-    def median(self, key: str) -> float:
-        vals = getattr(self, key)
-        return float(np.median(vals)) if vals else 0.0
-
-    def percentile(self, key: str, p: float) -> float:
-        vals = getattr(self, key)
-        return float(np.percentile(vals, p)) if vals else 0.0
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# CÁLCULO DE UMBRALES
-# ══════════════════════════════════════════════════════════════════════════════
-
-def compute_thresholds(data: dict) -> dict:
-    """
-    Calcula umbrales óptimos para cada gesto.
-
-    Estrategia: el umbral se coloca al 60% del recorrido desde el valor
-    neutral hacia el extremo del gesto. Esto lo aleja del neutral (menos
-    falsos positivos) sin exigir un gesto excesivo al usuario.
-
-    Para ojos: el extremo es el mínimo (ojo cerrado → ratio pequeño)
-    Para cejas y boca: el extremo es el máximo (levantado/abierto → ratio grande)
-    """
-    n = data["neutral"]
-    g = data["gesture_extremes"]
-
-    def thresh_low(neutral, extreme):
-        # Para gestos donde el valor BAJA (guiños)
-        return neutral - (neutral - extreme) * 0.6
-
-    def thresh_high(neutral, extreme):
-        # Para gestos donde el valor SUBE (cejas, boca)
-        return neutral + (extreme - neutral) * 0.6
-
-    return {
-        "blink_left":  round(thresh_low( n["eye_left"],  g["eye_left_min"]),  4),
-        "blink_right": round(thresh_low( n["eye_right"], g["eye_right_min"]), 4),
-        "brow_left":   round(thresh_high(n["brow_left"], g["brow_left_max"]), 4),
-        "brow_right":  round(thresh_high(n["brow_right"],g["brow_right_max"]),4),
-        "mouth_open":  round(thresh_high(n["mouth"],     g["mouth_max"]),     4),
-    }
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# VISUALIZACIÓN
-# ══════════════════════════════════════════════════════════════════════════════
-
 def overlay_dark(frame, alpha=0.55):
     """Aplica overlay oscuro semitransparente."""
     dark = np.zeros_like(frame)
@@ -189,6 +126,9 @@ def put_centered(frame, text, y, font_scale, color, thickness=1):
     h, w = frame.shape[:2]
     font = cv2.FONT_HERSHEY_SIMPLEX
     (tw, th), _ = cv2.getTextSize(text, font, font_scale, thickness)
+    if tw > w - 30:
+        font_scale *= (w - 30) / tw
+        (tw, th), _ = cv2.getTextSize(text, font, font_scale, thickness)
     x = (w - tw) // 2
     cv2.putText(frame, text, (x, y), font, font_scale, color, thickness, cv2.LINE_AA)
 
@@ -241,7 +181,7 @@ def draw_welcome(frame):
     put_centered(frame, "HeadMouse", h//2 - 100, 2.0, C_WHITE, 3)
     put_centered(frame, "Calibracion automatica", h//2 - 40, 0.9, C_GRAY)
     put_centered(frame, "El sistema va a medir tus gestos faciales", h//2 + 20, 0.65, C_WHITE)
-    put_centered(frame, "y calcular los umbrales ideales para vos.", h//2 + 50, 0.65, C_WHITE)
+    put_centered(frame, "y calcular umbrales personalizados.", h//2 + 50, 0.65, C_WHITE)
     put_centered(frame, "Asegurate de tener buena iluminacion", h//2 + 90, 0.6, C_GRAY)
     put_centered(frame, "y estar centrado en la camara.", h//2 + 115, 0.6, C_GRAY)
     put_centered(frame, "[ SPACE ] para comenzar", h//2 + 170, 0.85, C_GREEN, 2)
@@ -262,7 +202,7 @@ def draw_countdown(frame, phase: dict, seconds_left: int):
     return frame
 
 
-def draw_measuring(frame, phase: dict, elapsed: float, n_samples: int):
+def draw_measuring(frame, phase: dict, elapsed: float, n_samples: int, duration=MEASURING_SECS):
     h, w = frame.shape[:2]
     color = phase["color"]
     # Borde de color parpadeante
@@ -276,7 +216,7 @@ def draw_measuring(frame, phase: dict, elapsed: float, n_samples: int):
     put_centered(frame, "● MIDIENDO", 30, 0.8, color, 2)
     put_centered(frame, phase["title"], 65, 0.7, C_WHITE)
     # Progreso
-    pct = min(elapsed / MEASURING_SECS, 1.0)
+    pct = min(elapsed / duration, 1.0)
     draw_progress_bar(frame, pct, color)
     put_bg_text(frame, f"Muestras: {n_samples}",
                 (10, h - 50), font_scale=0.55, color=C_GRAY)
@@ -286,7 +226,7 @@ def draw_measuring(frame, phase: dict, elapsed: float, n_samples: int):
 def draw_results(frame, thresholds: dict, calibration: dict):
     frame = overlay_dark(frame, 0.7)
     h, w = frame.shape[:2]
-    put_centered(frame, "Calibracion completada!", h//2 - 200, 1.0, C_GREEN, 2)
+    put_centered(frame, "Umbrales calculados", h//2 - 200, 1.0, C_GREEN, 2)
     put_centered(frame, "Umbrales calculados:", h//2 - 150, 0.7, C_GRAY)
 
     items = [
@@ -299,9 +239,9 @@ def draw_results(frame, thresholds: dict, calibration: dict):
     for i, (txt, col) in enumerate(items):
         put_centered(frame, txt, h//2 - 90 + i * 38, 0.8, col, 1)
 
-    put_centered(frame, f"Guardado en: {OUTPUT_PATH}",
+    put_centered(frame, "Falta validar gestos antes de guardar",
                  h//2 + 120, 0.6, C_GRAY)
-    put_centered(frame, "[ SPACE ] continuar   [ Q ] salir",
+    put_centered(frame, "[ SPACE ] validar   [ Q ] descartar",
                  h//2 + 170, 0.75, C_WHITE, 1)
     return frame
 
@@ -321,140 +261,158 @@ STATE_DONE       = "done"
 # MAIN
 # ══════════════════════════════════════════════════════════════════════════════
 
-def run(user_id: str):
-    print("── HeadMouse — Calibración automática ──────────────────────────")
-    print(f"   Usuario : {user_id}")
-    print(f"   Salida  : {OUTPUT_PATH}")
-    print("   Presioná Q para salir en cualquier momento.\n")
-
-    engine = VisionEngine(camera_index=0, target_fps=30)
-    engine.start()
-    time.sleep(1.0)
-
-    state        = STATE_WELCOME
-    phase_idx    = 0
-    phase_data   = {}      # {phase_id: Samples}
-    t_phase      = 0.0     # timestamp de inicio de la fase actual
-    current_samp: Optional[Samples] = None
-    thresholds   = {}
-    calibration  = {}
-
-    while True:
-        frame = engine.get_frame()
-        if frame is None:
-            time.sleep(0.01)
-            continue
-
-        fd  = engine.get_face_data()
-        vis = frame.copy()
-
-        # ── Dibujar según estado ──────────────────────────────────────────────
-
-        if state == STATE_WELCOME:
-            vis = draw_welcome(vis)
-
-        elif state == STATE_COUNTDOWN:
-            phase       = PHASES[phase_idx]
-            elapsed     = time.time() - t_phase
-            secs_left   = max(1, int(np.ceil(COUNTDOWN_SECS - elapsed)))
-            vis = draw_countdown(vis, phase, secs_left)
-            draw_live_values(vis, fd)
-            draw_step_indicator(vis, phase_idx + 1, len(PHASES))
-
-            if elapsed >= COUNTDOWN_SECS:
-                state       = STATE_MEASURING
-                t_phase     = time.time()
-                current_samp = Samples()
-
-        elif state == STATE_MEASURING:
-            phase   = PHASES[phase_idx]
-            elapsed = time.time() - t_phase
-
-            if fd.detected:
-                current_samp.add(fd)
-
-            vis = draw_measuring(vis, phase, elapsed,
-                                 len(current_samp.eye_left))
-            draw_live_values(vis, fd)
-            draw_step_indicator(vis, phase_idx + 1, len(PHASES))
-
-            if elapsed >= MEASURING_SECS:
-                # Guardar muestras de esta fase
-                phase_data[phase["id"]] = current_samp
-                phase_idx += 1
-
-                if phase_idx >= len(PHASES):
-                    # Calcular umbrales
-                    neu = phase_data["neutral"]
-                    calibration = {
-                        "user_id":       user_id,
-                        "calibrated_at": datetime.now().isoformat(timespec="seconds"),
-                        "neutral_nose_x": round(phase_data["neutral"].median("nose_x"), 4),
-                        "neutral_nose_y": round(phase_data["neutral"].median("nose_y"), 4),
-                        "neutral": {
-                            "eye_left":   round(neu.median("eye_left"),  4),
-                            "eye_right":  round(neu.median("eye_right"), 4),
-                            "brow_left":  round(neu.median("brow_left"), 4),
-                            "brow_right": round(neu.median("brow_right"),4),
-                            "mouth":      round(neu.median("mouth"),     4),
-                        },
-                        "gesture_extremes": {
-                            "eye_left_min":  round(phase_data["wink_left"].percentile("eye_left",   10), 4),
-                            "eye_right_min": round(phase_data["wink_right"].percentile("eye_right", 10), 4),
-                            "brow_left_max": round(phase_data["brow_left"].percentile("brow_left",  90), 4),
-                            "brow_right_max":round(phase_data["brow_right"].percentile("brow_right",90), 4),
-                            "mouth_max":     round(phase_data["mouth"].percentile("mouth",          90), 4),
-                        },
-                    }
-                    thresholds = compute_thresholds(calibration)
-                    calibration["thresholds"] = thresholds
-
-                    # Guardar JSON
-                    os.makedirs(os.path.dirname(OUTPUT_PATH) if os.path.dirname(OUTPUT_PATH) else ".", exist_ok=True)
-                    with open(OUTPUT_PATH, "w", encoding="utf-8") as f:
-                        json.dump(calibration, f, indent=2, ensure_ascii=False)
-                    print(f"\n✓ Calibración guardada en {OUTPUT_PATH}")
-                    print(f"\n  Umbrales calculados:")
-                    for k, v in thresholds.items():
-                        print(f"    {k:15s}: {v:.4f}")
-
-                    state = STATE_RESULTS
-                else:
-                    state   = STATE_COUNTDOWN
-                    t_phase = time.time()
-
-        elif state == STATE_RESULTS:
-            vis = draw_results(vis, thresholds, calibration)
-
-        # ── Mostrar frame ─────────────────────────────────────────────────────
-        cv2.imshow("HeadMouse — Calibracion  (Q = salir)", vis)
-        key = cv2.waitKey(1) & 0xFF
-
-        if key == ord("q"):
-            break
-        elif key == ord(" "):
+def run(user_id: str, config=None):
+    # Dependencias visuales se cargan solo al ejecutar, no para lógica/tests/help.
+    global cv2, np
+    import cv2
+    import numpy as np
+    from vision_engine import VisionEngine
+    validate_user_id(user_id)
+    config = config or load_config()
+    store = ProfileStore()
+    cc = config.calibration
+    logger.info("Calibración de %s; salida: %s", user_id, store.path(user_id))
+    with ExitStack() as cleanup:
+        cleanup.callback(cv2.destroyAllWindows)
+        engine = VisionEngine(config=config.vision)
+        cleanup.callback(engine.stop)
+        engine.start()
+        engine.wait_ready()
+        state = STATE_WELCOME
+        phase_idx = 0
+        phase_data = {}
+        current_samp = None
+        t_phase = 0.0
+        calibration = {}
+        error = ""
+        validator = None
+        while True:
+            if engine.error or not engine.is_alive():
+                raise RuntimeError("La captura terminó durante la calibración") from engine.error
+            frame = engine.get_frame()
+            if frame is None:
+                time.sleep(.01)
+                continue
+            fd = engine.get_face_data()
+            vis = frame.copy()
+            now = time.monotonic()
             if state == STATE_WELCOME:
-                state   = STATE_COUNTDOWN
-                t_phase = time.time()
+                vis = draw_welcome(vis)
+            elif state == STATE_COUNTDOWN:
+                phase = PHASES[phase_idx]
+                elapsed = now - t_phase
+                vis = draw_countdown(vis, phase, max(1, int(np.ceil(cc.countdown_s - elapsed))))
+                draw_step_indicator(vis, phase_idx + 1, len(PHASES))
+                if elapsed >= cc.countdown_s:
+                    state = STATE_MEASURING
+                    t_phase = now
+                    current_samp = Samples()
+            elif state == STATE_MEASURING:
+                phase = PHASES[phase_idx]
+                elapsed = now - t_phase
+                current_samp.add(fd, config.gesture.stale_after_s, now)
+                vis = draw_measuring(vis, phase, elapsed, len(current_samp.eye_left), cc.measuring_s)
+                draw_live_values(vis, fd)
+                draw_step_indicator(vis, phase_idx + 1, len(PHASES))
+                if elapsed >= cc.measuring_s:
+                    if len(current_samp.eye_left) < cc.min_samples:
+                        error = "Pocas muestras. R: repetir esta fase"
+                        state = "error"
+                    else:
+                        phase_data[phase["id"]] = current_samp
+                        phase_idx += 1
+                        if phase_idx < len(PHASES):
+                            state, t_phase = STATE_COUNTDOWN, now
+                        else:
+                            try:
+                                calibration = build_calibration(user_id, phase_data, cc)
+                                calibration["settings"] = asdict(config)
+                                if store.path(user_id).exists():
+                                    try:
+                                        calibration["display_name"] = store.load(user_id).get("display_name", user_id)
+                                    except ValueError:
+                                        pass  # Perfil anterior dañado: se permite recalibrar.
+                                state = STATE_RESULTS
+                            except ValueError as exc:
+                                logger.warning("Calibración rechazada: %s", exc)
+                                error = "Umbrales invalidos. R: recalibrar; detalle en terminal"
+                                state = "error"
             elif state == STATE_RESULTS:
-                break
+                vis = draw_results(vis, calibration["thresholds"], calibration)
+            elif state == "validate":
+                validator.update(fd)
+                vis = overlay_dark(vis, .6)
+                put_centered(vis, validator.instruction, vis.shape[0] // 2, .65,
+                             C_GREEN if validator.passed else C_WHITE, 1)
+                put_centered(vis, f"Gestos verificados: {len(validator.recognized)}/6", 50, .7, C_CYAN, 1)
+                put_centered(vis, "R: repetir validacion | C: recalibrar | Q: descartar", vis.shape[0]-30, .55, C_GRAY, 1)
+            elif state == "error":
+                vis = overlay_dark(vis)
+                put_centered(vis, error, vis.shape[0] // 2, .6, C_RED, 1)
+            cv2.imshow("HeadMouse — Calibracion (Q = salir)", vis)
+            key = cv2.waitKey(1) & 0xFF
+            if key == ord("q"):
+                return None
+            if key == ord("c") and state == "validate":
+                state, phase_idx, phase_data = STATE_WELCOME, 0, {}
+            elif key == ord("r") and state == "error":
+                if phase_idx >= len(PHASES):
+                    phase_idx, phase_data = 0, {}
+                state, t_phase = STATE_COUNTDOWN, now
+            elif (key == ord(" ") and state == STATE_RESULTS or
+                  key == ord("r") and state == "validate"):
+                gesture = GestureEngine(engine, config=config.gesture, calibration=calibration)
+                validator = CalibrationValidation(gesture, cc.validation_timeout_s,
+                                                  neutral_s=cc.validation_neutral_s)
+                state = "validate"
+            elif key == ord(" "):
+                if state == STATE_WELCOME:
+                    state, t_phase = STATE_COUNTDOWN, now
+                elif state == "validate" and validator.passed:
+                    calibration["validation"] = {
+                        "passed": True, "recognized": validator.recognized,
+                        "validated_at": datetime.now().astimezone().isoformat(timespec="seconds")}
+                    path = store.save(calibration)
+                    logger.info("Perfil validado guardado: %s", path)
+                    return path
 
-    engine.stop()
-    cv2.destroyAllWindows()
-    print("\n── Calibración finalizada ──────────────────────────────────────")
 
+def main(argv=None):
+    parser = argparse.ArgumentParser(description="HeadMouse v0.2 — Calibración y validación por usuario")
+    parser.add_argument("--user", default="default")
+    parser.add_argument("--camera", type=int)
+    parser.add_argument("--config")
+    parser.add_argument("--log-level", choices=["DEBUG", "INFO", "WARNING", "ERROR"])
+    parser.add_argument("--check", action="store_true", help="Verificar dependencias/config/modelo sin abrir cámara")
+    args = parser.parse_args(argv)
+    configure_logging(args.log_level or "INFO")
+    try:
+        validate_user_id(args.user)
+        store = ProfileStore()
+        try:
+            settings = store.load(args.user).get("settings", {}) if store.path(args.user).exists() else {}
+        except ValueError as exc:
+            logger.warning("Perfil anterior inválido; recalibrar con configuración base: %s", exc)
+            settings = {}
+        config = load_config(args.config, settings)
+        if args.camera is not None:
+            config.vision.camera_index = args.camera
+            config.vision.__post_init__()
+        logging.getLogger().setLevel(args.log_level or config.log_level)
+        if args.check:
+            from vision_engine import VisionEngine
+            VisionEngine._ensure_model(ROOT / config.vision.model_path)
+            logger.info("Dependencias/config/modelo verificados; webcam no probada")
+            return 0
+        run(args.user, config)
+        return 0
+    except KeyboardInterrupt:
+        logger.info("Calibración cancelada; no se guardó un perfil nuevo")
+        return 0
+    except (OSError, ValueError, RuntimeError, ImportError, TimeoutError) as exc:
+        logger.error("Calibración detenida: %s", exc)
+        return 1
 
-# ══════════════════════════════════════════════════════════════════════════════
-# ENTRY POINT
-# ══════════════════════════════════════════════════════════════════════════════
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(
-        description="HeadMouse — Calibración automática de umbrales"
-    )
-    parser.add_argument(
-        "--user", default="default",
-        help="ID del usuario (ej: manu1, ivan1). Default: 'default'"
-    )
-    args = parser.parse_args()
-    run(user_id=args.user)
+    raise SystemExit(main())

@@ -3,6 +3,10 @@ models/
 
 # Calibración personal de cada usuario
 calibration.json
+data/profiles/
+data/metrics/
+data/experiments/
+config.local.json
 
 # Python
 __pycache__/
