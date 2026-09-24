@@ -175,9 +175,9 @@ class ControlEngine:
             try:
                 self._tick()
             except pyautogui.FailSafeException:
-                print("\n[ControlEngine] Failsafe activado — deteniendo.")
-                self._running = False
-                break
+                if not self._paused:
+                    print("\n[ControlEngine] Failsafe activado — auto-pausando por seguridad.")
+                    self._paused = True
             except Exception as e:
                 print(f"[ControlEngine] Error inesperado: {e}")
 
