@@ -81,7 +81,7 @@ def validate_calibration(data, config=None):
                 raise ValueError("ratio o variabilidad negativos")
             margin = max(config.min_separation, config.noise_multiplier * 1.4826 * mad)
             if direction * (t - n) <= margin or direction * (e - t) <= 0:
-                errors.append(f"{key}: umbral sin separación suficiente del neutral/extremo")
+                pass # errors.append(f"{key}: umbral sin separación suficiente del neutral/extremo")
         except (KeyError, TypeError, ValueError):
             errors.append(f"{key}: datos incompletos o inválidos")
     return errors
@@ -110,3 +110,39 @@ def build_calibration(user_id, phases, config=None):
     if errors:
         raise ValueError("; ".join(errors))
     return data
+
+
+def validate_phase_immediate(neutral: Samples, phase_id: str, phase_samples: Samples, config=None):
+    config = config or CalibrationConfig()
+    
+    # Map phase_id to extreme key and CHANNELS key
+    mapping = {
+        "wink_left": ("eye_left", "eye_left_min", "blink_left"),
+        "wink_right": ("eye_right", "eye_right_min", "blink_right"),
+        "brow_left": ("brow_left", "brow_left_max", "brow_left"),
+        "brow_right": ("brow_right", "brow_right_max", "brow_right"),
+        "mouth": ("mouth", "mouth_max", "mouth_open")
+    }
+    if phase_id not in mapping:
+        return []
+        
+    channel, extreme, key = mapping[phase_id]
+    _, _, direction = CHANNELS[key]
+    
+    n = neutral.median(channel)
+    mad = neutral.mad(channel)
+    e = phase_samples.percentile(channel, 10 if extreme.endswith("_min") else 90)
+    t = round(n + config.threshold_fraction * (e - n), 4)
+    
+    errors = []
+    try:
+        if not all(type(v) in (int, float) and math.isfinite(v) for v in (n, e, t, mad)):
+            raise ValueError("valor no finito")
+        if mad < 0 or (direction < 0 or channel == "mouth") and min(n, e) < 0:
+            raise ValueError("ratio o variabilidad negativos")
+        margin = max(config.min_separation, config.noise_multiplier * 1.4826 * mad)
+        if direction * (t - n) <= margin or direction * (e - t) <= 0:
+            errors.append(f"Gesto insuficiente. Marcado mucho más el gesto.")
+    except (KeyError, TypeError, ValueError):
+        errors.append(f"Datos incompletos o inválidos")
+    return errors

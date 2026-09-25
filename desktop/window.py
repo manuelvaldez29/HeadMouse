@@ -151,11 +151,12 @@ class MainWindow(QMainWindow):
         layout=self.page("Tus perfiles","Cada persona tiene su propia calibración. Cambiar de perfil detiene el control.")
         self.profile_combo=QComboBox()
         self.profile_combo.setAccessibleName("Elegir perfil")
+        self.profile_combo.currentIndexChanged.connect(self.select_profile)
         layout.addWidget(self.profile_combo)
         self.profile_detail=label("Todavía no seleccionaste un perfil.","BigInstruction")
         layout.addWidget(self.profile_detail)
         row=QHBoxLayout()
-        for title,fn in (("Nuevo perfil",self.new_profile),("Seleccionar",self.select_profile),
+        for title,fn in (("Nuevo perfil",self.new_profile),
                          ("Renombrar",self.rename_profile),("Eliminar",self.delete_profile)):
             row.addWidget(button(title,fn))
         layout.addLayout(row)
@@ -196,7 +197,8 @@ class MainWindow(QMainWindow):
         self.wizard_progress.setRange(0,100)
         layout.addWidget(self.wizard_progress)
         self.calibration_preview=CameraPreview()
-        layout.addWidget(self.calibration_preview,1)
+        self.calibration_preview.setMinimumHeight(450)
+        layout.addWidget(self.calibration_preview,3)
         self.wizard_status=label("Sin iniciar","Subtitle")
         layout.addWidget(self.wizard_status)
         self.validation_labels=label("Validación: aún no realizada","Subtitle")
@@ -389,11 +391,13 @@ class MainWindow(QMainWindow):
         profiles_key=json.dumps(s.get("profiles",[]),sort_keys=True)
         if profiles_key!=self._profiles_key:
             self._profiles_key=profiles_key
+            self.profile_combo.blockSignals(True)
             self.profile_combo.clear()
             self.profile_combo.addItem("Elegí un perfil…",None)
             for entry in s.get("profiles",[]):
                 self.profile_combo.addItem(entry["display_name"]+" · "+entry["status"],entry["user_id"])
             if p: self.profile_combo.setCurrentIndex(self.profile_combo.findData(p["user_id"]))
+            self.profile_combo.blockSignals(False)
         settings_key=(p["user_id"] if p else None,json.dumps(s["settings"],sort_keys=True))
         if settings_key!=self._settings_key:
             self._settings_key=settings_key

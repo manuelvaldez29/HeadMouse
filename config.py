@@ -102,7 +102,7 @@ class CalibrationConfig:
     min_samples: int = 20
     threshold_fraction: float = 0.6
     min_separation: float = 0.002
-    noise_multiplier: float = 3
+    noise_multiplier: float = 1.5
     validation_timeout_s: float = 30
     validation_neutral_s: float = 2
 

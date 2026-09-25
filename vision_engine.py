@@ -159,8 +159,10 @@ class VisionEngine(threading.Thread):
         try:
             if self._stop_requested.is_set():
                 return
+            with open(str(self.model_path), "rb") as f:
+                model_bytes = f.read()
             options = mp_vision.FaceLandmarkerOptions(
-                base_options=mp_python.BaseOptions(model_asset_path=str(self.model_path)),
+                base_options=mp_python.BaseOptions(model_asset_buffer=model_bytes),
                 running_mode=mp_vision.RunningMode.LIVE_STREAM,
                 num_faces=1,
                 min_face_detection_confidence=self.config.detection_confidence,
@@ -292,8 +294,8 @@ class VisionEngine(threading.Thread):
         # Solo un levantamiento real de ceja aumenta esta distancia.
         eye_l_y     = lms[33].y
         eye_r_y     = lms[263].y
-        brow_l_lift = (eye_l_y - brow_l_y) / scale
-        brow_r_lift = (eye_r_y - brow_r_y) / scale            
+        brow_l_lift = float((eye_l_y - brow_l_y) / scale)
+        brow_r_lift = float((eye_r_y - brow_r_y) / scale)            
 
         # Apertura de boca
         mouth_open = abs(

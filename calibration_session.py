@@ -4,7 +4,7 @@ import time
 from copy import deepcopy
 from dataclasses import asdict
 from datetime import datetime, timezone
-from calibration_logic import Samples, build_calibration
+from calibration_logic import Samples, build_calibration, validate_phase_immediate
 from calibration_validation import CalibrationValidation
 from gesture_engine import GestureEngine
 
@@ -68,7 +68,17 @@ class CalibrationSession:
                 if len(self.samples.eye_left) < cc.min_samples:
                     self.error, self.state = "No hubo suficientes muestras. Volvé a intentar.", "error"
                     return
-                self.phases[PHASES[self.phase][0]] = self.samples
+                
+                phase_id = PHASES[self.phase][0]
+                
+                # Immediate Validation
+                if phase_id != "neutral":
+                    errors = validate_phase_immediate(self.phases["neutral"], phase_id, self.samples, self.config.calibration)
+                    if errors:
+                        self.error, self.state = f"Gesto no detectado con suficiente intensidad. Volvé a intentar.", "error"
+                        return
+                        
+                self.phases[phase_id] = self.samples
                 self.phase += 1
                 if self.phase < len(PHASES):
                     self.start()
