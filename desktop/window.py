@@ -197,7 +197,6 @@ class MainWindow(QMainWindow):
         self.wizard_progress.setRange(0,100)
         layout.addWidget(self.wizard_progress)
         self.calibration_preview=CameraPreview()
-        self.calibration_preview.setMinimumHeight(450)
         layout.addWidget(self.calibration_preview,3)
         self.wizard_status=label("Sin iniciar","Subtitle")
         layout.addWidget(self.wizard_status)
