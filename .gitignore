@@ -6,6 +6,7 @@ calibration.json
 data/profiles/
 data/metrics/
 data/experiments/
+data/calibration/
 config.local.json
 
 # Python

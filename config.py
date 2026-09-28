@@ -40,6 +40,7 @@ class GestureConfig:
     stale_after_s: float = 0.25
     sensitivity_x: float | None = None
     sensitivity_y: float | None = None
+    brow_decision_ms: float = 200
 
     def __post_init__(self):
         for name in ("sensitivity", "acceleration"):
@@ -57,6 +58,7 @@ class GestureConfig:
         for name in ("screen_w", "screen_h"):
             bounded(name, getattr(self, name), 1, 100000, integer=True)
         bounded("stale_after_s", self.stale_after_s, 0.01, 2)
+        bounded("brow_decision_ms", self.brow_decision_ms, 0, 1000)
 
 
 @dataclass
@@ -105,6 +107,14 @@ class CalibrationConfig:
     noise_multiplier: float = 1.5
     validation_timeout_s: float = 30
     validation_neutral_s: float = 2
+    repetitions: int = 3
+    active_window_s: float = 0.8
+    neutral_window_s: float = 1.0
+    transition_s: float = 0.3
+    min_window_samples: int = 8
+    validation_noise_s: float = 0.15
+    validation_wrong_s: float = 0.35
+    brow_signal_source: str = "GEOMETRIC"
 
     def __post_init__(self):
         for name in ("countdown_s", "measuring_s", "validation_timeout_s", "validation_neutral_s"):
@@ -115,6 +125,14 @@ class CalibrationConfig:
         bounded("threshold_fraction", self.threshold_fraction, 0.1, 0.9)
         bounded("min_separation", self.min_separation, 0.0001, 1)
         bounded("noise_multiplier", self.noise_multiplier, 1, 10)
+        bounded("repetitions", self.repetitions, 1, 10, integer=True)
+        bounded("min_window_samples", self.min_window_samples, 3, 1000, integer=True)
+        for name in ("active_window_s", "neutral_window_s", "transition_s", "validation_noise_s", "validation_wrong_s"):
+            bounded(name, getattr(self, name), .05, 10)
+        if self.validation_noise_s >= self.validation_wrong_s:
+            raise ValueError("La tolerancia de ruido debe ser menor que el tiempo de gesto incorrecto")
+        if self.brow_signal_source not in ("GEOMETRIC","BLENDSHAPE","HYBRID"):
+            raise ValueError("Fuente de cejas desconocida")
 
 
 @dataclass

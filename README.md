@@ -1,4 +1,4 @@
-# HEADMOUSE v0.3 — DESKTOP ACCESSIBILITY APPLICATION
+# HEADMOUSE v0.3.1 — ROBUST ADAPTIVE FACIAL CALIBRATION
 
 Control local de PC con movimiento de cabeza y gestos faciales.
 Tesis UNSTA 2026 — Bloj · Domfrocht · Petrelli · Valdez.
@@ -7,6 +7,12 @@ Esta versión conserva MediaPipe Face Landmarker, tracking nasal y PyAutoGUI;
 agrega una aplicación PySide6 con perfiles, calibración visual, diagnóstico,
 configuración, mapeo de acciones y experimentos locales. Plataforma inicial:
 Windows con webcam RGB y CPU. No se requiere servicio cloud durante el uso.
+
+La calibración usa un motor genérico para los seis gestos: tres repeticiones
+cómodas, umbrales robustos con histéresis, calidad por gesto y gestos opcionales.
+Ambas cejas tienen captura propia y arbitraje temporal. GEOMETRIC sigue siendo
+la señal predeterminada; BLENDSHAPE e HYBRID son experimentales.
+Ver [método, compatibilidad y pruebas físicas pendientes](docs/CALIBRATION_V031.md).
 
 ## Abrir la aplicación
 
@@ -68,10 +74,13 @@ la política de ejecución de PowerShell ni necesitar activar el entorno.
 .\.venv\Scripts\python.exe main.py --user julian
 ```
 
-Calibración: SPACE comienza; seguir las seis fases. Después, SPACE inicia la
-validación de gestos y retorno al neutral. Solo al aprobar, SPACE guarda en
-`data/profiles/julian.json`; Q descarta. R permite repetir y C recalibrar durante
-validación. `debug_cursor.py` muestra el resultado sin mover el mouse.
+Calibración: SPACE comienza; seguir neutral y tres repeticiones de cada gesto
+habilitado, incluida la captura de ambas cejas. Después, SPACE inicia la
+validación y retorno al neutral. Solo al aprobar, SPACE guarda en
+`data/profiles/julian.json`; Q descarta. R repite el paso actual, C reinicia y S
+omite el gesto actual. `--disable LEFT_BROW` permite omitirlo desde el inicio;
+se puede repetir el flag. `--brow-signal HYBRID` elige una fuente experimental.
+`debug_cursor.py` muestra el resultado sin mover el mouse.
 
 El sistema **arranca pausado**. Ambas cejas lo activan o pausan.
 
@@ -131,7 +140,7 @@ python -m compileall -q main.py calibrate.py debug_cursor.py vision_engine.py ge
 Los tests usan FaceData sintético y mocks; nunca abren webcam ni llaman al
 mouse real. Los tests de GUI requieren PySide6 y NumPy y se ejecutan offscreen;
 si PySide6 falta se omiten, por lo que hay que usar el entorno completo para
-verificar v0.3. Los tests de motores siguen siendo independientes de Qt. `--help` de los CLI tampoco
+verificar v0.3.1. Los tests de motores siguen siendo independientes de Qt. `--help` de los CLI tampoco
 requiere bibliotecas nativas. `--check` verifica imports, configuración y archivo
 de modelo; main verifica además el perfil. No prueba webcam, inferencia ni SO.
 `tests/smoke_runtime.py` es una prueba opcional adicional: carga el modelo y
@@ -142,12 +151,16 @@ no se incluye en el descubrimiento de tests unitarios.
 Las métricas de sesiones normales se guardan en `data/metrics/`: FPS procesados,
 tiempos aproximados, eventos, acciones y pérdidas de tracking. No se guardan
 frames ni fotos. Ver definiciones y límites en [METRICS](docs/METRICS.md).
+Los ajustes de calibración guardan estadísticas y reintentos, sin muestras
+individuales ni imágenes, en `data/calibration/`.
 
 ## Documentación y validación manual pendiente
 
 - [Auditoría inicial](docs/AUDIT.md)
 - [Arquitectura y cambios de comportamiento](docs/ARCHITECTURE.md)
 - [Calibración y perfiles](docs/CALIBRATION.md)
+- [Calibración adaptativa v0.3.1](docs/CALIBRATION_V031.md)
+- [Informe v0.3.1: implementación y verificaciones](docs/IMPLEMENTATION_REPORT_V031.md)
 - [Métricas](docs/METRICS.md)
 - [Roadmap de tesis](docs/ROADMAP.md)
 - [Uso de la GUI](docs/GUI.md)

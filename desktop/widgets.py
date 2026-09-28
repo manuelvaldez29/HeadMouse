@@ -80,6 +80,65 @@ class CameraPreview(QWidget):
             p.drawEllipse(point(face.nose_x,face.nose_y),7,7)
 
 
+class CalibrationMeter(QWidget):
+    """Dibuja los valores ya calculados por la sesión; no interpreta gestos."""
+    def __init__(self):
+        super().__init__()
+        self.rows=[]
+        self.setMinimumHeight(100)
+        self.setAccessibleName("Medidor de señal, neutral, liberación, activación y gesto cómodo")
+
+    def present(self,rows):
+        self.rows=rows
+        self.setMinimumHeight(max(100,(55 if self.width()<420 else 30)+85*len(rows)))
+        self.update()
+
+    def resizeEvent(self,event):
+        self.present(self.rows)
+        super().resizeEvent(event)
+
+    def paintEvent(self,event):
+        p=QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.fillRect(self.rect(),QColor("#172337"))
+        p.setPen(QColor("#b1c6df"))
+        if not self.rows:
+            p.drawText(self.rect(),Qt.AlignmentFlag.AlignCenter,"El medidor aparece al comenzar los gestos")
+            return
+        colors={"neutral":"#b1c6df","release":"#cfb3ff","activation":"#ffd477","comfortable":"#71dfbe"}
+        labels={"neutral":"Neutral","release":"Liberación","activation":"Activación","comfortable":"Gesto cómodo"}
+        columns=2 if self.width()<420 else 4
+        for i,(key,color) in enumerate(colors.items()):
+            p.setPen(QColor(color))
+            p.drawText(QRectF(12+(i%columns)*self.width()/columns,3+25*(i//columns),self.width()/columns-12,25),Qt.AlignmentFlag.AlignLeft,labels[key])
+        for index,row in enumerate(self.rows):
+            y=(80 if columns==2 else 55)+85*index
+            d=row["direction"]
+            values=[d*row[k] for k in (*colors,"value") if row.get(k) is not None]
+            if not values: continue
+            lo,hi=min(values),max(values)
+            padding=max(.005,(hi-lo)*.15)
+            lo,hi=lo-padding,hi+padding
+            xpos=lambda v: 25+(d*v-lo)/(hi-lo)*(self.width()-50)
+            p.setPen(QPen(QColor("#536b8b"),3))
+            p.drawLine(QPointF(25,y),QPointF(self.width()-25,y))
+            for key,color in colors.items():
+                if row.get(key) is not None:
+                    x=xpos(row[key])
+                    p.setPen(QPen(QColor(color),3))
+                    p.drawLine(QPointF(x,y-10),QPointF(x,y+10))
+            value=row.get("value")
+            if value is not None:
+                p.setBrush(QColor("#6df4e0"))
+                p.setPen(Qt.PenStyle.NoPen)
+                p.drawEllipse(QPointF(xpos(value),y),6,6)
+            p.setPen(QColor("#eef3fc"))
+            side={"left":"Izquierda", "right":"Derecha"}.get(row["channel"],"Señal")
+            text=f"{side} · Valor actual: {value:.4f}" if value is not None else f"{side} · Esperando señal"
+            if row.get("activation") is None: text+=" · Falta una captura válida"
+            p.drawText(QRectF(12,y+16,self.width()-24,26),Qt.AlignmentFlag.AlignLeft,text)
+
+
 class ExperimentCanvas(QWidget):
     input = Signal(float,float,bool,bool)
 

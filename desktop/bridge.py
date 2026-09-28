@@ -8,7 +8,7 @@ COMMANDS = {"create_profile", "select_profile", "rename_profile", "delete_profil
             "restore_defaults", "start_camera", "stop_camera", "activate_control", "stop_control",
             "start_diagnostic", "start_calibration", "validate_calibration", "repeat_calibration",
             "save_calibration", "start_experiment", "experiment_input", "cancel_experiment",
-            "start_jitter", "prepare_model", "refresh_metrics", "shutdown"}
+            "start_jitter", "prepare_model", "refresh_metrics", "shutdown", "set_calibration_gesture"}
 
 
 class Mailbox:

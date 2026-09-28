@@ -8,7 +8,7 @@ from PySide6.QtWidgets import (QMainWindow, QWidget, QFrame, QVBoxLayout, QHBoxL
     QMessageBox, QFormLayout, QDoubleSpinBox, QSpinBox, QCheckBox, QProgressBar,
     QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView)
 from action_mapping import ACTIONS, DEFAULT_MAPPING
-from desktop.widgets import CameraPreview, ExperimentCanvas, label, card
+from desktop.widgets import CameraPreview, ExperimentCanvas, CalibrationMeter, label, card
 
 GESTURE_LABELS = dict(LEFT_WINK="Guiño izquierdo", RIGHT_WINK="Guiño derecho", LEFT_BROW="Ceja izquierda",
                       RIGHT_BROW="Ceja derecha", BOTH_BROWS="Ambas cejas", MOUTH_OPEN="Boca abierta")
@@ -38,7 +38,7 @@ class MainWindow(QMainWindow):
         self._status_style=None
         self._closing=False
         self._allow_close=False
-        self.setWindowTitle("HeadMouse v0.3 — Desktop Accessibility Application")
+        self.setWindowTitle("HeadMouse v0.3.1 — Robust Adaptive Facial Calibration")
         self.resize(1240,850)
         self.setMinimumSize(980,700)
         shell=QWidget()
@@ -65,7 +65,7 @@ class MainWindow(QMainWindow):
         nav.addStretch()
         nav.addWidget(label("LOCAL Y PRIVADO\nSin guardar imágenes","Subtitle"))
         nav.addWidget(button("Salir",self.close))
-        nav.addWidget(label("v0.3 · UNSTA 2026","Subtitle"))
+        nav.addWidget(label("v0.3.1 · UNSTA 2026","Subtitle"))
         outer.addWidget(sidebar)
         content=QVBoxLayout()
         content.setContentsMargins(26,20,26,18)
@@ -139,7 +139,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.live_events)
         actions=QGridLayout()
         options=[("Nuevo perfil",self.new_profile), ("Abrir perfil",lambda:self.show_page(1)),
-                 ("Calibrar",lambda:self.command_page("start_calibration",2)),
+                 ("Calibrar",self.start_calibration),
                  ("Probar HeadMouse",lambda:self.command_page("start_diagnostic",3)),
                  ("Abrir cámara",lambda:self.bridge.request("start_camera")),
                  ("Cerrar cámara",lambda:self.bridge.request("stop_camera")),
@@ -160,7 +160,7 @@ class MainWindow(QMainWindow):
                          ("Renombrar",self.rename_profile),("Eliminar",self.delete_profile)):
             row.addWidget(button(title,fn))
         layout.addLayout(row)
-        layout.addWidget(button("Calibrar / recalibrar",lambda:self.command_page("start_calibration",2),"Primary"))
+        layout.addWidget(button("Calibrar / recalibrar",self.start_calibration,"Primary"))
         layout.addWidget(button("Validar calibración existente",lambda:self.command_page("validate_calibration",2)))
         layout.addWidget(label("Renombrar cambia el nombre visible y conserva la identidad de tus resultados.\nEliminar un perfil no borra las sesiones ni los experimentos históricos.","Subtitle"))
         layout.addStretch()
@@ -190,27 +190,85 @@ class MainWindow(QMainWindow):
             self.bridge.request("delete_profile",confirmed=True)
 
     def _calibration(self):
-        layout=self.page("Calibración guiada","Seis mediciones, una validación final. Durante este proceso no se controla el sistema.")
+        outer=self.page("Calibración guiada","Tres intentos cómodos por gesto. Desmarcá los gestos que no estén disponibles para vos.")
+        scroll=QScrollArea()
+        scroll.setWidgetResizable(True)
+        body=QWidget()
+        layout=QVBoxLayout(body)
+        layout.setSpacing(12)
+        scroll.setWidget(body)
+        outer.addWidget(scroll,1)
+        self.calibration_options=QWidget()
+        options=QVBoxLayout(self.calibration_options)
+        options.setContentsMargins(0,0,0,0)
+        toggle=button("Gestos disponibles y tipo de señal ▾",lambda:self.calibration_options.setVisible(not self.calibration_options.isVisible()))
+        layout.addWidget(toggle)
+        layout.addWidget(self.calibration_options)
+        self.calibration_options.hide()
+        choices=QGridLayout()
+        self.calibration_enabled={}
+        for index,(key,title) in enumerate(GESTURE_LABELS.items()):
+            check=QCheckBox(title+" disponible")
+            check.setChecked(True)
+            check.toggled.connect(lambda checked,gesture_id=key:self.calibration_availability(gesture_id,checked))
+            self.calibration_enabled[key]=check
+            choices.addWidget(check,index//2,index%2)
+        options.addLayout(choices)
+        source_row=QHBoxLayout()
+        source_row.addWidget(label("Señal de cejas"))
+        self.calibration_source=QComboBox()
+        for title,value in (("Geométrica (predeterminada)","GEOMETRIC"),("Blendshapes · experimental","BLENDSHAPE"),("Híbrida · experimental","HYBRID")):
+            self.calibration_source.addItem(title,value)
+        source_row.addWidget(self.calibration_source,1)
+        options.addLayout(source_row)
         self.wizard_instruction=label("Elegí un perfil y comenzá cuando estés cómodo.","BigInstruction")
         layout.addWidget(self.wizard_instruction)
         self.wizard_progress=QProgressBar()
         self.wizard_progress.setRange(0,100)
         layout.addWidget(self.wizard_progress)
+        self.capture_feedback=label("","Subtitle")
+        layout.addWidget(self.capture_feedback)
         self.calibration_preview=CameraPreview()
-        layout.addWidget(self.calibration_preview,3)
+        live=QHBoxLayout()
+        layout.addLayout(live,1)
+        live.addWidget(self.calibration_preview,1)
+        readings=QVBoxLayout()
+        live.addLayout(readings,1)
+        self.calibration_meter=CalibrationMeter()
+        readings.addWidget(self.calibration_meter)
+        self.calibration_quality=label("Calidad: pendiente","Subtitle")
+        readings.addWidget(self.calibration_quality)
+        readings.addStretch()
         self.wizard_status=label("Sin iniciar","Subtitle")
         layout.addWidget(self.wizard_status)
         self.validation_labels=label("Validación: aún no realizada","Subtitle")
         layout.addWidget(self.validation_labels)
         row=QHBoxLayout()
-        row.addWidget(button("Comenzar / recalibrar",lambda:self.bridge.request("start_calibration")))
-        row.addWidget(button("Repetir gesto",lambda:self.bridge.request("repeat_calibration")))
+        row.addWidget(button("Comenzar / recalibrar",self.start_calibration))
+        row.addWidget(button("Repetir gesto",lambda:self.bridge.request("repeat_calibration",gesture_id=self.repeat_gesture.currentData())))
         row.addWidget(button("Validar",lambda:self.bridge.request("validate_calibration")))
         self.save_calibration_button=button("Guardar perfil",lambda:self.bridge.request("save_calibration"),"Primary")
         self.save_calibration_button.setEnabled(False)
         row.addWidget(self.save_calibration_button)
-        layout.addLayout(row)
-        layout.addWidget(button("Cancelar y cerrar cámara",lambda:self.bridge.request("stop_camera")))
+        outer.addLayout(row)
+        self.repeat_gesture=QComboBox()
+        self.repeat_gesture.addItem("Repetir gesto actual / validación actual",None)
+        for key,title in GESTURE_LABELS.items(): self.repeat_gesture.addItem("Volver a medir: "+title,key)
+        self.repeat_gesture.setAccessibleName("Elegir gesto para repetir sin perder los demás")
+        footer=QHBoxLayout()
+        footer.addWidget(self.repeat_gesture,1)
+        footer.addWidget(button("Cancelar y cerrar cámara",lambda:self.bridge.request("stop_camera")))
+        outer.addLayout(footer)
+
+    def start_calibration(self):
+        self.show_page(2)
+        self.calibration_options.hide()
+        self.bridge.request("start_calibration",enabled={key:check.isChecked() for key,check in self.calibration_enabled.items()},
+                            source=self.calibration_source.currentData())
+
+    def calibration_availability(self,gesture_id,enabled):
+        if self.snapshot.get("state")=="CALIBRATING" and self.snapshot.get("wizard"):
+            self.bridge.request("set_calibration_gesture",gesture_id=gesture_id,enabled=enabled)
 
     def _diagnostic(self):
         layout=self.page("Diagnóstico seguro","Observá el comportamiento esperado sin mover el cursor del sistema.")
@@ -224,6 +282,16 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.diagnostic_values)
         self.jitter_summary=label("Estabilidad: sin medición","Subtitle")
         layout.addWidget(self.jitter_summary)
+        advanced=QCheckBox("Mostrar calibración avanzada por gesto")
+        self.advanced_diagnostic=label("Sin calibración adaptativa disponible.","Subtitle")
+        advanced_scroll=QScrollArea()
+        advanced_scroll.setWidgetResizable(True)
+        advanced_scroll.setWidget(self.advanced_diagnostic)
+        advanced_scroll.setMaximumHeight(190)
+        advanced_scroll.hide()
+        advanced.toggled.connect(advanced_scroll.setVisible)
+        layout.addWidget(advanced)
+        layout.addWidget(advanced_scroll)
 
     def _settings(self):
         layout=self.page("Configuración","Los cambios se guardan en el perfil seleccionado. Aplicar detiene el control y la cámara.")
@@ -238,7 +306,8 @@ class MainWindow(QMainWindow):
                ("gesture.sensitivity_y","Sensibilidad vertical",0,1000,1),
                ("gesture.smoothing_alpha","Suavizado (0: directo; 0,95: suave)",0,.95,2),
                ("gesture.dead_zone","Zona muerta",0,.49,3),
-               ("control.face_timeout_s","Timeout de rostro · segundos",.1,60,1)]
+               ("control.face_timeout_s","Timeout de rostro · segundos",.1,60,1),
+               ("gesture.brow_decision_ms","Ventana de decisión de cejas · ms",0,1000,0)]
         for group,title in (("blink","Guiños"),("brow","Cejas"),("both_brows","Ambas cejas"),("mouth","Boca")):
             specs += [(f"gesture.{group}_hold_ms",f"{title}: sostener · ms",0,5000,0),
                       (f"gesture.{group}_cooldown_ms",f"{title}: espera · ms",0,10000,0)]
@@ -408,25 +477,59 @@ class MainWindow(QMainWindow):
             self.overlay_check.setChecked(s["settings"]["ui"]["show_overlay"])
             self.landmarks_check.setChecked(s["settings"]["ui"]["show_landmarks"])
             for k,widget in self.mapping_fields.items(): widget.setCurrentIndex(widget.findData(s["settings"]["actions"]["bindings"][k]))
+            self.calibration_source.setCurrentIndex(self.calibration_source.findData(s["settings"]["calibration"]["brow_signal_source"]))
+            for key,check in self.calibration_enabled.items():
+                enabled=(p or {}).get("gesture_calibrations",{}).get(key,{}).get("enabled",True)
+                check.blockSignals(True)
+                check.setChecked(enabled)
+                check.blockSignals(False)
+                self.mapping_fields[key].setEnabled(enabled)
         wizard=s["wizard"]
         if wizard:
+            self.calibration_source.setEnabled(s["state"]!="CALIBRATING")
+            self.calibration_meter.present(wizard.get("meter",[]))
+            quality=wizard.get("quality",{})
+            current=wizard.get("gesture_id")
+            self.calibration_quality.setText(GESTURE_LABELS[current]+": "+quality[current]["label"] if current in quality else "Calidad: pendiente")
+            self.calibration_quality.setToolTip("\n".join(GESTURE_LABELS[k]+": "+v["label"] for k,v in quality.items()))
+            if s["state"]=="CALIBRATING":
+                for key,value in wizard.get("enabled",{}).items():
+                    self.calibration_enabled[key].blockSignals(True)
+                    self.calibration_enabled[key].setChecked(value)
+                    self.calibration_enabled[key].blockSignals(False)
             self.wizard_instruction.setText(wizard["instruction"])
             self.wizard_progress.setValue(int(wizard["progress"]*100))
             state=wizard["state"]
-            text=f"Paso {wizard['phase']} / 6 · "
+            text=f"Paso {wizard['phase']} / {wizard.get('total_phases',7)} · "
             states={"ready":"Listo para empezar","measuring":"Midiendo","measured":"Listo para validar",
-                    "validation":"Validando gestos","validated":"Validación aprobada","error":"Repetir medición"}
+                    "validation":"Validando gestos","validated":"Validación aprobada","error":"Repetir medición",
+                    "settling":"Preparáte para la próxima captura"}
+            if wizard.get("attempt"):
+                text+=f"Intento {wizard['attempt']}/{wizard['repetitions']} · "
             text+=f"Preparáte: {wizard['countdown']}" if state=="countdown" else f"{wizard['samples']} muestras · {states.get(state,state)}"
             self.wizard_status.setText(wizard["error"] or text)
+            self.capture_feedback.setText(wizard.get("feedback","")+" · "+wizard.get("capture_message",""))
             names={"LEFT_CLICK":"Guiño izq.","RIGHT_CLICK":"Guiño der.","SCROLL_UP":"Ceja izq.","SCROLL_DOWN":"Ceja der.","MOUTH_OPEN":"Boca","BOTH_BROWS":"Ambas cejas"}
-            self.validation_labels.setText("  ·  ".join(f"{title}: {'DETECTADO ✓' if key in wizard['recognized'] else 'NO DETECTADO'}" for key,title in names.items()))
+            identities={"LEFT_CLICK":"LEFT_WINK","RIGHT_CLICK":"RIGHT_WINK","SCROLL_UP":"LEFT_BROW","SCROLL_DOWN":"RIGHT_BROW","MOUTH_OPEN":"MOUTH_OPEN","BOTH_BROWS":"BOTH_BROWS"}
+            self.validation_labels.setText("  ·  ".join(f"{title}: "+("NO DISPONIBLE" if not wizard.get("enabled",{}).get(identities[key],True) else "DETECTADO ✓" if key in wizard['recognized'] else "NO DETECTADO") for key,title in names.items()))
             self.save_calibration_button.setEnabled(wizard["can_save"] and s["state"]=="CALIBRATING")
         else:
             self.save_calibration_button.setEnabled(False)
+            self.calibration_source.setEnabled(True)
         fd=s["face"]
         d=s["diagnostic"]
         if d:
             t=d["thresholds"]
+            advanced=[]
+            for key,record in d.get("gesture_calibrations",{}).items():
+                if not record["enabled"]:
+                    advanced.append(GESTURE_LABELS[key]+": no disponible")
+                    continue
+                numbers=lambda values:" / ".join(f"{v:.4f}" for v in values)
+                values=d.get("signals",{}).get(key)
+                advanced.append(f"{GESTURE_LABELS[key]} · {record['source']} · señal {numbers(values) if values else 'ausente'}\n"
+                                f"Activación {numbers(record['activation_threshold'].values())} · Liberación {numbers(record['release_threshold'].values())} · Calidad {record['quality_score']:.2f} · Repeticiones {record.get('repetitions_valid',0)}")
+            self.advanced_diagnostic.setText("\n".join(advanced) or "Perfil anterior: umbral único geométrico; ambas cejas usan los umbrales unilaterales.")
             self.diagnostic_values.setText(
                 f"Facial X / Y: {fd.nose_x:.4f} / {fd.nose_y:.4f}   |   Cursor esperado (panel 800×500): {s['cursor'][0]:.0f} / {s['cursor'][1]:.0f}\n"
                 f"Desplazamiento normalizado: {d['normalized_dx']:+.4f} / {d['normalized_dy']:+.4f}   |   FPS: {s['fps']:.0f}   |   Latencia: {s['processing_ms']:.1f} ms\n"

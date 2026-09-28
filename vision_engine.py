@@ -27,6 +27,7 @@ from pathlib import Path
 from dataclasses import replace
 from config import ROOT, VisionConfig
 from face_data import FaceData
+from gesture_signals import extract_blendshapes
 
 logger = logging.getLogger(__name__)
 import threading
@@ -168,7 +169,7 @@ class VisionEngine(threading.Thread):
                 min_face_detection_confidence=self.config.detection_confidence,
                 min_face_presence_confidence=self.config.presence_confidence,
                 min_tracking_confidence=self.config.tracking_confidence,
-                output_face_blendshapes=False,
+                output_face_blendshapes=True,
                 output_facial_transformation_matrixes=False,
                 result_callback=self._on_result,
             )
@@ -313,6 +314,7 @@ class VisionEngine(threading.Thread):
             mouth_open      = mouth_open,
             face_scale      = scale,
             timestamp_ms    = timestamp_ms,
+            blendshapes     = extract_blendshapes((getattr(result, "face_blendshapes", None) or [[]])[0]),
             landmarks       = tuple((float(lms[i].x), float(lms[i].y)) for i in
                                     (1, 159, 145, 386, 374, 70, 105, 107, 336, 334, 300, 13, 14)),
         )

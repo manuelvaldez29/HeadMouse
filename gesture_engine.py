@@ -38,6 +38,9 @@ from config import GestureConfig, DEFAULT_THRESHOLDS
 from profiles import load_legacy, validate_profile
 from tracking import NoseTrackingStrategy
 from action_mapping import LEGACY_GESTURES
+from adaptive_calibration import HysteresisGate
+from gesture_signals import GESTURE_SIGNALS
+from gesture_arbitration import BrowArbiter
 
 if TYPE_CHECKING:
     from vision_engine import VisionEngine
@@ -186,6 +189,24 @@ class GestureEngine:
         if calibration.get("status") == "draft":
             raise ValueError("El perfil aún no está calibrado")
         self._thresholds = calibration["thresholds"].copy()
+        self.calibrations = deepcopy(calibration.get("gesture_calibrations", {}))
+        self.enabled_gestures = {key for key in GESTURE_SIGNALS if self.calibrations.get(key, {}).get("enabled", True)}
+        self._gates = {}
+        self._signal_sources = {}
+        self.last_active = {}
+        self.last_signals = {}
+        for key, spec in GESTURE_SIGNALS.items():
+            record = self.calibrations.get(key)
+            self._signal_sources[key] = record["source"] if record else "GEOMETRIC"
+            fallback = dict(zip(spec.channels, (self._thresholds[k] for k in spec.legacy_keys)))
+            a = record["activation_threshold"] if record and record["enabled"] else fallback
+            r = record["release_threshold"] if record and record["enabled"] else fallback
+            if record and not record["enabled"] and key in ("LEFT_WINK","RIGHT_WINK"):
+                from gesture_signals import disabled_eye_suppression
+                a,r=disabled_eye_suppression(key,self.calibrations,a,r)
+            self._gates[key] = HysteresisGate(spec.channels, spec.directions, a, r)
+        self._brow_arbiter = BrowArbiter(self.config.brow_decision_ms)
+        self._brow_pending = {}
         self.config.neutral_x = calibration.get("neutral_nose_x", self.config.neutral_x)
         self.config.neutral_y = calibration.get("neutral_nose_y", self.config.neutral_y)
 
@@ -249,13 +270,32 @@ class GestureEngine:
         return dict(smooth_x=self._smooth_x, smooth_y=self._smooth_y,
                     normalized_dx=self._smooth_x - self.config.neutral_x,
                     normalized_dy=self._smooth_y - self.config.neutral_y,
-                    thresholds=self._thresholds.copy(), states=self.get_detector_states())
+                    thresholds=self._thresholds.copy(), states=self.get_detector_states(),
+                    gesture_calibrations=deepcopy(self.calibrations), active=self.last_active.copy(),
+                    sources=self._signal_sources.copy(), signals=deepcopy(self.last_signals))
 
     def reset(self):
         self._smooth_x = self.config.neutral_x
         self._smooth_y = self.config.neutral_y
         for detector in self._detectors.values():
             detector.reset()
+        for gate in self._gates.values():
+            gate.reset()
+        self._brow_arbiter.reset()
+        self._brow_pending.clear()
+        self.last_active = {}
+        self.last_signals = {}
+
+    def signals_released(self, face):
+        """Neutral de todos los gestos habilitados, usando su señal y liberación."""
+        for key in self.enabled_gestures:
+            spec, gate = GESTURE_SIGNALS[key], self._gates[key]
+            values = spec.extract(face, self._signal_sources[key])
+            if values is None:
+                return False
+            if any(d*(v-gate.release[channel]) > 0 for channel,d,v in zip(spec.channels,spec.directions,values)):
+                return False
+        return True
 
     def update_screen_size(self, w: int, h: int):
         """Actualiza la resolución de pantalla para el cálculo de velocidad."""
@@ -318,32 +358,38 @@ class GestureEngine:
     # ── Gestos binarios ───────────────────────────────────────────────────────
 
     def _update_gestures(self, fd: FaceData) -> list:
-        t = self._thresholds
-
-        # ── Activaciones actuales ─────────────────────────────────────────────
-        brow_l_active = fd.brow_left_lift  > t["brow_left"]
-        brow_r_active = fd.brow_right_lift > t["brow_right"]
-        both_brows    = brow_l_active and brow_r_active
-
-        both_eyes = (fd.eye_left_ratio < t["blink_left"] and
-                     fd.eye_right_ratio < t["blink_right"])
+        self.last_signals = {key:spec.extract(fd,self._signal_sources[key]) for key,spec in GESTURE_SIGNALS.items()}
+        physical = {key:self._gates[key].update(value) for key,value in self.last_signals.items()}
+        active_gestures = {key:value and key in self.enabled_gestures for key,value in physical.items()}
+        self.last_active = active_gestures.copy()
+        both_eyes = physical["LEFT_WINK"] and physical["RIGHT_WINK"]
+        left, right, both = (active_gestures[k] for k in ("LEFT_BROW","RIGHT_BROW","BOTH_BROWS"))
+        choice = self._brow_arbiter.update(left,right,both,self._clock())
         active = {
-            "blink_left":  fd.eye_left_ratio  < t["blink_left"] and not both_eyes,
-            "blink_right": fd.eye_right_ratio < t["blink_right"] and not both_eyes,
-            # Si ambas cejas están levantadas, suprimir las individuales
-            # para evitar SCROLL_UP + SCROLL_DOWN simultáneos
-            "brow_left":   brow_l_active and not both_brows,
-            "brow_right":  brow_r_active and not both_brows,
-            "mouth_open":  fd.mouth_open      > t["mouth_open"],
-            "both_brows":  both_brows,
+            "blink_left": active_gestures["LEFT_WINK"] and not both_eyes,
+            "blink_right": active_gestures["RIGHT_WINK"] and not both_eyes,
+            "brow_left": left and choice in (None,"left") and not both,
+            "brow_right": right and choice in (None,"right") and not both,
+            "mouth_open": active_gestures["MOUTH_OPEN"],
+            "both_brows": both and choice == "both",
         }
-
+        # Actividad efectiva para validación: respeta supresión bilateral y arbitraje.
+        effective = {detector.event_type:active[key] for key,detector in self._detectors.items()}
+        self.last_active = {key:effective[spec.event_type] for key,spec in GESTURE_SIGNALS.items()}
         events = []
         for gesture_id, is_active in active.items():
             ev = self._detectors[gesture_id].update(is_active)
-            if ev:
+            if gesture_id in ("brow_left","brow_right"):
+                if not is_active:
+                    self._brow_pending.pop(gesture_id, None)
+                elif ev:
+                    self._brow_pending[gesture_id] = ev
+            elif ev:
                 events.append(ev)
-
+        if choice in ("left","right"):
+            event = self._brow_pending.pop("brow_"+choice, None)
+            if event:
+                events.append(event)
         return events
 
     # ── Calibración ───────────────────────────────────────────────────────────

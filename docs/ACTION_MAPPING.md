@@ -22,3 +22,10 @@ La acción `PAUSE` tiene prioridad sobre las otras acciones del mismo ciclo. Un 
 El doble clic usa el backend PyAutoGUI; las teclas usan su operación `press`. Abrir Inicio envía la tecla Windows. Estas acciones se prueban con un backend simulado, sin enviar entradas reales. El dashboard cuenta acciones de clic ejecutadas: un doble clic equivale a una acción de doble clic, no a dos detecciones de gesto.
 
 Las duraciones de hold, cooldown, supresión de parpadeo bilateral y prioridad de ambas cejas pertenecen al detector. Cambiar el mapeo no cambia esos criterios. Cambiar los tiempos de reconocimiento desde Configuración invalida la validación anterior y requiere volver a validar.
+
+En v0.3.1, un gesto marcado **no disponible** se excluye de captura, detección y
+validación, y al guardar la calibración recibe `NONE`. La GUI deshabilita su
+selector de acción. Esto difiere de asignar `NONE` a un gesto habilitado, que
+sigue siendo detectable. Los perfiles anteriores mantienen todos habilitados.
+Si se omite ambas cejas, se puede asignar `PAUSE` a otro gesto disponible; los
+botones de la aplicación siguen permitiendo iniciar y detener el control.

@@ -81,7 +81,7 @@ def validate_calibration(data, config=None):
                 raise ValueError("ratio o variabilidad negativos")
             margin = max(config.min_separation, config.noise_multiplier * 1.4826 * mad)
             if direction * (t - n) <= margin or direction * (e - t) <= 0:
-                pass # errors.append(f"{key}: umbral sin separación suficiente del neutral/extremo")
+                errors.append(f"{key}: umbral sin separación suficiente del neutral/extremo")
         except (KeyError, TypeError, ValueError):
             errors.append(f"{key}: datos incompletos o inválidos")
     return errors

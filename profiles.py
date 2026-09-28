@@ -49,6 +49,30 @@ def validate_profile(data):
     if not isinstance(data.get("settings", {}), dict):
         raise ValueError("settings debe ser un objeto JSON")
     settings = load_config(overrides=data.get("settings", {}))
+    if "gesture_calibrations" in data:
+        from adaptive_calibration import HysteresisGate
+        from gesture_signals import GESTURE_SIGNALS, SOURCES
+        records = data["gesture_calibrations"]
+        if not isinstance(records, dict) or set(records) != set(GESTURE_SIGNALS):
+            raise ValueError("La calibración necesita un estado por gesto registrado")
+        for gesture_id, spec in GESTURE_SIGNALS.items():
+            record = records[gesture_id]
+            if not isinstance(record, dict) or record.get("gesture_id") != gesture_id or type(record.get("enabled")) is not bool:
+                raise ValueError("Identidad o disponibilidad de gesto inválida")
+            if record.get("channels") != list(spec.channels) or record.get("directions") != list(spec.directions):
+                raise ValueError("Canales de gesto incompatibles")
+            if record.get("source") not in SOURCES or not spec.brow and record["source"] != "GEOMETRIC":
+                raise ValueError("Fuente de señal incompatible")
+            if record.get("validation_state") not in ("pending", "passed", "repeat", "disabled"):
+                raise ValueError("Estado de validación por gesto inválido")
+            if record["enabled"]:
+                bounded("quality_score", record.get("quality_score"), .85, 1)
+                for name in ("activation_threshold", "release_threshold"):
+                    if not isinstance(record.get(name), dict) or set(record[name]) != set(spec.channels):
+                        raise ValueError("Umbrales de gesto incompletos")
+                HysteresisGate(spec.channels, spec.directions, record["activation_threshold"], record["release_threshold"])
+            elif record.get("activation_threshold") or record.get("release_threshold"):
+                raise ValueError("Un gesto deshabilitado no debe aportar umbrales de activación")
     if ("neutral" in data) != ("gesture_extremes" in data):
         raise ValueError("neutral y gesture_extremes deben estar juntos")
     if "neutral" in data:

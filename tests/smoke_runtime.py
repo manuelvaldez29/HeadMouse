@@ -37,7 +37,7 @@ def run():
         options = mp_vision.FaceLandmarkerOptions(
             base_options=mp_python.BaseOptions(model_asset_path=str(engine.model_path)),
             running_mode=mp_vision.RunningMode.LIVE_STREAM,
-            num_faces=1, result_callback=engine._on_result)
+            num_faces=1, output_face_blendshapes=True, result_callback=engine._on_result)
         with mp_vision.FaceLandmarker.create_from_options(options) as detector:
             image = mp.Image(image_format=mp.ImageFormat.SRGB,
                              data=np.zeros((256, 256, 3), dtype=np.uint8))

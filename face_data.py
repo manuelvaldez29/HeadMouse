@@ -19,6 +19,7 @@ class FaceData:
     detected_at: float = 0.0  # monotonic: final de extracción
     processing_ms: float = 0.0  # envío a MediaPipe → extracción, no captura
     landmarks: tuple = ()  # puntos relevantes volátiles para preview; nunca persistidos
+    blendshapes: tuple = ()  # pares (nombre, score), solo memoria; opcionales
 
     def valid(self):
         values = (self.nose_x, self.nose_y, self.eye_left_ratio,

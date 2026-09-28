@@ -32,6 +32,8 @@ class ApplicationController:
         self.config = load_config()
         self.vision = self.gesture = self.control = self.metrics = None
         self.wizard = self.experiment = self.jitter = None
+        self._calibration_session_id = None
+        self._calibration_logged = 0
         self.jitter_result = None
         self.state = "HOME"
         self.message = "Elegí o creá un perfil para comenzar."
@@ -194,13 +196,15 @@ class ApplicationController:
         self.start_camera()
         self.state, self.message = "DIAGNOSTIC", "Diagnóstico seguro: el cursor del sistema no se mueve."
 
-    def start_calibration(self):
+    def start_calibration(self, enabled=None, source=None):
         self.stop_control()
         if self.experiment and self.experiment.active:
             self.experiment.cancel()
         self.jitter = None
         self.start_camera()
-        self.wizard = CalibrationSession(self.profile, self.config, self.clock)
+        self.wizard = CalibrationSession(self.profile, self.config, self.clock, enabled, source)
+        self._calibration_session_id = uuid.uuid4().hex
+        self._calibration_logged = 0
         self.wizard.start()
         self.state = "CALIBRATING"
 
@@ -217,9 +221,27 @@ class ApplicationController:
         self.wizard.validate()
         self.state = "CALIBRATING"
 
-    def repeat_calibration(self):
+    def repeat_calibration(self, gesture_id=None):
         if self.wizard:
-            self.wizard.repeat()
+            self.stop_control()
+            self.start_camera()
+            self.wizard.repeat(gesture_id)
+            self.state = "CALIBRATING"
+
+    def set_calibration_gesture(self, gesture_id, enabled):
+        if self.wizard is None or self.state != "CALIBRATING":
+            raise ValueError("Iniciá la calibración para modificar este intento")
+        self.wizard.set_enabled(gesture_id, enabled)
+
+    def _flush_calibration_telemetry(self):
+        if not self.wizard or not self._calibration_session_id:
+            return
+        while self._calibration_logged < len(self.wizard.telemetry):
+            record = self.wizard.telemetry[self._calibration_logged]
+            ResultStore(self.data_dir / "calibration").append(self._calibration_session_id,
+                dict(experiment="gesture_calibration", schema_version=1, profile_id=self.profile["user_id"],
+                     recorded_at=time.time(), **record))
+            self._calibration_logged += 1
 
     def save_calibration(self):
         if self.wizard is None:
@@ -227,6 +249,7 @@ class ApplicationController:
         result = self.wizard.result()
         self.profiles.store.save(result)
         self.profile = self.profiles.store.load(result["user_id"])
+        self.config = load_config(overrides=self.profile.get("settings", {}))
         self._make_gesture()
         self.state = "PREVIEW"
         self.message = "Perfil guardado y validado. Ya podés probar HeadMouse."
@@ -306,6 +329,7 @@ class ApplicationController:
         events, actions = [], []
         if self.state == "CALIBRATING" and self.wizard:
             self.wizard.update(face)
+            self._flush_calibration_telemetry()
         elif self.control:
             self.control._tick()  # mismo ciclo seguro v0.2, conducido por el worker Qt
             events, actions = list(self.control.last_events), list(self.control.last_actions)

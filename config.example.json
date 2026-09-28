@@ -17,6 +17,7 @@
     "blink_cooldown_ms": 600,
     "brow_hold_ms": 120,
     "brow_cooldown_ms": 220,
+    "brow_decision_ms": 200,
     "both_brows_hold_ms": 180,
     "both_brows_cooldown_ms": 1000,
     "mouth_hold_ms": 150,
@@ -34,9 +35,17 @@
     "min_samples": 20,
     "threshold_fraction": 0.6,
     "min_separation": 0.002,
-    "noise_multiplier": 3,
+    "noise_multiplier": 1.5,
     "validation_timeout_s": 30,
-    "validation_neutral_s": 2
+    "validation_neutral_s": 2,
+    "repetitions": 3,
+    "active_window_s": 0.8,
+    "neutral_window_s": 1,
+    "transition_s": 0.3,
+    "min_window_samples": 8,
+    "validation_noise_s": 0.15,
+    "validation_wrong_s": 0.35,
+    "brow_signal_source": "GEOMETRIC"
   },
   "ui": {
     "show_overlay": true,

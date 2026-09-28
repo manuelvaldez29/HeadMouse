@@ -5,7 +5,7 @@ import sys
 import tempfile
 from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QCheckBox
 from desktop.window import MainWindow
 from desktop.style import apply_style
 from PySide6.QtCore import QObject, Signal
@@ -44,7 +44,7 @@ def main():
             window.show_page(index)
             window.refresh()
             app.processEvents()
-            window.grab().save(str(directory/f"v03-{name}.png"))
+            window.grab().save(str(directory/f"v031-{name}.png"))
         # Datos explícitamente sintéticos para revisar textos largos y overlays.
         snapshot.update(message="REVISIÓN VISUAL · Datos sintéticos, sin cámara ni control",
                         camera=True, detected=True, mediapipe="Preparado", fps=30,
@@ -61,7 +61,11 @@ def main():
                         wizard={"instruction":"Volvé a posición neutral antes del siguiente gesto.",
                                 "progress":.8,"state":"validation","phase":6,"samples":120,
                                 "countdown":0,"error":"","recognized":["LEFT_CLICK","RIGHT_CLICK","SCROLL_UP"],
-                                "can_save":False},
+                                "can_save":False,"total_phases":7,"attempt":2,"repetitions":3,
+                                "feedback":"Buena separación","capture_message":"Intento 1/3 capturado ✓",
+                                "gesture_id":"BOTH_BROWS","quality":{"BOTH_BROWS":{"label":"BUENA","score":1}},
+                                "meter":[dict(channel="left",value=.32,neutral=.2,release=.25,activation=.28,comfortable=.4,direction=1),
+                                         dict(channel="right",value=.35,neutral=.22,release=.26,activation=.3,comfortable=.42,direction=1)]},
                         experiment={"active":True,"index":1,"total":5,"cursor":(400,250),
                                     "target":(640,120),"radius":35,"completed":0,"path":"",
                                     "elapsed_s":1,"mode":"simulation","source":"keyboard"})
@@ -69,7 +73,17 @@ def main():
             window.show_page(index)
             window.refresh()
             app.processEvents()
-            window.grab().save(str(directory/f"v03-{name}-synthetic.png"))
+            window.grab().save(str(directory/f"v031-{name}-synthetic.png"))
+        window.show_page(2)
+        window.resize(980,700)
+        app.processEvents()
+        window.grab().save(str(directory/"v031-calibration-compact.png"))
+        window.resize(1240,850)
+        window.show_page(3)
+        for check in window.findChildren(QCheckBox):
+            if check.text()=="Mostrar calibración avanzada por gesto": check.setChecked(True)
+        app.processEvents()
+        window.grab().save(str(directory/"v031-diagnostic-advanced.png"))
         window.close()
         app.processEvents()
         print("Pantallas vacías y sintéticas renderizadas en",directory)

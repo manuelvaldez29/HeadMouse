@@ -3,8 +3,8 @@ calibrate.py
 HeadMouse — Calibración automática por usuario
 Tesis UNSTA 2026 — Bloj · Domfrocht · Petrelli · Valdez
 
-Mide los valores neutros y extremos de cada gesto para cada usuario
-y calcula umbrales personalizados automáticamente. Guarda el resultado
+Captura repeticiones neutrales/activas con el mismo wizard que la GUI
+y calcula umbrales adaptativos por gesto. Guarda el resultado
 en data/profiles/<usuario>.json después de validación interactiva.
 
 Uso:
@@ -261,31 +261,35 @@ STATE_DONE       = "done"
 # MAIN
 # ══════════════════════════════════════════════════════════════════════════════
 
-def run(user_id: str, config=None):
-    # Dependencias visuales se cargan solo al ejecutar, no para lógica/tests/help.
+def run(user_id: str, config=None, disabled=None):
+    # CLI y GUI conducen exactamente la misma máquina de captura/validación.
     global cv2, np
     import cv2
     import numpy as np
+    import uuid
     from vision_engine import VisionEngine
+    from calibration_session import CalibrationSession
+    from gesture_signals import GESTURE_SIGNALS
+    from experiment_engine import ResultStore
     validate_user_id(user_id)
     config = config or load_config()
     store = ProfileStore()
-    cc = config.calibration
-    logger.info("Calibración de %s; salida: %s", user_id, store.path(user_id))
+    profile = dict(user_id=user_id)
+    if store.path(user_id).exists():
+        try:
+            profile = store.load(user_id)
+        except ValueError:
+            logger.warning("Perfil inválido: se conservará hasta guardar una nueva calibración validada")
+    session = CalibrationSession(profile, config, enabled={key:False for key in (disabled or [])})
+    telemetry = ResultStore(ROOT / "data" / "calibration")
+    session_id, logged = uuid.uuid4().hex, 0
+    logger.info("Calibración adaptativa de %s; salida: %s", user_id, store.path(user_id))
     with ExitStack() as cleanup:
         cleanup.callback(cv2.destroyAllWindows)
         engine = VisionEngine(config=config.vision)
         cleanup.callback(engine.stop)
         engine.start()
         engine.wait_ready()
-        state = STATE_WELCOME
-        phase_idx = 0
-        phase_data = {}
-        current_samp = None
-        t_phase = 0.0
-        calibration = {}
-        error = ""
-        validator = None
         while True:
             if engine.error or not engine.is_alive():
                 raise RuntimeError("La captura terminó durante la calibración") from engine.error
@@ -293,95 +297,86 @@ def run(user_id: str, config=None):
             if frame is None:
                 time.sleep(.01)
                 continue
-            fd = engine.get_face_data()
-            vis = frame.copy()
-            now = time.monotonic()
-            if state == STATE_WELCOME:
-                vis = draw_welcome(vis)
-            elif state == STATE_COUNTDOWN:
-                phase = PHASES[phase_idx]
-                elapsed = now - t_phase
-                vis = draw_countdown(vis, phase, max(1, int(np.ceil(cc.countdown_s - elapsed))))
-                draw_step_indicator(vis, phase_idx + 1, len(PHASES))
-                if elapsed >= cc.countdown_s:
-                    state = STATE_MEASURING
-                    t_phase = now
-                    current_samp = Samples()
-            elif state == STATE_MEASURING:
-                phase = PHASES[phase_idx]
-                elapsed = now - t_phase
-                current_samp.add(fd, config.gesture.stale_after_s, now)
-                vis = draw_measuring(vis, phase, elapsed, len(current_samp.eye_left), cc.measuring_s)
-                draw_live_values(vis, fd)
-                draw_step_indicator(vis, phase_idx + 1, len(PHASES))
-                if elapsed >= cc.measuring_s:
-                    if len(current_samp.eye_left) < cc.min_samples:
-                        error = "Pocas muestras. R: repetir esta fase"
-                        state = "error"
-                    else:
-                        phase_data[phase["id"]] = current_samp
-                        phase_idx += 1
-                        if phase_idx < len(PHASES):
-                            state, t_phase = STATE_COUNTDOWN, now
-                        else:
-                            try:
-                                calibration = build_calibration(user_id, phase_data, cc)
-                                calibration["settings"] = asdict(config)
-                                if store.path(user_id).exists():
-                                    try:
-                                        calibration["display_name"] = store.load(user_id).get("display_name", user_id)
-                                    except ValueError:
-                                        pass  # Perfil anterior dañado: se permite recalibrar.
-                                state = STATE_RESULTS
-                            except ValueError as exc:
-                                logger.warning("Calibración rechazada: %s", exc)
-                                error = "Umbrales invalidos. R: recalibrar; detalle en terminal"
-                                state = "error"
-            elif state == STATE_RESULTS:
-                vis = draw_results(vis, calibration["thresholds"], calibration)
-            elif state == "validate":
-                validator.update(fd)
-                vis = overlay_dark(vis, .6)
-                put_centered(vis, validator.instruction, vis.shape[0] // 2, .65,
-                             C_GREEN if validator.passed else C_WHITE, 1)
-                put_centered(vis, f"Gestos verificados: {len(validator.recognized)}/6", 50, .7, C_CYAN, 1)
-                put_centered(vis, "R: repetir validacion | C: recalibrar | Q: descartar", vis.shape[0]-30, .55, C_GRAY, 1)
-            elif state == "error":
-                vis = overlay_dark(vis)
-                put_centered(vis, error, vis.shape[0] // 2, .6, C_RED, 1)
-            cv2.imshow("HeadMouse — Calibracion (Q = salir)", vis)
+            session.update(engine.get_face_data())
+            while logged < len(session.telemetry):
+                telemetry.append(session_id, dict(experiment="gesture_calibration", schema_version=1,
+                    profile_id=user_id, recorded_at=time.time(), **session.telemetry[logged]))
+                logged += 1
+            snapshot = session.snapshot()
+            vis = draw_adaptive_calibration(frame.copy(), snapshot)
+            cv2.imshow("HeadMouse — Calibracion adaptativa (Q = salir)", vis)
             key = cv2.waitKey(1) & 0xFF
             if key == ord("q"):
                 return None
-            if key == ord("c") and state == "validate":
-                state, phase_idx, phase_data = STATE_WELCOME, 0, {}
-            elif key == ord("r") and state == "error":
-                if phase_idx >= len(PHASES):
-                    phase_idx, phase_data = 0, {}
-                state, t_phase = STATE_COUNTDOWN, now
-            elif (key == ord(" ") and state == STATE_RESULTS or
-                  key == ord("r") and state == "validate"):
-                gesture = GestureEngine(engine, config=config.gesture, calibration=calibration)
-                validator = CalibrationValidation(gesture, cc.validation_timeout_s,
-                                                  neutral_s=cc.validation_neutral_s)
-                state = "validate"
+            if key == ord("c"):
+                session.restart()
+                session_id, logged = uuid.uuid4().hex, 0
+            elif key == ord("r"):
+                session.repeat()
+            elif key == ord("s") and snapshot.get("gesture_id"):
+                session.set_enabled(snapshot["gesture_id"], False)
+            elif ord("1") <= key <= ord("6"):
+                gesture_id = list(GESTURE_SIGNALS)[key-ord("1")]
+                if session.baseline is not None and session.models[gesture_id].enabled:
+                    session.repeat(gesture_id)
             elif key == ord(" "):
-                if state == STATE_WELCOME:
-                    state, t_phase = STATE_COUNTDOWN, now
-                elif state == "validate" and validator.passed:
-                    calibration["validation"] = {
-                        "passed": True, "recognized": validator.recognized,
-                        "validated_at": datetime.now().astimezone().isoformat(timespec="seconds")}
-                    path = store.save(calibration)
-                    logger.info("Perfil validado guardado: %s", path)
+                if session.state == "ready":
+                    session.start()
+                elif session.state == "measured":
+                    session.validate()
+                elif session.state == "validated":
+                    path = store.save(session.result())
+                    logger.info("Perfil adaptativo validado guardado: %s", path)
                     return path
 
 
+def draw_adaptive_calibration(frame, snapshot):
+    # OpenCV Hershey no representa tildes: transliterar solo la presentación CLI.
+    import unicodedata
+    def ascii_text(value):
+        return unicodedata.normalize("NFKD",str(value)).encode("ascii","ignore").decode()
+    height,width=frame.shape[:2]
+    scale=max(1,800/width,600/height)
+    if scale>1: frame=cv2.resize(frame,(round(width*scale),round(height*scale)))
+    vis = overlay_dark(frame,.65)
+    h,w=vis.shape[:2]
+    lines=["HEADMOUSE v0.3.1 - CALIBRACION ADAPTATIVA",
+           snapshot["instruction"],
+           f"Paso {snapshot['phase']}/{snapshot['total_phases']} | Intento {snapshot['attempt']}/{snapshot['repetitions']}",
+           snapshot["error"] or snapshot["feedback"], snapshot["capture_message"]]
+    if snapshot["state"] in ("countdown","settling"):
+        lines.append(f"Preparate: {snapshot['countdown']}")
+    for i,text in enumerate(lines):
+        put_centered(vis,ascii_text(text),30+i*32,.6,C_WHITE,1)
+    y=225
+    for row in snapshot["meter"]:
+        values=[row[k] for k in ("neutral","comfortable","activation","release","value") if row[k] is not None]
+        if not values: continue
+        lo,hi=min(values),max(values)
+        padding=max(.005,(hi-lo)*.15)
+        lo,hi=lo-padding,hi+padding
+        x=lambda value:int(25+(value-lo)/(hi-lo)*(w-50))
+        cv2.line(vis,(25,y),(w-25,y),C_GRAY,2)
+        for name,color in (("neutral",C_WHITE),("release",C_PURPLE),("activation",C_ORANGE),("comfortable",C_GREEN)):
+            if row[name] is not None:
+                cv2.line(vis,(x(row[name]),y-8),(x(row[name]),y+8),color,2)
+        if row["value"] is not None:
+            cv2.circle(vis,(x(row["value"]),y),5,C_CYAN,-1)
+        y+=35
+    put_centered(vis,"Neutral blanco | Liberacion violeta | Activacion naranja | Gesto verde",h-65,.45,C_GRAY,1)
+    put_centered(vis,"SPACE iniciar/validar/guardar | R repetir | C reiniciar | S omitir | Q salir",h-40,.45,C_WHITE,1)
+    put_centered(vis,"Repetir: 1 guino izq | 2 der | 3 ceja izq | 4 der | 5 boca | 6 ambas",h-18,.4,C_GRAY,1)
+    return vis
+
+
 def main(argv=None):
-    parser = argparse.ArgumentParser(description="HeadMouse v0.2 — Calibración y validación por usuario")
+    from gesture_signals import GESTURE_SIGNALS, SOURCES
+    parser = argparse.ArgumentParser(description="HeadMouse v0.3.1 — Calibración adaptativa por usuario")
     parser.add_argument("--user", default="default")
     parser.add_argument("--camera", type=int)
     parser.add_argument("--config")
+    parser.add_argument("--disable", action="append", choices=tuple(GESTURE_SIGNALS), default=[], help="Gesto no disponible; se puede repetir")
+    parser.add_argument("--brow-signal", choices=SOURCES, help="Fuente de cejas; blendshape/hybrid requieren calibración propia")
     parser.add_argument("--log-level", choices=["DEBUG", "INFO", "WARNING", "ERROR"])
     parser.add_argument("--check", action="store_true", help="Verificar dependencias/config/modelo sin abrir cámara")
     args = parser.parse_args(argv)
@@ -395,6 +390,9 @@ def main(argv=None):
             logger.warning("Perfil anterior inválido; recalibrar con configuración base: %s", exc)
             settings = {}
         config = load_config(args.config, settings)
+        if args.brow_signal:
+            config.calibration.brow_signal_source = args.brow_signal
+            config.calibration.__post_init__()
         if args.camera is not None:
             config.vision.camera_index = args.camera
             config.vision.__post_init__()
@@ -404,7 +402,7 @@ def main(argv=None):
             VisionEngine._ensure_model(ROOT / config.vision.model_path)
             logger.info("Dependencias/config/modelo verificados; webcam no probada")
             return 0
-        run(args.user, config)
+        run(args.user, config, args.disable)
         return 0
     except KeyboardInterrupt:
         logger.info("Calibración cancelada; no se guardó un perfil nuevo")

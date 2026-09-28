@@ -1,75 +1,68 @@
 # Calibración personalizada
 
+La implementación actual es [v0.3.1: calibración adaptativa genérica](CALIBRATION_V031.md).
+GUI y CLI comparten captura, ajuste estadístico y validación. El documento
+detalla fórmulas, calidad, histéresis, ambas cejas, blendshapes, telemetría y límites.
+
 ## Procedimiento
 
-Ejecutar `python calibrate.py --user julian`. Se mantienen las seis fases:
-neutral, guiño izquierdo, derecho, ceja izquierda, derecha y boca. Defaults:
-3 s de preparación y 4 s de captura. Se requieren 20 detecciones únicas y
-recientes por fase; la UI permite repetir una fase incompleta con R.
+Abrir la [GUI](GUI.md) o ejecutar `python calibrate.py --user julian`.
+Primero se captura neutral: preparación de 3 s y ventana válida de 4 s con
+al menos 20 muestras. Luego se realizan tres repeticiones por gesto habilitado:
+1 s neutral y 0.8 s activo, descartando 0.3 s de transición y exigiendo ocho
+muestras por ventana. Se descartan duplicados, datos no finitos y vencidos.
+La pérdida de tracking reinicia la ventana actual. No se pide sostener un gesto
+facial durante cuatro segundos.
 
-La mediana estima neutral. Los percentiles 10 de ojos y 90 de cejas/boca
-representan extremos: resisten muestras aisladas anómalas sin eliminar el
-movimiento deliberado. Son los estadísticos originales, ahora sin aceptar
-listas vacías como cero. Se descartan duplicados, datos no finitos y vencidos.
-No son robustos a cualquier proporción de contaminación ni prueban que el gesto
-solicitado se realizó: por eso se incorpora validación posterior.
+La disponibilidad es configurable; no realizar un gesto no impide calibrar los
+demás. La calidad débil permite repetir solo ese gesto u omitirlo. La captura de
+ambas cejas es independiente de las dos unilaterales. No se usan extremos de un
+solo frame ni una fracción fija como único criterio de ajuste.
 
-Para cada lado se conserva `threshold = neutral + 0.6 * (extremo - neutral)`.
-El factor es configurable, no se entrena un modelo. Se registra MAD neutral de
-ojos, cejas, boca y coordenadas nasales. La distancia del umbral al neutral debe
-superar `max(min_separation, noise_multiplier * 1.4826 * MAD)`. Defaults: 0.002
-y 3. El extremo debe estar más allá del umbral en la dirección correcta. Esta
-regla es una comprobación heurística de calidad, no una validación clínica.
+En CLI, SPACE comienza, valida y guarda según el estado; R repite el paso
+actual; C reinicia; S omite el gesto actual; Q descarta. Las teclas 1–6 vuelven
+a medir guiño izquierdo, derecho, ceja izquierda, derecha, boca y ambas cejas.
+Ejemplo: `python calibrate.py --user julian --disable LEFT_BROW --disable RIGHT_BROW`.
+`--brow-signal BLENDSHAPE` o `HYBRID` son experimentales y requieren calibración propia.
 
 ## Validación antes de guardar
 
-Después de calcular umbrales, SPACE inicia una prueba con **GestureEngine real**,
-sin ControlEngine ni PyAutoGUI. Se exige neutral durante 2 s; luego guiño izq.,
-guiño der., ceja izq., ceja der., boca y ambas cejas. Entre cada gesto, y al final,
-se exige volver al neutral. Cada paso tiene timeout de 30 s configurable;
-`validation_neutral_s` permite ajustar los 2 s de neutral.
+Se usa **GestureEngine real**, sin ControlEngine ni entradas al sistema. Se
+exigen 2 s de neutral válido entre gestos habilitados y al final. Interrupciones
+breves de hasta 0.15 s no cuentan como tiempo neutral pero se toleran; un gesto
+incorrecto sostenido 0.35 s genera error. Cada paso tiene timeout de 30 s.
+Se respetan hold/cooldown, liberación e histéresis. Un evento aislado no rechaza
+inmediatamente la validación. R repite el paso conservando los ya reconocidos.
 
-Los eventos inesperados rechazan la prueba. Se usan hold/cooldown configurados;
-no basta cruzar el umbral un instante. La liberación se comprueba por ratios,
-para no confundir silencio durante cooldown con neutral. Pérdida de rostro
-reinicia la espera de neutral. R repite validación, C vuelve a calibrar, Q
-descarta. Solo SPACE después de aprobar escribe el perfil. Cerrar o interrumpir
-antes conserva intacto el archivo anterior.
+Solo guardar después de aprobar escribe el perfil. Cerrar o interrumpir antes
+conserva el archivo previo. La GUI muestra botones y el estado de cada gesto;
+la CLI requiere teclado. Las muestras crudas viven solo durante la sesión.
 
-La UI CLI exige teclado. En v0.3, el wizard de [la aplicación desktop](GUI.md)
-ofrece botones e instrucciones visuales y reutiliza Samples, build_calibration
-y CalibrationValidation. Los seis gestos de validación siguen siendo obligatorios;
-el mapeo de acciones no elimina esa exigencia. Algunos gestos pueden resultar
-inaccesibles para ciertas personas: la selección de un subconjunto de gestos
-y la validación de accesibilidad con usuarios siguen pendientes.
+## Perfiles y compatibilidad
 
-## Perfiles
+`data/profiles/<user_id>.json` conserva esquema 2 y agrega:
 
-`data/profiles/<user_id>.json`, esquema 2:
+- `calibration_version: "0.3.1"` y `gesture_calibrations` por identidad;
+- disponibilidad, fuente, canales, dirección, estadísticas neutral/activa;
+- repeticiones, activación/liberación, calidad, separación, ruido, reintentos;
+- `neutral_nose_x/y`, settings personales, resultado y fecha de validación;
+- cinco `thresholds` de compatibilidad y agregados de `calibration_telemetry`.
 
-- `user_id`, `created_at`, `calibrated_at`;
-- `neutral_nose_x/y`, `neutral`, `neutral_variability` (MAD);
-- `gesture_extremes`, cinco `thresholds`, `sample_counts`;
-- `settings.gesture`: sensibilidad, smoothing, dead zone, tiempos;
-- `settings.calibration`: parámetros usados para la calibración;
-- `validation`: resultado, eventos reconocidos, fecha.
+No se serializan muestras individuales, fotos ni video. Las fechas de creación
+válidas se conservan al recalibrar. El guardado usa temporal, flush/fsync y
+`os.replace`; un fallo no trunca el perfil anterior. No hay bloqueo multiproceso:
+no calibrar el mismo usuario desde dos instancias simultáneas. IDs: 1–64
+caracteres ASCII alfanuméricos, guion/guion bajo; se rechazan rutas y nombres
+reservados de Windows.
 
-Se conservan fechas de creación al recalibrar. Se escribe primero un temporal
-en el mismo directorio, se hace flush/fsync y `os.replace`; si falla no se
-trunca el perfil previo. No hay bloqueo multiproceso: no calibrar el mismo
-usuario en dos instancias a la vez. IDs: 1–64 caracteres ASCII alfanuméricos,
-guion/guion bajo; nombres reservados Windows y rutas se rechazan.
+Perfiles anteriores válidos con cinco thresholds siguen funcionando con umbral
+único. Ambas cejas usan como fallback los dos umbrales unilaterales. Si contienen
+neutral/extremos, se comprueba separación: una calibración claramente deficiente
+ya no se acepta silenciosamente. Recalibrar el mismo ID por CLI permite reparar
+un perfil inválido; desde GUI se puede crear uno nuevo sin borrar el anterior.
 
-Perfiles legacy con los cinco thresholds siguen siendo legibles. Si contienen
-neutral/extremos se valida su separación; un perfil viejo inválido debe
-recalibrarse. La identidad debe coincidir con `--user`. Para un archivo global
-de un usuario identificado:
-
-```powershell
-python main.py --user julian --legacy-calibration calibration.json
-```
-
-Un perfil individual existente tiene prioridad sobre ese fallback. Para el
-usuario `default`, `calibration.json` se busca automáticamente si falta el nuevo
-perfil. No se migra ni sobreescribe silenciosamente: para crear un perfil v2
-validado, ejecutar calibración. Los perfiles no contienen imágenes.
+`--user default` busca `calibration.json` si falta su perfil. Para otro ID,
+usar `python main.py --user julian --legacy-calibration calibration.json`.
+La identidad debe coincidir. Un perfil individual tiene prioridad; no se migra
+ni sobreescribe automáticamente. La compatibilidad permite leer perfiles viejos
+con la aplicación nueva, no garantiza usar registros nuevos con versiones viejas.

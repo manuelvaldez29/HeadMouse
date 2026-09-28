@@ -1,4 +1,4 @@
-"""HEADMOUSE v0.3 — DESKTOP ACCESSIBILITY APPLICATION."""
+"""HEADMOUSE v0.3.1 — ROBUST ADAPTIVE FACIAL CALIBRATION."""
 import argparse
 import sys
 from config import ROOT, configure_logging

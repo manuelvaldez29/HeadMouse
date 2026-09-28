@@ -1,4 +1,4 @@
-# HEADMOUSE v0.3 — arquitectura desktop y motores compartidos
+# HEADMOUSE v0.3.1 — arquitectura desktop y motores compartidos
 
 ## Capa de escritorio
 
@@ -73,7 +73,7 @@ Camera → VisionEngine → FaceData → GestureEngine → GestureEvent
 ```
 
 Se conservan los seis scripts originales. `main.py` compone los módulos, el
-overlay y el ciclo de vida. `calibrate.py` conserva sus fases y visualización;
+overlay y el ciclo de vida. `calibrate.py` conduce la misma `CalibrationSession` que la GUI;
 `debug_cursor.py` usa la misma lógica nasal sin crear ControlEngine.
 
 | Módulo | Responsabilidad |
@@ -85,7 +85,11 @@ overlay y el ciclo de vida. `calibrate.py` conserva sus fases y visualización;
 | control_engine.py | Backend PyAutoGUI inyectable, pausa, límites, failsafe y acciones. Reexporta ControlConfig. Importar el módulo no inicializa PyAutoGUI. |
 | config.py | Dataclasses validadas, defaults, mezcla JSON y rutas del repositorio. |
 | profiles.py | Identidad, esquema, validación, JSON local y reemplazo atómico. |
-| calibration_logic.py | Muestras únicas, mediana, percentiles, MAD y thresholds personalizados. |
+| calibration_logic.py | Muestras únicas y cálculo/validación del formato anterior. |
+| gesture_signals.py | Registro de identidad, canales, dirección y extracción geométrica/blendshape/híbrida. |
+| adaptive_calibration.py | GestureCalibration: ajuste estadístico compartido y HysteresisGate genérico. |
+| calibration_session.py | Neutral, repeticiones, ventanas, calidad, repetición selectiva y validación; sin Qt ni SO. |
+| gesture_arbitration.py | Ventana temporal y supresión de eventos unilaterales en el episodio bilateral. |
 | calibration_validation.py | Prueba guiada de eventos/retorno al neutral sin SO. |
 | metrics.py | Agregados acotados, protegidos por lock, un JSON por sesión. |
 

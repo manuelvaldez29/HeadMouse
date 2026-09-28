@@ -106,6 +106,10 @@ class SafetyTests(unittest.TestCase):
         gesture.update.return_value = [GestureEvent("RIGHT_CLICK")]
         validation.update(FaceData(True, timestamp_ms=32000))
         self.assertFalse(validation.passed)
+        self.assertIsNone(validation.error)  # v0.3.1: un evento aislado no es fallo.
+        for timestamp in (32100,32200,32300,32400):
+            now[0]=timestamp/1000
+            validation.update(FaceData(True,timestamp_ms=timestamp))
         self.assertIsNotNone(validation.error)
 
 

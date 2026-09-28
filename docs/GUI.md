@@ -1,4 +1,4 @@
-# HeadMouse v0.3 — aplicación de escritorio
+# HeadMouse v0.3.1 — aplicación de escritorio
 
 Después de instalar las dependencias en `.venv`, abrí `HeadMouse.vbs` con doble clic en Windows. El lanzador utiliza el entorno del repositorio y no requiere escribir comandos. Si Windows Script Host está deshabilitado, ejecutá `.venv\Scripts\python.exe app.py` desde la carpeta del repositorio. Con el entorno activado, el comando equivalente es `python app.py`.
 
@@ -8,8 +8,8 @@ La instalación inicial todavía requiere preparar Python y las dependencias; es
 
 1. En **Inicio**, elegí **Nuevo perfil**, escribí un nombre y confirmá. También podés seleccionar uno existente desde **Perfiles**. Un perfil nuevo aparece como «Sin calibrar».
 2. En **Configuración**, seleccioná el índice de cámara y guardá. Si falta el modelo local, usá **Preparar modelo**, que solicita confirmación antes de descargarlo.
-3. Elegí **Calibrar**. Seguí las instrucciones de posición neutral, guiño izquierdo, guiño derecho, ceja izquierda, ceja derecha y boca. Cada fase tiene preparación y captura de muestras.
-4. Iniciá la validación y realizá los seis gestos solicitados, volviendo a neutral entre ellos. El listado muestra cuáles fueron detectados. Podés repetir o recalibrar. **Guardar perfil** se habilita solamente después de superar la validación.
+3. En **Calibración**, desplegá **Gestos disponibles y tipo de señal** y desmarcá los que no podés realizar. GEOMETRIC es la fuente predeterminada; las otras son experimentales. Elegí **Comenzar / recalibrar** y seguí neutral y tres intentos cómodos por gesto: guiños, cejas individuales, boca y ambas cejas. La cámara y el medidor muestran la señal actual, neutral, activación, liberación y extremo cómodo.
+4. Si un gesto tiene calidad débil, usá **Repetir gesto**; el selector permite volver a medir uno específico conservando los demás. También podés marcarlo no disponible desde las opciones. Iniciá **Validar** y realizá solamente los gestos habilitados, volviendo a neutral entre ellos. El ruido breve se tolera; un gesto incorrecto sostenido requiere repetir. **Guardar perfil** se habilita solamente después de superar la validación.
 5. Elegí **Probar HeadMouse** para abrir el diagnóstico. Revisá la posición, las proporciones faciales, los umbrales y el desplazamiento esperado sin mover el mouse del sistema.
 6. Cuando estés listo, elegí **Activar control** y confirmá «HeadMouse comenzará a controlar el puntero del sistema.».
 
@@ -28,7 +28,7 @@ El estado superior distingue control desactivado, activo y pausado. La pausa por
 | Inicio | Preview, perfil, cámara, MediaPipe, rostro, FPS, procesamiento, gesto y acción prevista. |
 | Perfiles | Crear, seleccionar, renombrar, eliminar con confirmación y consultar calibración. Renombrar conserva el identificador interno y los resultados históricos. |
 | Calibración | Captura guiada, repetición, validación y guardado. También permite validar perfiles anteriores. |
-| Diagnóstico | Coordenadas faciales, cursor virtual esperado, desplazamientos, ratios, umbrales, smoothing y dead zone. Incluye medición de estabilidad. |
+| Diagnóstico | Coordenadas faciales, cursor virtual esperado, desplazamientos, ratios, umbrales, smoothing y dead zone. Incluye medición de estabilidad y datos avanzados de señal, histéresis y calidad por gesto. |
 | Configuración | Cámara, sensibilidad por eje, smoothing, dead zone, timeout, duración y cooldown de gestos, overlays y landmarks. El método disponible es Nariz. |
 | Gestos y acciones | Seleccionar la acción de cada gesto y guardar en el perfil. |
 | Experimentos | Adquisición de objetivos con cursor interno, práctica con teclado o control real explícitamente activado. |
@@ -37,6 +37,11 @@ El estado superior distingue control desactivado, activo y pausado. La pausa por
 Los cambios se guardan en el mismo perfil JSON utilizado por los motores. La interfaz no exige editar JSON. Cambiar los tiempos de reconocimiento requiere validar nuevamente el perfil. Restaurar valores predeterminados pide confirmación.
 
 Los overlays y los landmarks se pueden alternar por separado. Las imágenes de preview permanecen en memoria; no se guardan fotografías ni video.
+
+Los ajustes terminados guardan estadísticas locales en `data/calibration/`.
+El [detalle de v0.3.1](CALIBRATION_V031.md) explica calidad, compatibilidad y
+límites. Revalidar un perfil anterior no recupera sus muestras: para volver a
+medirlo hay que iniciar una calibración nueva.
 
 ## Experimentos y resultados
 

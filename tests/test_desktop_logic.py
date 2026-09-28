@@ -178,21 +178,30 @@ class DesktopLogicTests(unittest.TestCase):
         cc.calibration.countdown_s=.1
         cc.calibration.measuring_s=.2
         cc.calibration.min_samples=3
+        cc.calibration.active_window_s=.15
+        cc.calibration.neutral_window_s=.15
+        cc.calibration.transition_s=.06
+        cc.calibration.min_window_samples=3
         session=CalibrationSession({"user_id":"julian"},cc,lambda:now[0])
         session.start()
         values=[{}, {"eye_left_ratio":.02},{"eye_right_ratio":.03},
-                {"brow_left_lift":.4},{"brow_right_lift":.5},{"mouth_open":.3}]
-        for phase in range(6):
+                {"brow_left_lift":.4},{"brow_right_lift":.5},{"mouth_open":.3},
+                {"brow_left_lift":.3,"brow_right_lift":.33}]
+        for phase in range(7):
             count=0
-            while session.phase==phase and session.state!="error":
+            while session.phase==phase and session.state not in ("error","measured"):
                 count+=1
-                self.assertLess(count,50)
+                self.assertLess(count,150)
                 now[0]+=.03
                 face=replace(FaceData(True,timestamp_ms=int(now[0]*1000),eye_left_ratio=.1,
-                                      eye_right_ratio=.12,brow_left_lift=.2,brow_right_lift=.22,mouth_open=.01),**values[phase])
+                                      eye_right_ratio=.12,brow_left_lift=.2,brow_right_lift=.22,mouth_open=.01),
+                             **(values[phase] if session.stage=="active" else {}))
                 session.update(face)
         self.assertEqual(session.state,"measured")
-        self.assertEqual(session.candidate["thresholds"],calibration()["thresholds"])
+        self.assertEqual(session.candidate["neutral_nose_x"],.5)
+        for record in session.candidate["gesture_calibrations"].values():
+            self.assertEqual(record["repetitions_valid"],3)
+            self.assertEqual(record["quality_score"],1)
         with self.assertRaises(ValueError): session.result()
         session.validate()
         self.assertEqual(session.state,"validation")
@@ -206,7 +215,7 @@ class DesktopLogicTests(unittest.TestCase):
                              **(overrides or {}))
                 session.update(face)
         feed(2.2)
-        for overrides in values[1:]+[{"brow_left_lift":.4,"brow_right_lift":.5}]:
+        for overrides in values[1:]:
             feed(.3,overrides)
             feed(2.2)
         self.assertEqual(session.state,"validated")
