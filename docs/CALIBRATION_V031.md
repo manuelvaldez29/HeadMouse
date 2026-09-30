@@ -115,8 +115,10 @@ y guardar, o crear un perfil nuevo desde GUI. No se relaja la validación global
 El wizard captura primero neutral para el punto nasal y la referencia de retorno.
 Después alterna neutral y gesto durante tres repeticiones por gesto habilitado.
 Por defecto descarta 0.3 s de transición y captura 1 s neutral / 0.8 s activo;
-exige al menos ocho muestras válidas por ventana. Tracking inválido reinicia la
-ventana; timestamps duplicados no suman muestras. Una guardia de retorno compara
+exige al menos ocho muestras válidas por ventana. Interrupciones de hasta 0,15 s
+pausan sin sumar tiempo inválido; pérdidas mayores reinician la ventana.
+Se espera duración y muestras mínimas, acotado por timeout. Timestamps duplicados
+no suman muestras. Una guardia de retorno compara
 la señal con neutral usando el mayor margen entre 3 × separación mínima,
 multiplicador × 1.4826 × MAD y 10% del valor neutral. Es una condición de captura,
 no sustituye el ajuste estadístico final.
@@ -151,6 +153,9 @@ reinicia la estabilidad. Un gesto incorrecto mantenido durante 0.35 s genera
 error, aunque el detector ya esté en cooldown. Un evento aislado no lo hace.
 Solo se solicitan gestos habilitados. La prueba anterior de evento incorrecto
 se amplió para verificar tanto la tolerancia aislada como el rechazo sostenido.
+El gesto recién reconocido tiene el timeout del paso para liberarse: no se
+clasifica como gesto incorrecto durante su retorno. Estas correcciones están
+detalladas en el [informe de regresión del 29/09](CALIBRATION_REGRESSION.md).
 
 Cada ajuste terminado guarda agregados en `data/calibration/<sesión>.jsonl`,
 incluidos los intentos débiles, y conserva el historial de ajustes en el perfil

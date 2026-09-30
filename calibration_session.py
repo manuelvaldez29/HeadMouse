@@ -1,5 +1,6 @@
 """Wizard genérico de repeticiones; sin Qt, webcam ni salida al sistema."""
 import math
+import logging
 import time
 from copy import deepcopy
 from dataclasses import asdict, replace
@@ -10,6 +11,8 @@ from calibration_validation import CalibrationValidation
 from config import DEFAULT_THRESHOLDS
 from gesture_engine import GestureEngine
 from gesture_signals import GESTURE_SIGNALS
+
+logger=logging.getLogger(__name__)
 
 PHASES = (("neutral", "Relajá la cara y mirá al centro"),) + tuple(
     (s.phase_id,s.instruction) for s in GESTURE_SIGNALS.values())
@@ -49,6 +52,10 @@ class CalibrationSession:
         self.current_values=None
         self.telemetry=[]
         self.face=None
+        self._valid_elapsed=0.
+        self._sample_at=self._invalid_since=None
+        self._wait_reason=""
+        self._last_debug_at=-math.inf
 
     def _enter(self,stage):
         self.stage=stage
@@ -57,6 +64,10 @@ class CalibrationSession:
         self._window_started=None
         self._rows=[]
         self.error=""
+        self._valid_elapsed=0.
+        self._sample_at=self._invalid_since=None
+        self._wait_reason=""
+        self.feedback="Preparáte para la captura"
 
     def start(self):
         self._enter("baseline" if self.baseline is None else "neutral")
@@ -70,6 +81,7 @@ class CalibrationSession:
         if gesture_id is None and self.validator is not None:
             self.validator.retry_current()
             self.state="validation"
+            self.feedback="Reintentando la validación"
             return
         key=gesture_id or self.gesture_id
         if key is not None and self.baseline is None and self.validator is not None:
@@ -85,6 +97,7 @@ class CalibrationSession:
         self.models[key]=GestureCalibration(key,old.channels,old.directions,old.source,retries=old.retries+1)
         self.candidate=self.validator=None
         self._select(key)
+        self.feedback="Reintentando este gesto"
 
     def set_enabled(self,gesture_id,enabled):
         if gesture_id not in self.models or type(enabled) is not bool:
@@ -162,7 +175,30 @@ class CalibrationSession:
             if direction*(values[index]-stats["median"])>tolerance: return False
         return True
 
+    def _state_key(self):
+        model=self.models.get(self.gesture_id)
+        v=self.validator
+        return (self.state,self.stage,self.gesture_id,len(model.active_samples) if model else 0,
+                v.index if v else None,v.neutral if v else None,self.error or (v.error if v else ""))
+
     def update(self,face):
+        before=self._state_key()
+        self._update(face)
+        after=self._state_key()
+        if logger.isEnabledFor(logging.DEBUG) and (before!=after or self.clock()-self._last_debug_at>=1):
+            self._last_debug_at=self.clock()
+            model=self.models.get(self._meter_key())
+            logger.debug("CALIBRATION previous=%s next=%s repetition=%s/%s samples=%s required_samples=%s "
+                         "valid_elapsed=%.3f signal=%s neutral_reference=%s active_reference=%s "
+                         "activation_threshold=%s release_threshold=%s status=%s",
+                         before,after,len(model.active_samples) if model else 0,self.config.calibration.repetitions,
+                         len(self.samples.nose_x) if self.stage=="baseline" else len(self._rows),
+                         self.config.calibration.min_samples if self.stage=="baseline" else self.config.calibration.min_window_samples,
+                         self._valid_elapsed,self._meter(),model.neutral_statistics if model else {},
+                         model.active_statistics if model else {},model.activation_threshold if model else {},
+                         model.release_threshold if model else {},self._live_feedback())
+
+    def _update(self,face):
         self.face=face
         now,cc=self.clock(),self.config.calibration
         if self.state=="validation":
@@ -181,19 +217,35 @@ class CalibrationSession:
                 self.started=now
             return
         if now-self.started>cc.validation_timeout_s:
-            self.state,self.error="error","No pudimos capturar una ventana estable. Repetí este gesto."
+            self.state="error"
+            self.error="Tiempo agotado. "+(self._wait_reason or "No se completó una ventana válida.")+" Reintentá, omití el gesto o cancelá."
             return
         usable=fresh and (self.stage=="baseline" or values is not None)
+        missing=[]
+        if fresh and self.stage=="baseline":
+            missing=[key for key,adapter in GESTURE_SIGNALS.items() if self.models[key].enabled
+                     and adapter.extract(face,self.models[key].source) is None]
+            usable=not missing
         if usable and self.stage=="neutral": usable=self._neutral_ok(values)
         if not usable:
-            self._reset_window()
-            self.feedback="Volvé a posición neutral" if fresh and values is not None else "Esperando rostro y señal válidos"
+            if self._invalid_since is None: self._invalid_since=now
+            self._sample_at=None
+            if now-self._invalid_since>cc.validation_noise_s: self._reset_window()
+            self._wait_reason=(f"Señal {self.source} ausente ({', '.join(missing) or self.gesture_id})."
+                               if fresh and (missing or spec and values is None) else
+                               "Volvé a posición neutral." if fresh else "Esperando rostro y señal válidos.")
+            self.feedback=self._wait_reason
             return
         if face.timestamp_ms<=self._last_timestamp: return
+        if self._invalid_since is not None:
+            if now-self._invalid_since>cc.validation_noise_s: self._reset_window()
+            self._invalid_since=None
         if self._last_timestamp and face.timestamp_ms-self._last_timestamp>self.config.gesture.stale_after_s*1000:
             self._reset_window()
         self._last_timestamp=face.timestamp_ms
         if self._window_started is None: self._window_started=now
+        if self._sample_at is not None: self._valid_elapsed+=now-self._sample_at
+        self._sample_at=now
         if self.stage=="baseline":
             self.samples.add(face,self.config.gesture.stale_after_s,now)
             for key,adapter in GESTURE_SIGNALS.items():
@@ -206,9 +258,10 @@ class CalibrationSession:
         self.feedback="Capturando posición neutral" if self.stage!="active" else "Capturando gesto cómodo"
         duration=cc.measuring_s if self.stage=="baseline" else cc.neutral_window_s if self.stage=="neutral" else cc.active_window_s
         minimum=cc.min_samples if self.stage=="baseline" else cc.min_window_samples
-        if now-self._window_started<duration: return
+        self._wait_reason=f"Capturando muestras válidas: {count}/{minimum}."
+        if self._valid_elapsed<duration: return
         if count<minimum:
-            self.state,self.error="error","Muestras insuficientes. Repetí este gesto."
+            self.feedback=self._wait_reason
             return
         if self.stage=="baseline":
             self.baseline=self.samples
@@ -238,6 +291,8 @@ class CalibrationSession:
     def _reset_window(self):
         self._rows=[]
         self._window_started=None
+        self._valid_elapsed=0.
+        self._sample_at=None
         if self.stage=="baseline":
             self.samples=Samples()
             self.baseline_signals={key:[] for key in GESTURE_SIGNALS}
@@ -261,14 +316,17 @@ class CalibrationSession:
         elif self.stage in ("baseline","neutral"): instruction="Relajá la cara y volvé a posición neutral"
         else: instruction=GESTURE_SIGNALS[self.gesture_id].instruction
         duration=cc.measuring_s if self.stage=="baseline" else cc.neutral_window_s if self.stage=="neutral" else cc.active_window_s
-        elapsed=0 if self._window_started is None else self.clock()-self._window_started
-        return dict(state=self.state,stage=self.stage,phase=self.phase+1,total_phases=len(PHASES),
+        elapsed=self._valid_elapsed
+        validating=self.validator is not None
+        v=self.validator
+        return dict(state=self.state,stage=("return_neutral" if v.neutral else "gesture") if validating else self.stage,
+                    phase=v.index+1 if validating else self.phase+1,total_phases=len(v.gestures)+1 if validating else len(PHASES),
                     gesture_id=self._meter_key(),instruction=instruction,
                     countdown=max(0,math.ceil((cc.countdown_s if self.stage=="baseline" else cc.transition_s)-(self.clock()-self.started))),
-                    progress=min(1,elapsed/duration) if self.state=="measuring" else 0,
-                    samples=len(self.samples.nose_x) if self.stage=="baseline" else len(self._rows),
-                    attempt=min(cc.repetitions,(len(model.active_samples)+1)) if model else 0,repetitions=cc.repetitions,
-                    feedback=self._live_feedback(),capture_message=self.capture_message,
+                    progress=min(1,v._neutral_elapsed/v.neutral_s) if validating and v.neutral else min(1,elapsed/duration) if self.state=="measuring" else 0,
+                    samples=0 if validating else len(self.samples.nose_x) if self.stage=="baseline" else len(self._rows),
+                    attempt=min(cc.repetitions,(len(model.active_samples)+1)) if model and not validating else 0,repetitions=cc.repetitions,
+                    feedback=self._live_feedback(),capture_message="" if validating else self.capture_message,
                     recognized=self.validator.recognized.copy() if self.validator else [],
                     enabled={key:m.enabled for key,m in self.models.items()},
                     quality={key:dict(label=(self.candidate["gesture_calibrations"][key]["quality_label"]
@@ -281,8 +339,10 @@ class CalibrationSession:
 
     def _live_feedback(self):
         if self.state=="error": return self.error
+        if self.validator and self.validator.error: return self.validator.error
         if self.state=="validated": return "Validación completa"
-        if self.validator and self.validator.neutral: return "Volvé a posición neutral"
+        if self.validator:
+            return self.validator.instruction
         if (self.stage=="active" and self.state=="measuring") or self.state=="validation":
             meter=self._meter()
             if meter and all(row["value"] is not None and row["activation"] is not None for row in meter):
@@ -293,8 +353,8 @@ class CalibrationSession:
 
     def _meter_key(self):
         key=self.gesture_id
-        if self.validator and self.validator.index<len(self.validator.gestures):
-            event=self.validator.gestures[self.validator.index][0]
+        if self.validator and (self.validator.returning_from or self.validator.index<len(self.validator.gestures)):
+            event=self.validator.returning_from or self.validator.gestures[self.validator.index][0]
             key=next(k for k,s in GESTURE_SIGNALS.items() if s.event_type==event)
         return key
 

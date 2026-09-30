@@ -112,6 +112,8 @@ class AdaptiveSessionTests(unittest.TestCase):
         s.update(face)
         self.assertEqual(len(s.samples.nose_x),1)
         s.update(self.face(detected=False))
+        # Pérdida sostenida reinicia; una interrupción breve conserva lo válido.
+        for _ in range(4): s.update(self.face(detected=False))
         self.assertEqual(len(s.samples.nose_x),0)
         self.capture(s)
         self.assertEqual(s.state,"measured")

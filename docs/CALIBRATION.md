@@ -11,7 +11,9 @@ Primero se captura neutral: preparación de 3 s y ventana válida de 4 s con
 al menos 20 muestras. Luego se realizan tres repeticiones por gesto habilitado:
 1 s neutral y 0.8 s activo, descartando 0.3 s de transición y exigiendo ocho
 muestras por ventana. Se descartan duplicados, datos no finitos y vencidos.
-La pérdida de tracking reinicia la ventana actual. No se pide sostener un gesto
+Las pérdidas de hasta 0,15 s pausan sin contar tiempo inválido; una pérdida
+sostenida reinicia la ventana actual. Duración válida y mínimo de muestras
+deben cumplirse juntos, con timeout de 30 s. No se pide sostener un gesto
 facial durante cuatro segundos.
 
 La disponibilidad es configurable; no realizar un gesto no impide calibrar los
@@ -33,6 +35,9 @@ breves de hasta 0.15 s no cuentan como tiempo neutral pero se toleran; un gesto
 incorrecto sostenido 0.35 s genera error. Cada paso tiene timeout de 30 s.
 Se respetan hold/cooldown, liberación e histéresis. Un evento aislado no rechaza
 inmediatamente la validación. R repite el paso conservando los ya reconocidos.
+El gesto recién detectado puede seguir sostenido durante el retorno a neutral,
+hasta el timeout; no se confunde con un gesto incorrecto. Ver el
+[diagnóstico de regresión](CALIBRATION_REGRESSION.md).
 
 Solo guardar después de aprobar escribe el perfil. Cerrar o interrumpir antes
 conserva el archivo previo. La GUI muestra botones y el estado de cada gesto;

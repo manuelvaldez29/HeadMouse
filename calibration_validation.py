@@ -36,6 +36,7 @@ class CalibrationValidation:
         self.error = None
         self.recognized = []
         self._last_timestamp = 0
+        self.returning_from = None
         self._clear_tolerance()
 
     def _clear_tolerance(self):
@@ -52,8 +53,10 @@ class CalibrationValidation:
         if self.passed:
             return "Validacion correcta. SPACE: guardar; Q: descartar"
         if self.neutral:
+            if self.returning_from:
+                return "Detectado. Volvé a neutral para continuar"
             return f"Cara neutral durante {self.neutral_s:g} segundos"
-        return self.gestures[self.index][1]
+        return "Esperando gesto: "+self.gestures[self.index][1]
 
     def retry_current(self):
         """Repite el gesto actual (o el recién reconocido), conservando anteriores."""
@@ -66,6 +69,7 @@ class CalibrationValidation:
         self.started = self.clock()
         self.passed = False
         self.error = None
+        self.returning_from = None
         self._clear_tolerance()
         self._last_timestamp = 0
         self.gesture.reset()
@@ -94,6 +98,9 @@ class CalibrationValidation:
             self._clear_tolerance()
         self._last_timestamp = face.timestamp_ms
         types = [ev.type for ev in events if ev.type != "CURSOR_MOVE"]
+        activity = getattr(self.gesture, "last_active", {})
+        sustained = {GESTURE_SIGNALS[key].event_type for key,value in activity.items()
+                     if value and key in GESTURE_SIGNALS} if isinstance(activity,dict) else set()
         if self.neutral:
             # No basta silencio de eventos durante cooldown: exigir ratios liberados.
             released = self.gesture.signals_released(face)
@@ -105,9 +112,26 @@ class CalibrationValidation:
                 if duration > self.noise_s:
                     self.neutral_since = None
                     self._neutral_elapsed = 0.
-                if duration >= self.wrong_s:
+                wrong=(sustained | set(types)) - {self.returning_from}
+                # El gesto recién aceptado necesita tiempo para liberarse. No es
+                # un gesto incorrecto; sigue limitado por el timeout del paso.
+                incorrect_duration=duration
+                if self.returning_from is not None:
+                    if wrong:
+                        if self._wrong_since is None or not wrong.intersection(self._wrong_types):
+                            self._wrong_since=now
+                        self._wrong_types=wrong
+                        incorrect_duration=now-self._wrong_since
+                    else:
+                        self._wrong_since=None
+                        self._wrong_types=set()
+                        incorrect_duration=0.
+                if incorrect_duration >= self.wrong_s:
                     self.error = "Gesto sostenido durante neutral. Volvé a neutral y repetí."
                 return
+            self.returning_from = None
+            self._wrong_since=None
+            self._wrong_types=set()
             if self._noise_since is not None:
                 if now - self._noise_since > self.noise_s:
                     self._neutral_elapsed = 0.
@@ -126,9 +150,6 @@ class CalibrationValidation:
                     self.passed = True
         else:
             expected = self.gestures[self.index][0]
-            activity = getattr(self.gesture, "last_active", {})
-            sustained = {GESTURE_SIGNALS[key].event_type for key,value in activity.items()
-                         if value and key in GESTURE_SIGNALS} if isinstance(activity,dict) else set()
             wrong = (sustained | set(types)) - {expected}
             if wrong:
                 if self._wrong_since is None or not wrong.intersection(self._wrong_types):
@@ -141,6 +162,7 @@ class CalibrationValidation:
             self._wrong_since = None
             self._wrong_types = set()
             if expected in types:
+                self.returning_from = expected
                 self.recognized.append(expected)
                 self.index += 1
                 self.neutral = True

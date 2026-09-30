@@ -160,6 +160,7 @@ individuales ni imágenes, en `data/calibration/`.
 - [Arquitectura y cambios de comportamiento](docs/ARCHITECTURE.md)
 - [Calibración y perfiles](docs/CALIBRATION.md)
 - [Calibración adaptativa v0.3.1](docs/CALIBRATION_V031.md)
+- [Diagnóstico y reparación de regresión de calibración](docs/CALIBRATION_REGRESSION.md)
 - [Informe v0.3.1: implementación y verificaciones](docs/IMPLEMENTATION_REPORT_V031.md)
 - [Métricas](docs/METRICS.md)
 - [Roadmap de tesis](docs/ROADMAP.md)
