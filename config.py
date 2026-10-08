@@ -99,8 +99,8 @@ class VisionConfig:
 
 @dataclass
 class CalibrationConfig:
-    countdown_s: float = 3
-    measuring_s: float = 4
+    countdown_s: float = 4
+    measuring_s: float = 6
     min_samples: int = 20
     threshold_fraction: float = 0.6
     min_separation: float = 0.002
@@ -108,9 +108,9 @@ class CalibrationConfig:
     validation_timeout_s: float = 30
     validation_neutral_s: float = 2
     repetitions: int = 3
-    active_window_s: float = 0.8
-    neutral_window_s: float = 1.0
-    transition_s: float = 0.3
+    active_window_s: float = 2.0
+    neutral_window_s: float = 3.0
+    transition_s: float = 2
     min_window_samples: int = 8
     validation_noise_s: float = 0.15
     validation_wrong_s: float = 0.35
