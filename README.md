@@ -92,6 +92,11 @@ El sistema **arranca pausado**. Ambas cejas lo activan o pausan.
 | Ambas cejas | Pausa / reanudación |
 | Boca abierta | Tecla Windows |
 
+Los gestos de cejas solo actúan con la cabeza dentro de la zona muerta, es
+decir, con el cursor quieto: al mirar hacia arriba la señal de cejas sube sola
+y producía pausas involuntarias. Guiños y boca no se bloquean. Se desactiva con
+`"gesture": {"brow_motion_gate": false}` en la configuración o el perfil.
+
 Ctrl+C termina. Q termina con el overlay enfocado. El failsafe de PyAutoGUI
 permanece activo: una llamada de control detecta el cursor en una esquina y
 detiene el sistema. Si no hay datos faciales recientes, no se ejecutan acciones.

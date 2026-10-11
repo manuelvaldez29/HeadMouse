@@ -37,6 +37,7 @@ class CalibrationValidation:
         self.recognized = []
         self._last_timestamp = 0
         self.returning_from = None
+        self.blocking = []
         self._clear_tolerance()
 
     def _clear_tolerance(self):
@@ -45,6 +46,10 @@ class CalibrationValidation:
         self._noise_since = None
         self._wrong_since = None
         self._wrong_types = set()
+        self._fired_wrong = set()
+
+    def _blocking_labels(self):
+        return ", ".join(GESTURE_SIGNALS[key].label for key in self.blocking)
 
     @property
     def instruction(self):
@@ -53,6 +58,8 @@ class CalibrationValidation:
         if self.passed:
             return "Validacion correcta. SPACE: guardar; Q: descartar"
         if self.neutral:
+            if self.blocking:
+                return f"Relajá la cara: todavía se detecta {self._blocking_labels()}"
             if self.returning_from:
                 return "Detectado. Volvé a neutral para continuar"
             return f"Cara neutral durante {self.neutral_s:g} segundos"
@@ -70,6 +77,7 @@ class CalibrationValidation:
         self.passed = False
         self.error = None
         self.returning_from = None
+        self.blocking = []
         self._clear_tolerance()
         self._last_timestamp = 0
         self.gesture.reset()
@@ -79,7 +87,11 @@ class CalibrationValidation:
             return
         now = self.clock()
         if now - self.started > self.timeout_s:
-            self.error = "Tiempo agotado. Repetí la validación."
+            if self.neutral and self.blocking:
+                self.error = (f"Tiempo agotado: {self._blocking_labels()} sigue activo con la cara relajada. "
+                              "Repetí ese gesto en la calibración o marcalo no disponible.")
+            else:
+                self.error = "Tiempo agotado. Repetí la validación."
             return
         events = self.gesture.update(face)
         if not face.fresh(self.gesture.config.stale_after_s, now):
@@ -103,7 +115,11 @@ class CalibrationValidation:
                      if value and key in GESTURE_SIGNALS} if isinstance(activity,dict) else set()
         if self.neutral:
             # No basta silencio de eventos durante cooldown: exigir ratios liberados.
-            released = self.gesture.signals_released(face)
+            returning = next((key for key,spec in GESTURE_SIGNALS.items()
+                              if spec.event_type == self.returning_from), None)
+            unreleased = self.gesture.unreleased_gestures(face)
+            self.blocking = [key for key in unreleased if key != returning]
+            released = not unreleased
             if not released or types:
                 self._neutral_sample_at = None
                 if self._noise_since is None:
@@ -113,6 +129,10 @@ class CalibrationValidation:
                     self.neutral_since = None
                     self._neutral_elapsed = 0.
                 wrong=(sustained | set(types)) - {self.returning_from}
+                # Solo es error si llegó a dispararse una acción incorrecta. Una
+                # señal que no termina de liberarse se informa y se espera, con
+                # el timeout del paso como límite.
+                self._fired_wrong |= set(types) - {self.returning_from}
                 # El gesto recién aceptado necesita tiempo para liberarse. No es
                 # un gesto incorrecto; sigue limitado por el timeout del paso.
                 incorrect_duration=duration
@@ -125,13 +145,17 @@ class CalibrationValidation:
                     else:
                         self._wrong_since=None
                         self._wrong_types=set()
+                        self._fired_wrong=set()
                         incorrect_duration=0.
-                if incorrect_duration >= self.wrong_s:
-                    self.error = "Gesto sostenido durante neutral. Volvé a neutral y repetí."
+                if incorrect_duration >= self.wrong_s and self._fired_wrong:
+                    names = ", ".join(spec.label for spec in GESTURE_SIGNALS.values()
+                                      if spec.event_type in self._fired_wrong)
+                    self.error = f"Se detectó {names} durante la cara neutral. Volvé a neutral y repetí."
                 return
             self.returning_from = None
             self._wrong_since=None
             self._wrong_types=set()
+            self._fired_wrong=set()
             if self._noise_since is not None:
                 if now - self._noise_since > self.noise_s:
                     self._neutral_elapsed = 0.

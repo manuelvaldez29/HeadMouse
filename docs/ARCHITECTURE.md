@@ -148,6 +148,9 @@ experimental futura. No están implementadas.
   hold, aunque el consumidor no haya podido ejecutar durante ese intervalo.
 - Se suprimen ambos clicks cuando ambos ojos están cerrados para reducir
   parpadeos bilaterales. No constituye una garantía de ausencia de falsos positivos.
+- Las cejas solo actúan con el cursor quieto (cabeza dentro de la zona muerta,
+  `brow_motion_gate`): mirar hacia arriba eleva la señal geométrica de cejas y
+  pausaba el sistema al subir el cursor. Guiños y boca no se bloquean.
 - Ambas cejas suprimen scroll individual; hold y cooldown requieren liberación.
   El scroll existente era un evento por elevación, **no** repetición sostenida.
 - Deltas se limitan a ±60 px y se rechazan NaN/Inf. Se conserva truncado entero.

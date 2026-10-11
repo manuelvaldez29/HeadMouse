@@ -41,6 +41,9 @@ class GestureConfig:
     sensitivity_x: float | None = None
     sensitivity_y: float | None = None
     brow_decision_ms: float = 200
+    # Las cejas solo actúan con la cabeza dentro de la zona muerta (cursor
+    # quieto): al mirar hacia arriba la señal geométrica de cejas sube sola.
+    brow_motion_gate: bool = True
 
     def __post_init__(self):
         for name in ("sensitivity", "acceleration"):
@@ -59,6 +62,8 @@ class GestureConfig:
             bounded(name, getattr(self, name), 1, 100000, integer=True)
         bounded("stale_after_s", self.stale_after_s, 0.01, 2)
         bounded("brow_decision_ms", self.brow_decision_ms, 0, 1000)
+        if type(self.brow_motion_gate) is not bool:
+            raise ValueError("brow_motion_gate debe ser true o false")
 
 
 @dataclass
@@ -108,7 +113,7 @@ class CalibrationConfig:
     validation_timeout_s: float = 30
     validation_neutral_s: float = 2
     repetitions: int = 3
-    active_window_s: float = 2.0
+    active_window_s: float = 1.0  # tope del gesto sostenido; termina antes al soltarlo
     neutral_window_s: float = 3.0
     transition_s: float = 2
     min_window_samples: int = 8

@@ -5,7 +5,7 @@ import time
 from copy import deepcopy
 from dataclasses import asdict, replace
 from datetime import datetime, timezone
-from adaptive_calibration import GestureCalibration, statistics
+from adaptive_calibration import GestureCalibration, PLATEAU_MAX_GAP, gesture_plateau, statistics
 from calibration_logic import Samples
 from calibration_validation import CalibrationValidation
 from config import DEFAULT_THRESHOLDS
@@ -40,6 +40,9 @@ class CalibrationSession:
         self.samples=Samples()
         self.baseline=None
         self.baseline_signals={key:[] for key in GESTURE_SIGNALS}
+        # Reposo de toda la sesión por gesto: neutral inicial y neutrales previos a cada intento.
+        self.neutral_pool={key:[] for key in GESTURE_SIGNALS}
+        self._pool_rows={key:[] for key in GESTURE_SIGNALS}
         self.candidate=self.validator=None
         self.state="ready"
         self.stage="baseline"
@@ -48,6 +51,9 @@ class CalibrationSession:
         self._window_started=None
         self._last_timestamp=0
         self._rows=[]
+        self._row_times=[]
+        self._plateau=()
+        self._rejected_streak=0
         self._neutral_rows=[]
         self.current_values=None
         self.telemetry=[]
@@ -59,10 +65,14 @@ class CalibrationSession:
 
     def _enter(self,stage):
         self.stage=stage
-        self.state="countdown" if stage=="baseline" else "settling"
+        # El gesto no espera transición: su inicio se detecta en la ventana activa.
+        self.state="countdown" if stage=="baseline" else "measuring" if stage=="active" else "settling"
         self.started=self.clock()
         self._window_started=None
         self._rows=[]
+        self._row_times=[]
+        self._plateau=()
+        self._pool_rows={key:[] for key in GESTURE_SIGNALS}
         self.error=""
         self._valid_elapsed=0.
         self._sample_at=self._invalid_since=None
@@ -89,6 +99,7 @@ class CalibrationSession:
         if key is None:
             self.samples=Samples()
             self.baseline_signals={key:[] for key in GESTURE_SIGNALS}
+            self.neutral_pool={key:[] for key in GESTURE_SIGNALS}
             self.start()
             return
         if key not in self.models: raise ValueError("Gesto desconocido")
@@ -124,6 +135,7 @@ class CalibrationSession:
         self._enter("neutral")
 
     def _advance(self):
+        self._recheck_session_neutral()
         for key,model in self.models.items():
             if model.enabled and (not model.usable or len(model.active_samples)<self.config.calibration.repetitions):
                 self._select(key)
@@ -131,6 +143,24 @@ class CalibrationSession:
         self.candidate=self._build_profile()
         self.state="measured"
         self.feedback="Mediciones completas. Iniciá la validación."
+
+    def _recheck_session_neutral(self):
+        """Reajusta los gestos ya medidos con el reposo acumulado hasta ahora.
+
+        Si el reposo observado después alcanza la activación de un gesto, ese
+        gesto produciría acciones con la cara relajada: se vuelve a medir solo ese.
+        """
+        cc=self.config.calibration
+        for key,model in list(self.models.items()):
+            if not model.enabled or not model.usable or len(model.active_samples)<cc.repetitions: continue
+            model.fit(cc,self.neutral_pool[key])
+            if model.usable: continue
+            model.quality_label,model.validation_state="DÉBIL","repeat"
+            self.telemetry.append(model.to_record())
+            self.models[key]=GestureCalibration(key,model.channels,model.directions,model.source,retries=model.retries+1)
+            self.capture_message=(f"{GESTURE_SIGNALS[key].label}: con la cara relajada ya llega al umbral "
+                                  "(cambió tu posición de reposo). Repetí este gesto; si vuelve a pasar, "
+                                  "marcalo no disponible o probá otra señal.")
 
     def _build_profile(self):
         settings=asdict(self.config)
@@ -217,8 +247,12 @@ class CalibrationSession:
                 self.started=now
             return
         if now-self.started>cc.validation_timeout_s:
-            self.state="error"
-            self.error="Tiempo agotado. "+(self._wait_reason or "No se completó una ventana válida.")+" Reintentá, omití el gesto o cancelá."
+            reason="Tiempo agotado. "+(self._wait_reason or "No se completó una ventana válida.")
+            if self.stage=="active":
+                self._fail_gesture(self.models[self.gesture_id],reason)
+            else:
+                self.state="error"
+                self.error=reason+" Reintentá, omití el gesto o cancelá."
             return
         usable=fresh and (self.stage=="baseline" or values is not None)
         missing=[]
@@ -254,9 +288,17 @@ class CalibrationSession:
             count=len(self.samples.nose_x)
         else:
             self._rows.append(values)
+            self._row_times.append(now)
             count=len(self._rows)
-        self.feedback="Capturando posición neutral" if self.stage!="active" else "Capturando gesto cómodo"
-        duration=cc.measuring_s if self.stage=="baseline" else cc.neutral_window_s if self.stage=="neutral" else cc.active_window_s
+            if self.stage=="neutral":
+                for key,adapter in GESTURE_SIGNALS.items():
+                    row=adapter.extract(face,self.models[key].source)
+                    if row is not None: self._pool_rows[key].append(row)
+        if self.stage=="active":
+            self._capture_active()
+            return
+        self.feedback="Capturando posición neutral"
+        duration=cc.measuring_s if self.stage=="baseline" else cc.neutral_window_s
         minimum=cc.min_samples if self.stage=="baseline" else cc.min_window_samples
         self._wait_reason=f"Capturando muestras válidas: {count}/{minimum}."
         if self._valid_elapsed<duration: return
@@ -265,31 +307,96 @@ class CalibrationSession:
             return
         if self.stage=="baseline":
             self.baseline=self.samples
+            for key,rows in self.baseline_signals.items(): self.neutral_pool[key].extend(rows)
             self._advance()
         elif self.stage=="neutral":
             self._neutral_rows=self._rows.copy()
+            for key,rows in self._pool_rows.items(): self.neutral_pool[key].extend(rows)
             self._enter("active")
-        else:
-            model=self.models[self.gesture_id]
-            model.add_repetition(self._neutral_rows,self._rows)
-            attempt=len(model.active_samples)
+
+    def _capture_active(self):
+        """Termina la repetición cuando el gesto se suelta o se sostuvo active_window_s."""
+        cc=self.config.calibration
+        model=self.models[self.gesture_id]
+        self._plateau=gesture_plateau(self._neutral_rows,self._rows,model.directions,cc)
+        if not self._plateau:
+            self.feedback=self._wait_reason="Esperando el gesto: hacelo cómodamente cuando quieras."
+            return
+        held=self._row_times[self._plateau[-1]]-self._row_times[self._plateau[0]]
+        released=self._plateau[-1]<len(self._rows)-1-PLATEAU_MAX_GAP
+        self._wait_reason="Gesto detectado; falta soltarlo."
+        if not released and held<cc.active_window_s:
+            self.feedback="Gesto detectado: podés soltarlo"
+            return
+        active=[self._rows[i] for i in self._plateau]
+        trial=GestureCalibration(model.gesture_id,model.channels,model.directions,model.source)
+        trial.add_repetition(self._neutral_rows,active)
+        if not trial.fit(replace(cc,repetitions=1)).usable:
+            self._reject_repetition(model,"ese intento no se distinguió del neutral")
+            return
+        model.add_repetition(self._neutral_rows,active)
+        attempt=len(model.active_samples)
+        if attempt<cc.repetitions:
             # Estimación provisional para el medidor; no habilita guardar ni omite repeticiones.
-            model.fit(replace(cc,repetitions=attempt))
+            model.fit(replace(cc,repetitions=attempt),self.neutral_pool[model.gesture_id])
+            self._rejected_streak=0
             self.capture_message=f"{GESTURE_SIGNALS[self.gesture_id].label}: intento {attempt}/{cc.repetitions} capturado ✓"
-            if attempt<cc.repetitions:
-                self._enter("neutral")
-            else:
-                model.fit(cc)
-                self.telemetry.append(model.to_record())
-                if not model.usable:
-                    self.state="error"
-                    self.error="Señal demasiado inestable o débil. Repetí solamente este gesto, o marcalo no disponible."
-                else:
-                    self.feedback="Buena separación" if model.quality_label=="BUENA" else "Separación aceptable"
-                    self._advance()
+            self._enter("neutral")
+            return
+        model.fit(cc,self.neutral_pool[model.gesture_id])
+        if not model.usable:
+            index=self._inconsistent_repetition(model)
+            if index is not None:
+                model.drop_repetition(index)
+                model.fit(replace(cc,repetitions=len(model.active_samples)),self.neutral_pool[model.gesture_id])
+                self._reject_repetition(model,f"el intento {index+1} no coincidió con los demás",dropped=True)
+                return
+            self._fail_gesture(model,"Señal demasiado inestable o débil.")
+            return
+        self._rejected_streak=0
+        self.telemetry.append(model.to_record())
+        self.capture_message=f"{GESTURE_SIGNALS[self.gesture_id].label}: intento {attempt}/{cc.repetitions} capturado ✓"
+        self.feedback="Buena separación" if model.quality_label=="BUENA" else "Separación aceptable"
+        self._advance()
+
+    def _inconsistent_repetition(self,model):
+        """Índice de la única repetición cuya exclusión vuelve usable el ajuste."""
+        cc=self.config.calibration
+        best=None
+        for index in range(len(model.active_samples)):
+            trial=GestureCalibration(model.gesture_id,model.channels,model.directions,model.source)
+            for i,(n,a) in enumerate(zip(model.neutral_samples,model.active_samples)):
+                if i!=index: trial.add_repetition(n,a)
+            trial.fit(replace(cc,repetitions=len(model.active_samples)-1),self.neutral_pool[model.gesture_id])
+            if trial.usable and (best is None or trial.quality_score>best[1]):
+                best=(index,trial.quality_score)
+        return best and best[0]
+
+    def _reject_repetition(self,model,reason,dropped=False):
+        """Repetir solo el intento fallido; tras varios rechazos seguidos, el gesto."""
+        if not dropped: model.rejected+=1
+        self._rejected_streak+=1
+        if self._rejected_streak>=self.config.calibration.repetitions:
+            self._fail_gesture(model,f"Varios intentos seguidos fallaron ({reason}).")
+            return
+        self.capture_message=f"{GESTURE_SIGNALS[self.gesture_id].label}: {reason}. Repetí solo ese intento."
+        self._enter("neutral")
+
+    def _fail_gesture(self,model,reason):
+        cc=self.config.calibration
+        model.fit(replace(cc,repetitions=max(1,min(cc.repetitions,len(model.active_samples)))),self.neutral_pool[model.gesture_id])
+        model.reasons.append(reason)
+        model.quality_label,model.validation_state="DÉBIL","repeat"
+        self._rejected_streak=0
+        self.telemetry.append(model.to_record())
+        self.state="error"
+        self.error=reason+" Repetí solamente este gesto, o marcalo no disponible."
 
     def _reset_window(self):
         self._rows=[]
+        self._row_times=[]
+        self._plateau=()
+        self._pool_rows={key:[] for key in GESTURE_SIGNALS}
         self._window_started=None
         self._valid_elapsed=0.
         self._sample_at=None
@@ -317,6 +424,7 @@ class CalibrationSession:
         else: instruction=GESTURE_SIGNALS[self.gesture_id].instruction
         duration=cc.measuring_s if self.stage=="baseline" else cc.neutral_window_s if self.stage=="neutral" else cc.active_window_s
         elapsed=self._valid_elapsed
+        if self.stage=="active": elapsed,duration=float(bool(self._plateau)),1.
         validating=self.validator is not None
         v=self.validator
         return dict(state=self.state,stage=("return_neutral" if v.neutral else "gesture") if validating else self.stage,
@@ -324,7 +432,7 @@ class CalibrationSession:
                     gesture_id=self._meter_key(),instruction=instruction,
                     countdown=max(0,math.ceil((cc.countdown_s if self.stage=="baseline" else cc.transition_s)-(self.clock()-self.started))),
                     progress=min(1,v._neutral_elapsed/v.neutral_s) if validating and v.neutral else min(1,elapsed/duration) if self.state=="measuring" else 0,
-                    samples=0 if validating else len(self.samples.nose_x) if self.stage=="baseline" else len(self._rows),
+                    samples=0 if validating else len(self.samples.nose_x) if self.stage=="baseline" else len(self._plateau) if self.stage=="active" else len(self._rows),
                     attempt=min(cc.repetitions,(len(model.active_samples)+1)) if model and not validating else 0,repetitions=cc.repetitions,
                     feedback=self._live_feedback(),capture_message="" if validating else self.capture_message,
                     recognized=self.validator.recognized.copy() if self.validator else [],

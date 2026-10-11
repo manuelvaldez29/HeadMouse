@@ -220,3 +220,88 @@ teclado. La inferencia sobre imagen negra solo verifica carga/integración nativ
 La verificación final aprobó 82 tests, el arranque GUI sin cámara y la prueba
 nativa sobre imagen negra. Ver [informe de implementación](IMPLEMENTATION_REPORT_V031.md)
 para evidencia, cambios de pruebas y revisión visual.
+
+## Segmentación del gesto y repetición selectiva (2026-10-11)
+
+### Falla observada
+
+En la calibración física del 2026-10-11 el guiño izquierdo salió BUENA y el
+derecho DÉBIL, con separación −0.0066. Los agregados guardados en
+`data/calibration/` muestran que la señal era buena: neutral ≈ 0.062, guiño
+≈ 0.014–0.021 en las tres repeticiones. En la repetición 1, sin embargo, el p90
+de la ventana activa era 0.066: más del 10 % de esos frames tenía el ojo
+abierto, porque el usuario lo abrió antes de que terminara la ventana fija.
+Como el ajuste toma el peor p10 activo de todas las repeticiones, una sola
+ventana contaminada anulaba el gesto completo. Con `transition_s = 2` y
+`active_window_s = 2`, además, había que sostener el guiño unos 4 s.
+
+### Cambio
+
+- La ventana activa ya no espera la transición ni dura un tiempo fijo. Se
+  acumulan frames y `gesture_plateau` (`adaptive_calibration.py`) busca el tramo
+  contiguo más largo en el que todos los canales superan la banda neutral
+  robusta (el mismo criterio que usa `fit`) y la mitad de la amplitud
+  sostenida (el nivel que alcanzan al menos `min_window_samples` frames). Se
+  toleran huecos de hasta 2 frames.
+- La repetición termina cuando el gesto se suelta o cuando se sostuvo
+  `active_window_s`, que ahora es un tope (1 s por defecto). Solo los frames
+  de ese tramo llegan a `GestureCalibration`; los de reacción y liberación
+  se descartan.
+- Cada repetición se ajusta por separado al capturarla. Si no se distingue del
+  neutral, se descarta y se pide repetir solo ese intento.
+- Si las tres repeticiones pasan por separado pero no en conjunto (por ejemplo,
+  porque cambió la distancia a la cámara y se corrió el neutral), se descarta la
+  única repetición cuya exclusión vuelve usable el ajuste y se vuelve a capturar
+  solo esa. Después de tantos rechazos seguidos como `repetitions`, o si
+  ninguna exclusión alcanza, se pide repetir el gesto completo, como antes.
+- Si no aparece ningún gesto antes de `validation_timeout_s`, el intento queda
+  registrado en la telemetría como DÉBIL.
+- Los registros incluyen `rejected` (repeticiones descartadas) y
+  `segmentation: "sustained_plateau_v1"`.
+
+Elegir frames por su distancia al neutral favorece la separación. Por eso el
+tramo debe superar la misma banda neutral robusta y el margen mínimo de `fit`,
+y la validación guiada posterior, que usa el detector real con hold y
+cooldown, sigue siendo obligatoria para guardar el perfil. Las pruebas están en
+`tests/test_gesture_plateau.py`, que reproduce la falla con los valores
+observados. Falta medir con webcam: el tiempo total de calibración, la cantidad
+de intentos repetidos y si el umbral resultante produce falsos clicks en uso real.
+
+## Reposo de la sesión y validación sin bloqueo (2026-10-11, segunda prueba)
+
+### Falla observada
+
+Los seis gestos salieron BUENA, pero al tocar "Validar" la validación fallaba
+enseguida con "Gesto sostenido durante neutral", y lo mismo al terminar. Según
+la telemetría, la ceja izquierda se había calibrado con un reposo de 0.195,
+activación 0.2088 y liberación 0.2067. Al capturar ambas cejas, minutos
+después, el reposo de esa ceja ya era 0.205, y en la validación la cara relajada
+medía 0.2107. Es decir, la ceja izquierda estaba "activa" en reposo. En una
+sesión anterior la diferencia había sido de 0.02 (0.183 frente a 0.204). La
+señal geométrica de cejas depende de la inclinación de la cabeza, y el margen
+calibrado (unos 0.013 sobre el reposo) era menor que esa deriva.
+
+El validador fallaba a los 0.35 s si cualquier señal no se liberaba, aunque no
+se hubiera disparado ninguna acción. El mensaje no decía qué gesto era, por eso
+parecía que "Validar" no hacía nada.
+
+### Cambio
+
+- `CalibrationSession` junta en `neutral_pool` el reposo de toda la sesión
+  para cada gesto: el neutral inicial y los neutrales previos a cada intento de
+  todos los gestos. `GestureCalibration.fit(config, session_neutral)` exige que
+  la activación quede por encima de esa banda (`session_neutral` en el
+  registro). Si el reposo de la sesión se superpone con el gesto, el gesto no
+  es usable.
+- Cada vez que se termina un gesto, se reajustan los anteriores con el reposo
+  acumulado. Si alguno quedó al alcance del reposo, se vuelve a medir solo ese,
+  con un mensaje que explica por qué.
+- `BrowArbiter` mantiene la decisión hasta que se sueltan ambas cejas. La ceja
+  que baja más tarde después de "ambas cejas" ya no cuenta como scroll.
+- En la cara neutral, el validador espera y muestra "Relajá la cara: todavía se
+  detecta Ceja izquierda". Falla solo si se dispara una acción incorrecta
+  (nombrándola), o por timeout, indicando qué gesto no se libera.
+
+Pruebas: `tests/test_session_neutral.py`. Sigue pendiente lo de fondo: una
+señal de cejas menos sensible a la pose (blendshapes, o corrección por pitch con
+la matriz de transformación facial), que tiene que compararse con usuarios.

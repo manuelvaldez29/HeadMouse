@@ -213,6 +213,7 @@ class GestureEngine:
         # ── Suavizado del cursor ───────────────────────────────────────────────
         self._smooth_x = self.config.neutral_x
         self._smooth_y = self.config.neutral_y
+        self.head_still = True
 
         # ── Detectores por gesto ──────────────────────────────────────────────
         c = self.config
@@ -272,11 +273,13 @@ class GestureEngine:
                     normalized_dy=self._smooth_y - self.config.neutral_y,
                     thresholds=self._thresholds.copy(), states=self.get_detector_states(),
                     gesture_calibrations=deepcopy(self.calibrations), active=self.last_active.copy(),
-                    sources=self._signal_sources.copy(), signals=deepcopy(self.last_signals))
+                    sources=self._signal_sources.copy(), signals=deepcopy(self.last_signals),
+                    head_still=self.head_still)
 
     def reset(self):
         self._smooth_x = self.config.neutral_x
         self._smooth_y = self.config.neutral_y
+        self.head_still = True
         for detector in self._detectors.values():
             detector.reset()
         for gate in self._gates.values():
@@ -288,14 +291,18 @@ class GestureEngine:
 
     def signals_released(self, face):
         """Neutral de todos los gestos habilitados, usando su señal y liberación."""
+        return not self.unreleased_gestures(face)
+
+    def unreleased_gestures(self, face):
+        """Gestos habilitados cuya señal sigue por encima de la liberación."""
+        pending = []
         for key in self.enabled_gestures:
             spec, gate = GESTURE_SIGNALS[key], self._gates[key]
             values = spec.extract(face, self._signal_sources[key])
-            if values is None:
-                return False
-            if any(d*(v-gate.release[channel]) > 0 for channel,d,v in zip(spec.channels,spec.directions,values)):
-                return False
-        return True
+            if values is None or any(d*(v-gate.release[channel]) > 0 for channel,d,v in
+                                     zip(spec.channels,spec.directions,values)):
+                pending.append(key)
+        return pending
 
     def update_screen_size(self, w: int, h: int):
         """Actualiza la resolución de pantalla para el cálculo de velocidad."""
@@ -332,6 +339,7 @@ class GestureEngine:
 
         # Aplicar zona muerta
         dz = self.config.dead_zone
+        self.head_still = abs(dx) <= dz and abs(dy) <= dz
         dx = 0.0 if abs(dx) < dz else (dx - dz * (1 if dx > 0 else -1))
         dy = 0.0 if abs(dy) < dz else (dy - dz * (1 if dy > 0 else -1))
 
@@ -361,6 +369,11 @@ class GestureEngine:
         self.last_signals = {key:spec.extract(fd,self._signal_sources[key]) for key,spec in GESTURE_SIGNALS.items()}
         physical = {key:self._gates[key].update(value) for key,value in self.last_signals.items()}
         active_gestures = {key:value and key in self.enabled_gestures for key,value in physical.items()}
+        if self.config.brow_motion_gate and not self.head_still:
+            # Con la cabeza desplazada (cursor en movimiento) la elevación de cejas
+            # no es confiable: mirar hacia arriba la imita. Ojos y boca no cambian.
+            for key in ("LEFT_BROW", "RIGHT_BROW", "BOTH_BROWS"):
+                active_gestures[key] = False
         self.last_active = active_gestures.copy()
         both_eyes = physical["LEFT_WINK"] and physical["RIGHT_WINK"]
         left, right, both = (active_gestures[k] for k in ("LEFT_BROW","RIGHT_BROW","BOTH_BROWS"))

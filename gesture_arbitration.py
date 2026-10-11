@@ -21,10 +21,10 @@ class BrowArbiter:
             self.started = now
             self.first = "left" if left else "right" if right else "both"
         if self.choice is not None:
-            # Decisión por episodio: un segundo lado tardío no convierte scroll en pausa.
-            if self.choice == "both":
-                return "both" if both else None
-            return self.choice if (left if self.choice == "left" else right) else None
+            # Decisión por episodio hasta soltar todo: un segundo lado tardío no
+            # convierte scroll en pausa, y la ceja que tarda en bajar después de
+            # ambas cejas no cuenta como scroll.
+            return self.choice
         if both and now - self.started <= self.window_s + 1e-9:
             self.choice = "both"
         elif now - self.started >= self.window_s - 1e-9:
