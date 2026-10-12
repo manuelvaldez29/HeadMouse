@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import logging
 import math
+import sys
 import threading
 import time
 from dataclasses import dataclass
@@ -83,7 +84,8 @@ class ControlEngine:
     def __init__(self,
                  vision:  VisionEngine,
                  gesture: GestureEngine,
-                 config:  ControlConfig = None, backend=None, metrics=None, mapping=None):
+                 config:  ControlConfig = None, backend=None, metrics=None, mapping=None,
+                 wheel_unit=None):
 
         self.vision  = vision
         self.gesture = gesture
@@ -93,6 +95,10 @@ class ControlEngine:
             import pyautogui
             backend = pyautogui
         self.backend = backend
+        # PyAutoGUI en Windows pasa el valor directo a mouse_event: una muesca de
+        # rueda son 120 unidades (WHEEL_DELTA). Sin escalar, scroll(3) movía 3/120
+        # de muesca. En macOS/Linux PyAutoGUI ya cuenta muescas.
+        self.wheel_unit = wheel_unit if wheel_unit is not None else (120 if sys.platform == "win32" else 1)
         self.backend.PAUSE = 0
         self.backend.FAILSAFE = True
         self.metrics = metrics
@@ -270,11 +276,11 @@ class ControlEngine:
             self._log_event("RIGHT_CLICK", clicks=True)
 
         elif ev.type == EV_SCROLL_UP:
-            self.backend.scroll(self.config.scroll_lines, _pause=False)
+            self.backend.scroll(self.config.scroll_lines * self.wheel_unit, _pause=False)
             self._log_event("SCROLL_UP", scrolls=True)
 
         elif ev.type == EV_SCROLL_DOWN:
-            self.backend.scroll(-self.config.scroll_lines, _pause=False)
+            self.backend.scroll(-self.config.scroll_lines * self.wheel_unit, _pause=False)
             self._log_event("SCROLL_DOWN", scrolls=True)
 
         elif ev.type in (EV_MOUTH_OPEN, "OPEN_START_MENU"):

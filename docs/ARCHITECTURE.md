@@ -152,7 +152,12 @@ experimental futura. No están implementadas.
   `brow_motion_gate`): mirar hacia arriba eleva la señal geométrica de cejas y
   pausaba el sistema al subir el cursor. Guiños y boca no se bloquean.
 - Ambas cejas suprimen scroll individual; hold y cooldown requieren liberación.
-  El scroll existente era un evento por elevación, **no** repetición sostenida.
+  Con la ceja sostenida, el scroll se repite (`brow_repeat_delay_ms` 500,
+  `brow_repeat_ms` 250; 0 lo apaga) mientras siga el mismo episodio, la cabeza
+  quieta y la ceja activa. Ambas cejas nunca se repiten. `scroll_lines` son
+  muescas de rueda: en Windows se multiplican por 120 (WHEEL_DELTA), porque
+  PyAutoGUI pasa el valor crudo a mouse_event. Antes, scroll(3) era 3/120 de
+  muesca y la página apenas se movía.
 - Deltas se limitan a ±60 px y se rechazan NaN/Inf. Se conserva truncado entero.
 - Failsafe PyAutoGUI queda activo y detiene el hilo cuando una llamada lo dispara;
   no es un detector independiente mientras el control está pausado. Ctrl+C o Q

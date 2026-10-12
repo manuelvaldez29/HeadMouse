@@ -110,6 +110,38 @@ class SessionNeutralTests(unittest.TestCase):
         self.assertIn("Boca", v.error)
 
 
+    def test_relaxed_mouth_later_in_session_is_accepted_as_neutral(self):
+        """2026-10-11: boca 0.0066 en el neutral inicial y hasta 0.015 relajada después."""
+        s = CalibrationSession({"user_id": "mouth"}, self.config, self.clock,
+                               {key: key in ("LEFT_BROW", "MOUTH_OPEN") for key in GESTURE_SIGNALS})
+        s.start()
+        for frame in range(3000):
+            if s.state in ("measured", "error"): break
+            values = dict(mouth_open=.0066)
+            if s.gesture_id == "LEFT_BROW":
+                values["mouth_open"] = .015 if frame % 2 else .0066  # labios que se separan solos
+            if s.gesture_id == "MOUTH_OPEN":
+                values["mouth_open"] = .014
+            if s.stage == "active" and 3 <= len(s._rows) % 30 < 15:
+                values |= {"brow_left_lift": RAISED} if s.gesture_id == "LEFT_BROW" else {"mouth_open": .2}
+            s.update(self.face(**values))
+        self.assertEqual(s.state, "measured", s.snapshot())
+        record = s.candidate["gesture_calibrations"]["MOUTH_OPEN"]
+        self.assertGreater(record["release_threshold"]["mouth_open"], .015)
+
+    def test_neutral_wait_names_what_to_relax_and_never_accepts_gesture(self):
+        s = CalibrationSession({"user_id": "hint"}, self.config, self.clock,
+                               {key: key == "MOUTH_OPEN" for key in GESTURE_SIGNALS})
+        s.start()
+        for _ in range(3000):
+            if s.models["MOUTH_OPEN"].active_samples: break
+            values = {"mouth_open": .2} if s.stage == "active" and 3 <= len(s._rows) % 30 < 15 else {}
+            s.update(self.face(**values))
+        for _ in range(60): s.update(self.face(mouth_open=.15))  # boca abierta en el neutral siguiente
+        self.assertEqual(s.stage, "neutral")
+        self.assertIn("relajá la boca", s.feedback)
+        self.assertEqual(len(s.models["MOUTH_OPEN"].active_samples), 1)
+
 
 class BrowMotionGateTests(unittest.TestCase):
     """Sesión del 2026-10-11: 20 pausas detectadas en 7 min al mover el cursor hacia arriba."""

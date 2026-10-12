@@ -207,6 +207,7 @@ class GestureEngine:
             self._gates[key] = HysteresisGate(spec.channels, spec.directions, a, r)
         self._brow_arbiter = BrowArbiter(self.config.brow_decision_ms)
         self._brow_pending = {}
+        self._brow_repeat = {}  # detector -> [primer evento, último evento] en ms
         self.config.neutral_x = calibration.get("neutral_nose_x", self.config.neutral_x)
         self.config.neutral_y = calibration.get("neutral_nose_y", self.config.neutral_y)
 
@@ -286,6 +287,7 @@ class GestureEngine:
             gate.reset()
         self._brow_arbiter.reset()
         self._brow_pending.clear()
+        self._brow_repeat.clear()
         self.last_active = {}
         self.last_signals = {}
 
@@ -403,7 +405,24 @@ class GestureEngine:
             event = self._brow_pending.pop("brow_"+choice, None)
             if event:
                 events.append(event)
+        self._repeat_scroll(events, active, choice)
         return events
+
+    def _repeat_scroll(self, events, active, choice):
+        """Con la ceja sostenida, repetir el scroll como la repetición de teclado."""
+        now = self._clock() * 1000
+        c = self.config
+        for key, side in (("brow_left", "left"), ("brow_right", "right")):
+            event_type = self._detectors[key].event_type
+            if not active[key] or choice != side:
+                self._brow_repeat.pop(key, None)
+            elif any(e.type == event_type for e in events):
+                self._brow_repeat[key] = [now, now]
+            elif key in self._brow_repeat and c.brow_repeat_ms > 0:
+                first, last = self._brow_repeat[key]
+                if now - first >= c.brow_repeat_delay_ms and now - last >= c.brow_repeat_ms:
+                    events.append(GestureEvent(type=event_type))
+                    self._brow_repeat[key][1] = now
 
     # ── Calibración ───────────────────────────────────────────────────────────
 

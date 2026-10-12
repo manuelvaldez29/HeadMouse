@@ -28,6 +28,7 @@ from dataclasses import replace
 from config import ROOT, VisionConfig
 from face_data import FaceData
 from gesture_signals import extract_blendshapes
+from face_geometry import brow_lift_3d, head_pose
 
 logger = logging.getLogger(__name__)
 import threading
@@ -115,6 +116,7 @@ class VisionEngine(threading.Thread):
         self._face_data = FaceData(detected=False)
         self._fps       = 0.0
         self._frame: Optional[np.ndarray] = None
+        self._frame_size = (1, 1)  # ancho, alto: escala de x/y/z para geometría 3D
 
         # ── Control del hilo ──────────────────────────────────────────────────
         self._running = False
@@ -195,6 +197,7 @@ class VisionEngine(threading.Thread):
                         continue
                     failures = 0
                     frame = cv2.flip(frame, 1)  # conservar espejo y landmark nasal
+                    self._frame_size = (frame.shape[1], frame.shape[0])
                     ts_ms = max(previous_ts + 1, int(time.monotonic() * 1000))
                     previous_ts = ts_ms
                     rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -298,6 +301,11 @@ class VisionEngine(threading.Thread):
         brow_l_lift = float((eye_l_y - brow_l_y) / scale)
         brow_r_lift = float((eye_r_y - brow_r_y) / scale)            
 
+        width, height = self._frame_size
+        lift_3d = brow_lift_3d(lms, width, height) if all(
+            np.isfinite(getattr(p, "z", np.nan)) for p in lms) else None
+        pose = head_pose(lms, width, height) if lift_3d is not None else None
+
         # Apertura de boca
         mouth_open = abs(
             lms[LM_IDX["mouth_upper"]].y - lms[LM_IDX["mouth_lower"]].y
@@ -315,6 +323,11 @@ class VisionEngine(threading.Thread):
             face_scale      = scale,
             timestamp_ms    = timestamp_ms,
             blendshapes     = extract_blendshapes((getattr(result, "face_blendshapes", None) or [[]])[0]),
+            brow_left_3d    = lift_3d[0] if lift_3d else None,
+            brow_right_3d   = lift_3d[1] if lift_3d else None,
+            head_pitch      = pose[0] if pose else None,
+            head_yaw        = pose[1] if pose else None,
+            head_roll       = pose[2] if pose else None,
             landmarks       = tuple((float(lms[i].x), float(lms[i].y)) for i in
                                     (1, 159, 145, 386, 374, 70, 105, 107, 336, 334, 300, 13, 14)),
         )

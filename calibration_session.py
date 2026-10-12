@@ -5,12 +5,12 @@ import time
 from copy import deepcopy
 from dataclasses import asdict, replace
 from datetime import datetime, timezone
-from adaptive_calibration import GestureCalibration, PLATEAU_MAX_GAP, gesture_plateau, statistics
+from adaptive_calibration import GestureCalibration, PLATEAU_MAX_GAP, gesture_plateau, percentile, statistics
 from calibration_logic import Samples
 from calibration_validation import CalibrationValidation
 from config import DEFAULT_THRESHOLDS
 from gesture_engine import GestureEngine
-from gesture_signals import GESTURE_SIGNALS
+from gesture_signals import GESTURE_SIGNALS, SOURCES
 
 logger=logging.getLogger(__name__)
 
@@ -22,7 +22,7 @@ class CalibrationSession:
     def __init__(self, profile, config, clock=time.monotonic, enabled=None, source=None):
         self.profile, self.config, self.clock = deepcopy(profile), deepcopy(config), clock
         self.source = source or config.calibration.brow_signal_source
-        if self.source not in ("GEOMETRIC","BLENDSHAPE","HYBRID"):
+        if self.source not in SOURCES:
             raise ValueError("Fuente de calibración inválida")
         previous=profile.get("gesture_calibrations",{})
         availability={key:previous.get(key,{}).get("enabled",True) for key in GESTURE_SIGNALS}
@@ -195,15 +195,33 @@ class CalibrationSession:
         self.error=""
 
     def _neutral_ok(self,values):
+        """Reposo respecto del neutral inicial, ampliado con el reposo de la sesión.
+
+        El neutral inicial dura pocos segundos; después, la boca o los ojos
+        relajados suelen quedar algo más abiertos (2026-10-11: boca 0.0066 al
+        inicio, p90 0.0152 durante el resto). Exigir el valor inicial dejaba la
+        captura esperando "volvé a neutral" hasta el timeout. Nunca se acepta
+        como reposo un valor que ya supera la liberación provisional del gesto.
+        """
+        cc=self.config.calibration
         reference=self.baseline_signals[self.gesture_id]
         if not reference: return False
         model=self.models[self.gesture_id]
-        for index,direction in enumerate(model.directions):
+        pool=self.neutral_pool[self.gesture_id]
+        for index,(channel,direction) in enumerate(zip(model.channels,model.directions)):
             stats=statistics([row[index] for row in reference])
-            tolerance=max(3*self.config.calibration.min_separation,
-                          self.config.calibration.noise_multiplier*1.4826*stats["mad"],.1*abs(stats["median"]))
-            if direction*(values[index]-stats["median"])>tolerance: return False
+            tolerance=max(3*cc.min_separation,cc.noise_multiplier*1.4826*stats["mad"],.1*abs(stats["median"]))
+            limit=direction*stats["median"]+tolerance
+            if len(pool)>=cc.min_window_samples:
+                limit=max(limit,percentile([direction*row[index] for row in pool],95)+cc.min_separation)
+            if channel in model.release_threshold:
+                limit=min(limit,direction*model.release_threshold[channel])
+            if direction*values[index]>limit: return False
         return True
+
+    def _relax_hint(self):
+        return {"LEFT_WINK":"el ojo izquierdo","RIGHT_WINK":"el ojo derecho","LEFT_BROW":"la ceja izquierda",
+                "RIGHT_BROW":"la ceja derecha","MOUTH_OPEN":"la boca","BOTH_BROWS":"las cejas"}.get(self.gesture_id,"la cara")
 
     def _state_key(self):
         model=self.models.get(self.gesture_id)
@@ -267,7 +285,8 @@ class CalibrationSession:
             if now-self._invalid_since>cc.validation_noise_s: self._reset_window()
             self._wait_reason=(f"Señal {self.source} ausente ({', '.join(missing) or self.gesture_id})."
                                if fresh and (missing or spec and values is None) else
-                               "Volvé a posición neutral." if fresh else "Esperando rostro y señal válidos.")
+                               f"Volvé a posición neutral: relajá {self._relax_hint()}." if fresh else
+                               "Esperando rostro y señal válidos.")
             self.feedback=self._wait_reason
             return
         if face.timestamp_ms<=self._last_timestamp: return

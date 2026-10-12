@@ -44,6 +44,10 @@ class GestureConfig:
     # Las cejas solo actúan con la cabeza dentro de la zona muerta (cursor
     # quieto): al mirar hacia arriba la señal geométrica de cejas sube sola.
     brow_motion_gate: bool = True
+    # Scroll continuo: con la ceja sostenida, repetir cada brow_repeat_ms
+    # después de brow_repeat_delay_ms. 0 = un solo scroll por elevación.
+    brow_repeat_delay_ms: float = 500
+    brow_repeat_ms: float = 250
 
     def __post_init__(self):
         for name in ("sensitivity", "acceleration"):
@@ -68,7 +72,7 @@ class GestureConfig:
 
 @dataclass
 class ControlConfig:
-    scroll_lines: int = 3
+    scroll_lines: int = 3  # muescas de rueda por evento (Windows: 3 líneas cada una)
     face_timeout_s: float = 2.0
     max_cursor_delta: float = 60.0
     loop_hz: float = 60.0
@@ -136,7 +140,8 @@ class CalibrationConfig:
             bounded(name, getattr(self, name), .05, 10)
         if self.validation_noise_s >= self.validation_wrong_s:
             raise ValueError("La tolerancia de ruido debe ser menor que el tiempo de gesto incorrecto")
-        if self.brow_signal_source not in ("GEOMETRIC","BLENDSHAPE","HYBRID"):
+        from gesture_signals import SOURCES
+        if self.brow_signal_source not in SOURCES:
             raise ValueError("Fuente de cejas desconocida")
 
 

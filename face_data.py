@@ -20,14 +20,24 @@ class FaceData:
     processing_ms: float = 0.0  # envío a MediaPipe → extracción, no captura
     landmarks: tuple = ()  # puntos relevantes volátiles para preview; nunca persistidos
     blendshapes: tuple = ()  # pares (nombre, score), solo memoria; opcionales
+    # Señal de cejas en el sistema de la cara y pose aproximada; None si no se calculó.
+    brow_left_3d: float | None = None
+    brow_right_3d: float | None = None
+    head_pitch: float | None = None
+    head_yaw: float | None = None
+    head_roll: float | None = None
 
     def valid(self):
         values = (self.nose_x, self.nose_y, self.eye_left_ratio,
                   self.eye_right_ratio, self.brow_left_lift, self.brow_right_lift,
                   self.mouth_open, self.face_scale, self.timestamp_ms,
                   self.detected_at, self.processing_ms)
+        optional = ((self.brow_left_3d, 10), (self.brow_right_3d, 10),
+                    (self.head_pitch, 180), (self.head_yaw, 180), (self.head_roll, 180))
         return (all(isinstance(v, (int, float)) and not isinstance(v, bool)
                     and math.isfinite(v) for v in values)
+                and all(v is None or (isinstance(v, (int, float)) and not isinstance(v, bool)
+                                      and math.isfinite(v) and abs(v) <= limit) for v, limit in optional)
                 and isinstance(self.detected, bool)
                 and 0 <= self.nose_x <= 1 and 0 <= self.nose_y <= 1
                 and 0 <= self.eye_left_ratio <= 10 and 0 <= self.eye_right_ratio <= 10

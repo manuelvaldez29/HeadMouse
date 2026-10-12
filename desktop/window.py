@@ -201,8 +201,8 @@ class MainWindow(QMainWindow):
         self.calibration_options=QWidget()
         options=QVBoxLayout(self.calibration_options)
         options.setContentsMargins(0,0,0,0)
-        toggle=button("Gestos disponibles y tipo de señal ▾",lambda:self.calibration_options.setVisible(not self.calibration_options.isVisible()))
-        layout.addWidget(toggle)
+        self.calibration_options_toggle=button("Gestos disponibles y tipo de señal ▾",lambda:self.calibration_options.setVisible(not self.calibration_options.isVisible()))
+        layout.addWidget(self.calibration_options_toggle)
         layout.addWidget(self.calibration_options)
         self.calibration_options.hide()
         choices=QGridLayout()
@@ -217,10 +217,16 @@ class MainWindow(QMainWindow):
         source_row=QHBoxLayout()
         source_row.addWidget(label("Señal de cejas"))
         self.calibration_source=QComboBox()
-        for title,value in (("Geométrica (predeterminada)","GEOMETRIC"),("Blendshapes · experimental","BLENDSHAPE"),("Híbrida · experimental","HYBRID")):
+        for title,value in (("Geométrica (predeterminada)","GEOMETRIC"),("Blendshapes · experimental","BLENDSHAPE"),("Híbrida · experimental","HYBRID"),
+                            ("Geométrica 3D · experimental","GEOMETRIC_3D")):
             self.calibration_source.addItem(title,value)
         source_row.addWidget(self.calibration_source,1)
         options.addLayout(source_row)
+        # La señal elegida queda visible aunque el panel esté plegado.
+        show_source=lambda _index=None:self.calibration_options_toggle.setText(
+            f"Gestos disponibles y tipo de señal · cejas: {self.calibration_source.currentText()} ▾")
+        self.calibration_source.currentIndexChanged.connect(show_source)
+        show_source()
         self.wizard_instruction=label("Elegí un perfil y comenzá cuando estés cómodo.","BigInstruction")
         layout.addWidget(self.wizard_instruction)
         self.wizard_progress=QProgressBar()
@@ -307,6 +313,9 @@ class MainWindow(QMainWindow):
                ("gesture.smoothing_alpha","Suavizado (0: directo; 0,95: suave)",0,.95,2),
                ("gesture.dead_zone","Zona muerta",0,.49,3),
                ("control.face_timeout_s","Timeout de rostro · segundos",.1,60,1),
+               ("control.scroll_lines","Scroll: muescas de rueda por evento",1,100,0),
+               ("gesture.brow_repeat_delay_ms","Scroll continuo: esperar antes de repetir · ms",0,5000,0),
+               ("gesture.brow_repeat_ms","Scroll continuo: repetir cada · ms (0 = apagado)",0,5000,0),
                ("gesture.brow_decision_ms","Ventana de decisión de cejas · ms",0,1000,0)]
         for group,title in (("blink","Guiños"),("brow","Cejas"),("both_brows","Ambas cejas"),("mouth","Boca")):
             specs += [(f"gesture.{group}_hold_ms",f"{title}: sostener · ms",0,5000,0),

@@ -144,8 +144,8 @@ class AdaptiveSessionTests(unittest.TestCase):
                 def blend_face(values=None):
                     f=self.face(values)
                     return replace(f,blendshapes=(("browInnerUp",.1),("browDownLeft",0.),("browDownRight",0.),
-                        ("browOuterUpLeft",max(0.,2*(f.brow_left_lift-.2))),
-                        ("browOuterUpRight",max(0.,2*(f.brow_right_lift-.22)))))
+                        ("browOuterUpRight",max(0.,2*(f.brow_left_lift-.2))),  # frame espejado
+                        ("browOuterUpLeft",max(0.,2*(f.brow_right_lift-.22)))))
                 for _ in range(1000):
                     if s.state in ("measured","error"): break
                     s.update(blend_face(ACTIVE.get(s.gesture_id,{}) if s.stage=="active" else {}))

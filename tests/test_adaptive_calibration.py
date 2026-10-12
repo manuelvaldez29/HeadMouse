@@ -113,8 +113,9 @@ class AdaptiveCalibrationTests(unittest.TestCase):
         blends=(("browInnerUp",.4),("browOuterUpLeft",.8),("browOuterUpRight",.6),("browDownLeft",.2),("browDownRight",.1))
         face=replace(face,blendshapes=blends)
         left=get_signal("LEFT_BROW")
-        self.assertAlmostEqual(left.extract(face,"BLENDSHAPE")[0],.5)
-        self.assertAlmostEqual(left.extract(face,"HYBRID")[0],(.3/.25+.5)/2)
+        # Frame espejado: la ceja izquierda del usuario usa los blendshapes "Right".
+        self.assertAlmostEqual(left.extract(face,"BLENDSHAPE")[0],.45)
+        self.assertAlmostEqual(left.extract(face,"HYBRID")[0],(.3/.25+.45)/2)
         self.assertEqual(left.extract(face,"GEOMETRIC"),(.3,))
 
     def test_invalid_samples_and_hysteresis_rejected(self):

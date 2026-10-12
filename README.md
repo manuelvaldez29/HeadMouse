@@ -88,7 +88,7 @@ El sistema **arranca pausado**. Ambas cejas lo activan o pausan.
 |---|---|
 | Desplazar cabeza | Cursor; nariz como joystick |
 | Guiño izquierdo / derecho | Click izquierdo / derecho |
-| Ceja izquierda / derecha | Scroll arriba / abajo, una acción por elevación |
+| Ceja izquierda / derecha | Scroll arriba / abajo; sostenida, se repite cada 250 ms después de 500 ms |
 | Ambas cejas | Pausa / reanudación |
 | Boca abierta | Tecla Windows |
 
@@ -172,6 +172,7 @@ individuales ni imágenes, en `data/calibration/`.
 - [Uso de la GUI](docs/GUI.md)
 - [Experimentos y jitter](docs/EXPERIMENTS.md)
 - [Mapeo de gestos y acciones](docs/ACTION_MAPPING.md)
+- [Estudio de señales de cejas frente a la pose](docs/BROW_SIGNAL_STUDY.md)
 - [Informe v0.3: implementación, pruebas y limitaciones](docs/IMPLEMENTATION_REPORT_V03.md)
 - [Informe histórico v0.2](docs/IMPLEMENTATION_REPORT.md)
 

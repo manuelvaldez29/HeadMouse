@@ -305,3 +305,19 @@ parecía que "Validar" no hacía nada.
 Pruebas: `tests/test_session_neutral.py`. Sigue pendiente lo de fondo: una
 señal de cejas menos sensible a la pose (blendshapes, o corrección por pitch con
 la matriz de transformación facial), que tiene que compararse con usuarios.
+
+## Neutral de la boca (2026-10-11, tercera prueba)
+
+Dos calibraciones seguidas se trabaron al empezar la boca: después de los
+guiños y las cejas, la pantalla pedía "volvé a posición neutral" hasta el
+timeout. La espera de reposo comparaba cada gesto solo con el neutral inicial,
+con una tolerancia de unos 0.006. La boca relajada medía 0.0066 al inicio, pero
+en los neutrales de los otros gestos su p90 llegó a 0.0152 (calibración
+`5eed5c04`). Los labios se separan solos un poco con el tiempo. El límite
+aceptado era 3–4 % de la amplitud del gesto (≈ 0.17).
+
+Cambio: `_neutral_ok` ahora acepta hasta el p95 del reposo acumulado en la
+sesión más `min_separation`, pero nunca por encima de la liberación provisional
+del gesto. El mensaje de espera dice qué relajar ("relajá la boca"). Las pruebas
+están en `tests/test_session_neutral.py`; con el criterio anterior, el caso de
+prueba termina en timeout, que es el síntoma observado.

@@ -6,7 +6,7 @@ los canales estén activos (AND); BOTH_BROWS usa dos canales calibrados juntos.
 import math
 from dataclasses import dataclass
 
-SOURCES = ("GEOMETRIC", "BLENDSHAPE", "HYBRID")
+SOURCES = ("GEOMETRIC", "BLENDSHAPE", "HYBRID", "GEOMETRIC_3D")
 BROW_BLENDSHAPES = ("browInnerUp", "browOuterUpLeft", "browOuterUpRight",
                     "browDownLeft", "browDownRight")
 
@@ -25,8 +25,13 @@ def brow_signal(face, side, source):
     geometric = getattr(face, f"brow_{side}_lift")
     if source == "GEOMETRIC":
         return geometric
+    if source == "GEOMETRIC_3D":
+        # Ausente (None) si la visión no pudo construir el sistema de la cara.
+        return getattr(face, f"brow_{side}_3d", None)
     values = dict(face.blendshapes)
-    suffix = "Left" if side == "left" else "Right"
+    # VisionEngine espeja el frame antes de inferir: para MediaPipe la ceja
+    # izquierda del usuario es su "Right" (medido en brow_study, 2026-10-11).
+    suffix = "Right" if side == "left" else "Left"
     names = ("browInnerUp", "browOuterUp" + suffix, "browDown" + suffix)
     if any(name not in values for name in names):
         return None  # Nunca sustituir por geometría usando thresholds de otra escala.
