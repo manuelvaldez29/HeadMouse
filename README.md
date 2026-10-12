@@ -89,7 +89,7 @@ El sistema **arranca pausado**. Ambas cejas lo activan o pausan.
 | Desplazar cabeza | Cursor; nariz como joystick |
 | Guiño izquierdo / derecho | Click izquierdo / derecho |
 | Ceja izquierda / derecha | Scroll arriba / abajo; sostenida, se repite cada 250 ms después de 500 ms |
-| Ambas cejas | Pausa / reanudación |
+| Ambas cejas | Pausa / reanudación; al reanudar, la postura quieta previa pasa a ser el centro |
 | Boca abierta | Tecla Windows |
 
 Los gestos de cejas solo actúan con la cabeza dentro de la zona muerta, es

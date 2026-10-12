@@ -67,8 +67,10 @@ class CameraPreview(QWidget):
                 p.drawEllipse(point(x,y),3,3)
         if settings["ui"]["show_overlay"]:
             profile=s.get("profile") or {}
-            nx=profile.get("neutral_nose_x",.5)
-            ny=profile.get("neutral_nose_y",.5)
+            diagnostic=s.get("diagnostic") or {}
+            # El neutral vigente puede venir del recentrado automático.
+            nx=diagnostic.get("neutral_x",profile.get("neutral_nose_x",.5))
+            ny=diagnostic.get("neutral_y",profile.get("neutral_nose_y",.5))
             dz=settings["gesture"]["dead_zone"]
             p.setPen(QPen(QColor("#ffd477"),2))
             p.setBrush(Qt.BrushStyle.NoBrush)

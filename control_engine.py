@@ -104,6 +104,10 @@ class ControlEngine:
         self.metrics = metrics
         self.mapping = mapping or ActionMapping()
         self.dictation = dictation  # opcional: dictation.Dictation
+        self.last_recenter = None   # resultado del último recentrado, para la GUI
+        self._pinned_since = None   # cursor apretado contra un borde (centro mal ubicado)
+        self._pinned_retry = 0.
+        self._last_cursor = None
         self.last_events = ()
         self.last_actions = ()
         self.output_allowed = threading.Event()
@@ -208,6 +212,7 @@ class ControlEngine:
         now    = time.monotonic()
         fd = self.vision.get_face_data()
         fresh = fd.fresh(self.gesture.config.stale_after_s, now)
+        self.gesture.both_brows_anywhere = self.paused
         events = self.gesture.update(fd)
         self.last_events = tuple(events)
         self.last_actions = ()
@@ -236,7 +241,14 @@ class ControlEngine:
             actions = [ev for ev in actions if ev.type == EV_CURSOR_MOVE]
         toggle = next((ev for ev in actions if ev.type == "PAUSE"), None)
         if toggle is not None and fresh and self.output_allowed.is_set():
+            resuming = self._paused
             self.toggle_pause()
+            if resuming and getattr(self.gesture.config, "auto_recenter", False) and hasattr(self.gesture, "recenter"):
+                # Excluir el propio gesto: decisión de cejas + hold de ambas cejas + margen.
+                c = self.gesture.config
+                guard = c.brow_decision_ms + c.both_brows_hold_ms + 250
+                self.last_recenter = self.gesture.recenter(toggle.source_timestamp_ms, guard_ms=guard)
+                logger.info("[ControlEngine] Recentrado: %s", self.last_recenter)
             self._log_event(EV_BOTH_BROWS)
             if self.metrics:
                 self.metrics.action(toggle)
@@ -248,11 +260,47 @@ class ControlEngine:
                 self._execute(ev)
                 if ev.type != "NONE":
                     self.last_actions += (ev,)
+            self._check_pinned(actions, fd, now)
 
         # ── Estadísticas ──────────────────────────────────────────────────────
         with self._stats_lock:
             self._stats.face_detected = fresh
             self._stats.fps           = self.vision.get_fps()
+
+    PINNED_S = 2.0
+
+    def _check_pinned(self, actions, fd, now):
+        """Recentrar solo si el cursor lleva PINNED_S apretado contra un borde.
+
+        Con la cabeza quieta y el cursor empujando contra el borde de la pantalla,
+        el centro está mal ubicado (cámara movida): nadie empuja el cursor contra
+        la pared a propósito. Evita también llegar a una esquina (failsafe).
+        """
+        if not getattr(self.gesture.config, "auto_recenter", False) or not hasattr(self.gesture, "recenter"):
+            return
+        move = next((ev for ev in actions if ev.type == EV_CURSOR_MOVE and (int(ev.dx) or int(ev.dy))), None)
+        if move is None:
+            return  # sin frame nuevo o cursor quieto: no cambia el estado
+        try:
+            position = tuple(self.backend.position())
+        except Exception:
+            return
+        pinned = position == self._last_cursor
+        self._last_cursor = position
+        if not pinned:
+            self._pinned_since = None
+            return
+        if self._pinned_since is None:
+            self._pinned_since = now
+        if now - self._pinned_since >= self.PINNED_S and now >= self._pinned_retry:
+            result = self.gesture.recenter(fd.timestamp_ms, guard_ms=0, search_ms=1000)
+            if result.get("ok"):
+                result = dict(result, pinned=True)
+                self.last_recenter = result
+                self._pinned_since = None
+                logger.info("[ControlEngine] Recentrado por cursor trabado en el borde: %s", result)
+            else:
+                self._pinned_retry = now + 1.0  # cabeza en movimiento: volver a probar en 1 s
 
     # ── Ejecución de acciones ─────────────────────────────────────────────────
 

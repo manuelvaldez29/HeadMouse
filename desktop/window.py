@@ -581,6 +581,8 @@ class MainWindow(QMainWindow):
             self.diagnostic_values.setText(
                 f"Facial X / Y: {fd.nose_x:.4f} / {fd.nose_y:.4f}   |   Cursor esperado (panel 800×500): {s['cursor'][0]:.0f} / {s['cursor'][1]:.0f}\n"
                 f"Desplazamiento normalizado: {d['normalized_dx']:+.4f} / {d['normalized_dy']:+.4f}   |   FPS: {s['fps']:.0f}   |   Latencia: {s['processing_ms']:.1f} ms\n"
+                f"Centro X / Y vigente: {d.get('neutral_x',0):.4f} / {d.get('neutral_y',0):.4f}   (calibrado: "
+                f"{d.get('calibrated_neutral',(0,0))[0]:.4f} / {d.get('calibrated_neutral',(0,0))[1]:.4f})   |   ambas cejas recentran\n"
                 f"Ojos izq/der: {fd.eye_left_ratio:.4f} / {fd.eye_right_ratio:.4f} (umbrales {t['blink_left']:.4f} / {t['blink_right']:.4f})\n"
                 f"Cejas izq/der: {fd.brow_left_lift:.4f} / {fd.brow_right_lift:.4f} (umbrales {t['brow_left']:.4f} / {t['brow_right']:.4f})\n"
                 f"Boca: {fd.mouth_open:.4f} (umbral {t['mouth_open']:.4f})   |   Zona muerta: {s['settings']['gesture']['dead_zone']:.3f}   |   Suavizado: {s['settings']['gesture']['smoothing_alpha']:.2f}")

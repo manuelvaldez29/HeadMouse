@@ -27,7 +27,9 @@ Uso desde Control Engine:
 from __future__ import annotations
 
 import logging
+from collections import deque
 from copy import deepcopy
+from statistics import median
 import time
 from dataclasses import dataclass, field
 from typing import Optional
@@ -38,7 +40,7 @@ from config import GestureConfig, DEFAULT_THRESHOLDS
 from profiles import load_legacy, validate_profile
 from tracking import NoseTrackingStrategy
 from action_mapping import LEGACY_GESTURES
-from adaptive_calibration import HysteresisGate
+from adaptive_calibration import HysteresisGate, percentile
 from gesture_signals import GESTURE_SIGNALS
 from gesture_arbitration import BrowArbiter
 
@@ -205,6 +207,12 @@ class GestureEngine:
                 from gesture_signals import disabled_eye_suppression
                 a,r=disabled_eye_suppression(key,self.calibrations,a,r)
             self._gates[key] = HysteresisGate(spec.channels, spec.directions, a, r)
+        # Base calibrada para recentrar sin acumular desplazamientos.
+        self._calibrated_neutral = (calibration.get("neutral_nose_x", self.config.neutral_x),
+                                    calibration.get("neutral_nose_y", self.config.neutral_y))
+        self._calibrated_gates = {key: (dict(g.activation), dict(g.release)) for key, g in self._gates.items()}
+        self._history = deque(maxlen=240)  # ~10 s de (ts, x, y, señales, algún gesto activo)
+        self.gesture_offsets = {}
         self._brow_arbiter = BrowArbiter(self.config.brow_decision_ms)
         self._brow_pending = {}
         self._brow_repeat = {}  # detector -> [primer evento, último evento] en ms
@@ -215,6 +223,10 @@ class GestureEngine:
         self._smooth_x = self.config.neutral_x
         self._smooth_y = self.config.neutral_y
         self.head_still = True
+        # En pausa (o sin control) ambas cejas valen en cualquier postura: si el
+        # centro quedó mal, la nariz relajada cae fuera de la zona muerta y el
+        # bloqueo impedía reanudar y recentrar. Lo fija ControlEngine.
+        self.both_brows_anywhere = False
 
         # ── Detectores por gesto ──────────────────────────────────────────────
         c = self.config
@@ -261,6 +273,8 @@ class GestureEngine:
         # 2. Gestos binarios
         gesture_evs = self._update_gestures(fd)
         events.extend(gesture_evs)
+        x, y = self.strategy.position(fd)
+        self._history.append((fd.timestamp_ms, x, y, dict(self.last_signals), any(self.last_active.values())))
 
         for event in events:
             event.source_timestamp_ms = fd.timestamp_ms
@@ -275,7 +289,9 @@ class GestureEngine:
                     thresholds=self._thresholds.copy(), states=self.get_detector_states(),
                     gesture_calibrations=deepcopy(self.calibrations), active=self.last_active.copy(),
                     sources=self._signal_sources.copy(), signals=deepcopy(self.last_signals),
-                    head_still=self.head_still)
+                    head_still=self.head_still, neutral_x=self.config.neutral_x,
+                    calibrated_neutral=self._calibrated_neutral,
+                    neutral_y=self.config.neutral_y, gesture_offsets=deepcopy(self.gesture_offsets))
 
     def reset(self):
         self._smooth_x = self.config.neutral_x
@@ -305,6 +321,72 @@ class GestureEngine:
                                      zip(spec.channels,spec.directions,values)):
                 pending.append(key)
         return pending
+
+    def recenter(self, before_ms, window_ms=1000, search_ms=4000, guard_ms=300, max_spread=.012, max_shift=.4, warn_shift=.2):
+        """Toma como neutral el tramo quieto más reciente previo a `before_ms`.
+
+        Se llama al reanudar con ambas cejas. Se buscan, en los `search_ms`
+        anteriores (sin los `guard_ms` del propio gesto ni frames con gestos
+        activos), ventanas de `window_ms` con la nariz quieta, y se usa la más
+        reciente. Levantar ambas cejas mueve la nariz hasta 0,034 (brow_study,
+        2026-10-11) y quieto varía 0,002, así que una ventana fija justo antes
+        de reanudar fallaba si se había pausado hacía poco.
+
+        Mueve el neutral de la nariz y desplaza los umbrales de cada gesto lo
+        mismo que se movió su reposo, como mucho la mitad de la distancia
+        reposo→activación calibrada. Nunca acumula: parte siempre de la
+        calibración. Devuelve un dict con `ok` y, si no recentró, `reason`.
+        """
+        end = before_ms - guard_ms
+        candidates = [r for r in self._history if end - search_ms <= r[0] <= end and not r[4]]
+
+        def spread(window):
+            xs, ys = [r[1] for r in window], [r[2] for r in window]
+            # Rango p10–p90 (no MAD: un vaivén regular puede dejar la mediana de las desviaciones en cero).
+            return max(percentile(xs, 90) - percentile(xs, 10), percentile(ys, 90) - percentile(ys, 10))
+
+        rows, enough = None, False
+        for i in range(len(candidates) - 1, -1, -1):  # del más reciente al más viejo
+            window = [r for r in candidates[:i + 1] if r[0] > candidates[i][0] - window_ms]
+            if len(window) < 10 or window[-1][0] - window[0][0] < .6 * window_ms:
+                continue
+            enough = True
+            if spread(window) <= max_spread:
+                rows = window
+                break
+        if rows is None:
+            return dict(ok=False, reason="no hubo un segundo con la cabeza quieta antes de reanudar" if enough
+                        else "pocos datos de la postura previa")
+        xs, ys = [r[1] for r in rows], [r[2] for r in rows]
+        mx, my = median(xs), median(ys)
+        cx, cy = self._calibrated_neutral
+        # Con la cámara baja en la cama la nariz quedó 0,225 más abajo que al
+        # calibrar (2026-10-12): un tope de 0,2 impedía justo el caso buscado.
+        distance = ((mx - cx) ** 2 + (my - cy) ** 2) ** .5
+        if distance > max_shift:
+            return dict(ok=False, reason="la cara está casi fuera de la zona calibrada; recalibrá con esta cámara")
+        self.config.neutral_x, self.config.neutral_y = mx, my
+        self._smooth_x, self._smooth_y = mx, my
+        relaxed = rows  # ya sin frames con gestos activos
+        self.gesture_offsets = {}
+        for key, record in self.calibrations.items():
+            if not record.get("enabled") or key not in self._gates or len(relaxed) < 10:
+                continue
+            spec, (activation, release) = GESTURE_SIGNALS[key], self._calibrated_gates[key]
+            values = [r[3].get(key) for r in relaxed if r[3].get(key) is not None]
+            neutral = record.get("neutral_statistics", {})
+            if len(values) < 10 or set(neutral) != set(spec.channels):
+                continue
+            shifted_a, shifted_r, offsets = {}, {}, {}
+            for i, (channel, d) in enumerate(zip(spec.channels, spec.directions)):
+                delta = median(v[i] for v in values) - neutral[channel]["median"]
+                limit = .5 * abs(activation[channel] - neutral[channel]["median"])
+                delta = max(-limit, min(limit, delta))
+                shifted_a[channel], shifted_r[channel] = activation[channel] + delta, release[channel] + delta
+                offsets[channel] = delta
+            self._gates[key] = HysteresisGate(spec.channels, spec.directions, shifted_a, shifted_r)
+            self.gesture_offsets[key] = offsets
+        return dict(ok=True, dx=mx - cx, dy=my - cy, gestures=len(self.gesture_offsets), far=distance > warn_shift)
 
     def update_screen_size(self, w: int, h: int):
         """Actualiza la resolución de pantalla para el cálculo de velocidad."""
@@ -374,7 +456,7 @@ class GestureEngine:
         if self.config.brow_motion_gate and not self.head_still:
             # Con la cabeza desplazada (cursor en movimiento) la elevación de cejas
             # no es confiable: mirar hacia arriba la imita. Ojos y boca no cambian.
-            for key in ("LEFT_BROW", "RIGHT_BROW", "BOTH_BROWS"):
+            for key in ("LEFT_BROW", "RIGHT_BROW") + (() if self.both_brows_anywhere else ("BOTH_BROWS",)):
                 active_gestures[key] = False
         self.last_active = active_gestures.copy()
         both_eyes = physical["LEFT_WINK"] and physical["RIGHT_WINK"]

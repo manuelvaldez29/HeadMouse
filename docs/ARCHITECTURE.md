@@ -148,6 +148,32 @@ experimental futura. No están implementadas.
   hold, aunque el consumidor no haya podido ejecutar durante ese intervalo.
 - Se suprimen ambos clicks cuando ambos ojos están cerrados para reducir
   parpadeos bilaterales. No constituye una garantía de ausencia de falsos positivos.
+- Recentrado automático (`auto_recenter`): al reanudar con ambas cejas, el
+  neutral de la nariz pasa a ser la mediana del segundo quieto más reciente de
+  los 4 s previos. Se excluyen el propio gesto (decisión de cejas + hold +
+  250 ms) y los frames con gestos activos. Levantar ambas cejas mueve la nariz
+  hasta 0,034 y quieta varía 0,002: con una ventana fija de 1,5 s, reanudar poco
+  después de pausar fallaba (en la reproducción de `brow_study` fallaba en las
+  dos rondas; buscando el segundo quieto, recentra en ambas). La cámara
+  puede estar más arriba o abajo que al calibrar, y antes el cursor se desviaba
+  solo. Con la misma ventana, los umbrales de cada gesto se desplazan lo mismo
+  que se movió su reposo, como mucho la mitad del margen calibrado y solo con
+  frames sin gestos activos. No recentra si no hubo un segundo quieto (rango
+  p10–p90 mayor a 0,012) o si quedó a más de 0,4 del neutral calibrado. Entre 0,2 y
+  0,4 recentra, pero avisa que conviene recalibrar: con la cámara baja en la
+  cama la nariz quedó 0,225 más abajo, y el tope inicial de 0,2 bloqueaba justo
+  ese caso. Siempre parte de la calibración, nunca acumula. Como el control
+  arranca pausado, cada activación recentra. En vista previa y Diagnóstico no
+  hay pausa real: ambas cejas recentran igual, para probarlo sin mover el mouse,
+  y el diagnóstico muestra el centro vigente y el calibrado.
+- Centro inalcanzable: si quedó mal ubicado, la nariz relajada cae fuera de la
+  zona muerta y el bloqueo de cejas impedía pausar o reanudar sin buscar el
+  cuadro en la vista de cámara. Por eso, en pausa (y sin control) ambas cejas
+  valen en cualquier postura (`both_brows_anywhere`); el scroll sigue
+  bloqueado. Con el control activo, si la cabeza está quieta y el cursor lleva
+  2 s apretado contra un borde (se envía movimiento y la posición no cambia),
+  se recentra solo. Nadie empuja el cursor contra la pared a propósito con la
+  cabeza inmóvil, y además así se evita llegar a una esquina (failsafe).
 - Las cejas solo actúan con el cursor quieto (cabeza dentro de la zona muerta,
   `brow_motion_gate`): mirar hacia arriba eleva la señal geométrica de cejas y
   pausaba el sistema al subir el cursor. Guiños y boca no se bloquean.

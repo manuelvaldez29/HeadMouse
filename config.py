@@ -48,6 +48,9 @@ class GestureConfig:
     # después de brow_repeat_delay_ms. 0 = un solo scroll por elevación.
     brow_repeat_delay_ms: float = 500
     brow_repeat_ms: float = 250
+    # Al reanudar (ambas cejas), tomar como neutral la postura quieta previa:
+    # la cámara puede estar más arriba o abajo que al calibrar.
+    auto_recenter: bool = True
 
     def __post_init__(self):
         for name in ("sensitivity", "acceleration"):
@@ -66,8 +69,9 @@ class GestureConfig:
             bounded(name, getattr(self, name), 1, 100000, integer=True)
         bounded("stale_after_s", self.stale_after_s, 0.01, 2)
         bounded("brow_decision_ms", self.brow_decision_ms, 0, 1000)
-        if type(self.brow_motion_gate) is not bool:
-            raise ValueError("brow_motion_gate debe ser true o false")
+        for name in ("brow_motion_gate", "auto_recenter"):
+            if type(getattr(self, name)) is not bool:
+                raise ValueError(f"{name} debe ser true o false")
 
 
 @dataclass

@@ -202,6 +202,19 @@ class ApplicationController:
             return
         self.state, self.message = "CONTROL", "Control del sistema activo. F8 o Detener control para salir." + voice_warning
 
+    def _report_recenter(self, result):
+        if not result:
+            return
+        if not result["ok"]:
+            self.message = f"Centro sin cambios: {result['reason']}."
+        elif result.get("pinned"):
+            self.message = "Centro ajustado solo: el cursor estaba trabado contra el borde con la cabeza quieta."
+        elif result.get("far"):
+            self.message = ("Centro ajustado. Tu postura está lejos de la calibrada: "
+                            "si los gestos fallan, recalibrá con esta posición de cámara.")
+        else:
+            self.message = "Centro ajustado a tu postura actual."
+
     def _start_dictation(self):
         """El dictado es opcional: si no está preparado, el control funciona igual."""
         if not self.config.voice.enabled:
@@ -380,11 +393,21 @@ class ApplicationController:
         elif self.control:
             self.control._tick()  # mismo ciclo seguro v0.2, conducido por el worker Qt
             events, actions = list(self.control.last_events), list(self.control.last_actions)
+            recenter, self.control.last_recenter = self.control.last_recenter, None
+            self._report_recenter(recenter)
         elif self.gesture:
+            self.gesture.both_brows_anywhere = True  # sin control: probar el recentrado desde cualquier postura
             events = self.gesture.update(face)
             actions = [ActionMapping(self.config.actions.bindings).resolve(ev) for ev in events]
             if self.metrics:
                 self.metrics.generated(events)
+            # Sin control no hay pausa real: en vista previa y diagnóstico, el gesto
+            # de pausa recentra igual, para poder probar el ajuste sin mover el mouse.
+            pause = next((ev for ev in actions if ev.type == "PAUSE"), None)
+            if pause and self.config.gesture.auto_recenter:
+                c = self.config.gesture
+                self._report_recenter(self.gesture.recenter(
+                    pause.source_timestamp_ms, guard_ms=c.brow_decision_ms + c.both_brows_hold_ms + 250))
         if self.metrics:
             self.metrics.tracking(fresh)
         discrete = [e for e in events if e.type != "CURSOR_MOVE"]
