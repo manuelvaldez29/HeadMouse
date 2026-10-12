@@ -13,6 +13,45 @@ from desktop.widgets import CameraPreview, ExperimentCanvas, CalibrationMeter, D
 
 GESTURE_LABELS = dict(LEFT_WINK="Guiño izquierdo", RIGHT_WINK="Guiño derecho", LEFT_BROW="Ceja izquierda",
                       RIGHT_BROW="Ceja derecha", BOTH_BROWS="Ambas cejas", MOUTH_OPEN="Boca abierta")
+SOURCE_LABELS = dict(GEOMETRIC="Geométrica",BLENDSHAPE="Blendshapes",HYBRID="Híbrida",GEOMETRIC_3D="Geométrica 3D")
+GESTURE_ROWS = (("Ojos izq/der",("LEFT_WINK","RIGHT_WINK")),("Cejas izq/der",("LEFT_BROW","RIGHT_BROW")),
+                ("Ambas cejas",("BOTH_BROWS",)),("Boca",("MOUTH_OPEN",)))
+
+
+def gesture_threshold_lines(d):
+    """Por gesto: la señal que usa el perfil, su valor y los umbrales vigentes.
+
+    Antes se mostraban los umbrales de compatibilidad del esquema anterior, que
+    solo se actualizan para gestos GEOMETRIC de un canal: con cejas GEOMETRIC_3D
+    aparecía el 0,29 genérico junto a la señal 2D, aunque el detector usaba otra.
+    """
+    gates,signals=d.get("gates",{}),d.get("signals",{})
+    sources,active,offsets=d.get("sources",{}),d.get("active",{}),d.get("gesture_offsets",{})
+    fmt=lambda values:" / ".join(f"{v:.4f}" for v in values)
+    lines=[]
+    for title,keys in GESTURE_ROWS:
+        keys=[k for k in keys if k in gates]
+        if not keys: continue
+        if not any(gates[k]["enabled"] for k in keys):
+            lines.append(f"{title}: no disponible")
+            continue
+        value,activation,release,notes=[],[],[],[]
+        for k in keys:
+            if not gates[k]["enabled"]:
+                notes.append(f"{GESTURE_LABELS[k].lower()} no disponible")
+                continue
+            value+=list(signals.get(k) or [])
+            activation+=list(gates[k]["activation"].values())
+            release+=list(gates[k]["release"].values())
+            if active.get(k): notes.append(f"gesto activo: {GESTURE_LABELS[k].lower()}")
+            if any(abs(v)>1e-9 for v in offsets.get(k,{}).values()):
+                notes.append(f"ajuste por recentrado ({GESTURE_LABELS[k].lower()}): "+" / ".join(f"{v:+.4f}" for v in offsets[k].values()))
+        source=SOURCE_LABELS.get(sources.get(keys[0]),sources.get(keys[0],""))
+        lines.append(f"{title} · {source}: {fmt(value) if value else 'señal ausente'}   "
+                     f"(activación {fmt(activation)} · liberación {fmt(release)})"+(f"   · {', '.join(notes)}" if notes else ""))
+    return "\n".join(lines)
+
+
 ACTION_LABELS = dict(LEFT_CLICK="Click izquierdo",RIGHT_CLICK="Click derecho",DOUBLE_CLICK="Doble click",
                      SCROLL_UP="Scroll arriba",SCROLL_DOWN="Scroll abajo",PAUSE="Pausar / reanudar",
                      KEY_ENTER="Enter",KEY_ESCAPE="Escape",KEY_SPACE="Espacio",
@@ -346,6 +385,8 @@ class MainWindow(QMainWindow):
         self.voice_send.addItems(["","enviar"])
         self.voice_send.setAccessibleName("Palabra final que presiona Enter")
         form.addRow("Palabra final que presiona Enter (vacío: ninguna)",self.voice_send)
+        form.addRow(label("Comandos de voz: «borrar», «borrar N palabras», «borrar N letras», «borrar todo», «deshacer». "
+                          "Decí solo el comando. La lista completa está en Gestos y acciones.","Subtitle"))
         self.overlay_check=QCheckBox("Mostrar punto de tracking, neutral, zona muerta y dirección")
         self.landmarks_check=QCheckBox("Mostrar landmarks relevantes")
         form.addRow(self.overlay_check)
@@ -398,7 +439,16 @@ class MainWindow(QMainWindow):
             self.bridge.request("restore_defaults")
 
     def _mapping(self):
-        layout=self.page("Gestos y acciones","Elegí qué querés hacer con cada gesto. La detección y la acción son independientes.")
+        page=self.page("Gestos y acciones","Elegí qué querés hacer con cada gesto. La detección y la acción son independientes.")
+        # Con desplazamiento: con la ayuda de voz no entra en pantallas de 820 px de alto.
+        scroll=QScrollArea()
+        scroll.setWidgetResizable(True)
+        body=QWidget()
+        layout=QVBoxLayout(body)
+        layout.setContentsMargins(0,0,12,0)
+        layout.setSpacing(14)
+        scroll.setWidget(body)
+        page.addWidget(scroll,1)
         form=QFormLayout()
         form.setVerticalSpacing(18)
         self.mapping_fields={}
@@ -411,7 +461,27 @@ class MainWindow(QMainWindow):
         layout.addLayout(form)
         layout.addWidget(label("El botón DETENER CONTROL y F8 siguen disponibles aunque cambies el gesto de pausa.\nLos cambios se aplican al guardar y detienen el control actual.","Subtitle"))
         layout.addWidget(button("Guardar gestos y acciones",self.save_mapping,"Primary"))
+        layout.addWidget(self._voice_commands_help())
         layout.addStretch()
+
+    def _voice_commands_help(self):
+        """Los comandos de voz no tienen botón: si no se muestran, nadie los descubre."""
+        from dictation import VOICE_COMMANDS
+        box=QFrame()
+        box.setObjectName("Card")
+        inner=QVBoxLayout(box)
+        inner.setContentsMargins(18,12,18,12)
+        inner.addWidget(label("Comandos de voz para corregir","Subtitle"))
+        rows=QGridLayout()
+        rows.setHorizontalSpacing(24)
+        for index,(phrase,effect,_example) in enumerate(VOICE_COMMANDS):
+            rows.addWidget(label(phrase),index,0)
+            rows.addWidget(label(effect,"Subtitle"),index,1)
+        inner.addLayout(rows)
+        self.voice_help_notes=label("","Subtitle")
+        inner.addWidget(self.voice_help_notes)
+        box.setAccessibleName("Comandos de voz")
+        return box
 
     def save_mapping(self):
         if not self.snapshot.get("profile"): return self.show_error("Primero elegí un perfil")
@@ -524,6 +594,17 @@ class MainWindow(QMainWindow):
             self.voice_check.setChecked(s["settings"]["voice"]["enabled"])
             self.voice_model.setCurrentIndex(max(0,self.voice_model.findData(s["settings"]["voice"]["model"])))
             self.voice_send.setCurrentText(s["settings"]["voice"]["send_word"])
+            voice=s["settings"]["voice"]
+            notes=["Con el dictado activo: hacé click en un campo de texto y decí solo el comando. "
+                   "Dentro de una frase más larga se escribe como texto normal."]
+            if voice["send_word"]:
+                notes.append(f"«{voice['send_word']}» al final de una frase: escribe el texto y presiona Enter.")
+            notes.append("Ambas cejas cancelan el dictado. Sin hablar: asigná «Borrar letra» o «Borrar palabra» a un gesto arriba.")
+            if not voice["enabled"]:
+                notes.insert(0,"El dictado está apagado: activalo en Configuración → Dictado por voz.")
+            if not voice["commands"]:
+                notes.insert(0,"Los comandos están desactivados en este perfil (voice.commands).")
+            self.voice_help_notes.setText("\n".join(notes))
             for k,widget in self.mapping_fields.items(): widget.setCurrentIndex(widget.findData(s["settings"]["actions"]["bindings"][k]))
             self.calibration_source.setCurrentIndex(self.calibration_source.findData(s["settings"]["calibration"]["brow_signal_source"]))
             for key,check in self.calibration_enabled.items():
@@ -567,7 +648,6 @@ class MainWindow(QMainWindow):
         fd=s["face"]
         d=s["diagnostic"]
         if d:
-            t=d["thresholds"]
             advanced=[]
             for key,record in d.get("gesture_calibrations",{}).items():
                 if not record["enabled"]:
@@ -575,17 +655,19 @@ class MainWindow(QMainWindow):
                     continue
                 numbers=lambda values:" / ".join(f"{v:.4f}" for v in values)
                 values=d.get("signals",{}).get(key)
-                advanced.append(f"{GESTURE_LABELS[key]} · {record['source']} · señal {numbers(values) if values else 'ausente'}\n"
-                                f"Activación {numbers(record['activation_threshold'].values())} · Liberación {numbers(record['release_threshold'].values())} · Calidad {record['quality_score']:.2f} · Repeticiones {record.get('repetitions_valid',0)}")
+                gate=d.get("gates",{}).get(key,{})
+                current=(f" · Vigente {numbers(gate['activation'].values())} / {numbers(gate['release'].values())}"
+                         if gate and gate["activation"]!=record["activation_threshold"] else "")
+                advanced.append(f"{GESTURE_LABELS[key]} · {SOURCE_LABELS.get(record['source'],record['source'])} · señal {numbers(values) if values else 'ausente'}\n"
+                                f"Calibrado: activación {numbers(record['activation_threshold'].values())} · liberación {numbers(record['release_threshold'].values())}{current} · Calidad {record['quality_score']:.2f} · Repeticiones {record.get('repetitions_valid',0)}")
             self.advanced_diagnostic.setText("\n".join(advanced) or "Perfil anterior: umbral único geométrico; ambas cejas usan los umbrales unilaterales.")
             self.diagnostic_values.setText(
                 f"Facial X / Y: {fd.nose_x:.4f} / {fd.nose_y:.4f}   |   Cursor esperado (panel 800×500): {s['cursor'][0]:.0f} / {s['cursor'][1]:.0f}\n"
                 f"Desplazamiento normalizado: {d['normalized_dx']:+.4f} / {d['normalized_dy']:+.4f}   |   FPS: {s['fps']:.0f}   |   Latencia: {s['processing_ms']:.1f} ms\n"
                 f"Centro X / Y vigente: {d.get('neutral_x',0):.4f} / {d.get('neutral_y',0):.4f}   (calibrado: "
                 f"{d.get('calibrated_neutral',(0,0))[0]:.4f} / {d.get('calibrated_neutral',(0,0))[1]:.4f})   |   ambas cejas recentran\n"
-                f"Ojos izq/der: {fd.eye_left_ratio:.4f} / {fd.eye_right_ratio:.4f} (umbrales {t['blink_left']:.4f} / {t['blink_right']:.4f})\n"
-                f"Cejas izq/der: {fd.brow_left_lift:.4f} / {fd.brow_right_lift:.4f} (umbrales {t['brow_left']:.4f} / {t['brow_right']:.4f})\n"
-                f"Boca: {fd.mouth_open:.4f} (umbral {t['mouth_open']:.4f})   |   Zona muerta: {s['settings']['gesture']['dead_zone']:.3f}   |   Suavizado: {s['settings']['gesture']['smoothing_alpha']:.2f}")
+                +gesture_threshold_lines(d)+"\n"
+                f"Zona muerta: {s['settings']['gesture']['dead_zone']:.3f}   |   Suavizado: {s['settings']['gesture']['smoothing_alpha']:.2f}")
         if s["jitter_remaining"] is not None:
             self.jitter_summary.setText(f"Mantené neutral · {s['jitter_remaining']:.1f} s restantes")
         elif s["jitter"]:

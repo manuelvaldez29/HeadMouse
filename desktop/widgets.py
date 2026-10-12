@@ -218,7 +218,7 @@ class DictationOverlay(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.text, self.kind = "", "listening"
-        self.resize(560, 64)
+        self.resize(760, 64)
 
     def present(self, dictation, done_message="", screen=None):
         state = (dictation or {}).get("state", "idle")

@@ -82,6 +82,11 @@ class CommandParseTests(unittest.TestCase):
             with self.subTest(text=text):
                 self.assertEqual(parse_command(text), expected)
 
+    def test_help_shown_in_gui_matches_recognized_commands(self):
+        from dictation import VOICE_COMMANDS
+        kinds = {parse_command(example)[0] for _, _, example in VOICE_COMMANDS}
+        self.assertEqual(kinds, {"last", "word", "char", "all", "undo"})  # ayuda completa y vigente
+
     def test_commands_inside_sentences_are_text(self):
         for text in ("Hay que borrar la pizarra", "borrar mil letras", "borrar 0 letras",
                      "Deshacer las valijas", "", "Hola"):

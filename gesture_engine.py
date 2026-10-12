@@ -291,7 +291,11 @@ class GestureEngine:
                     sources=self._signal_sources.copy(), signals=deepcopy(self.last_signals),
                     head_still=self.head_still, neutral_x=self.config.neutral_x,
                     calibrated_neutral=self._calibrated_neutral,
-                    neutral_y=self.config.neutral_y, gesture_offsets=deepcopy(self.gesture_offsets))
+                    neutral_y=self.config.neutral_y, gesture_offsets=deepcopy(self.gesture_offsets),
+                    # Umbrales que el detector usa ahora (incluye el ajuste del recentrado).
+                    gates={key: dict(activation=dict(g.activation), release=dict(g.release),
+                                     enabled=key in self.enabled_gestures)
+                           for key, g in self._gates.items()})
 
     def reset(self):
         self._smooth_x = self.config.neutral_x

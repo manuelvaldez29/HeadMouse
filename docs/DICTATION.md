@@ -53,6 +53,13 @@ desactivan con `voice.commands: false`.
 | "borrar todo" | Ctrl+A, Retroceso |
 | "deshacer" | Ctrl+Z |
 
+Dónde se ve la ayuda: en "Gestos y acciones" hay una sección "Comandos de voz
+para corregir" (con avisos si el dictado o los comandos están apagados, y la
+palabra de Enter si está configurada). En Configuración hay un resumen debajo
+de "Dictado por voz", y el aviso flotante sugiere «borrar» al escuchar y
+después de escribir. La lista sale de `dictation.VOICE_COMMANDS`, y un test
+verifica que cada ejemplo lo reconozca `parse_command`.
+
 N va de 1 a 50, en dígitos o palabras ("una" a "diez"). Se ignoran mayúsculas,
 tildes y puntuación ("Borrá dos letras." funciona). Sin hablar, las acciones
 **Borrar letra** y **Borrar palabra** se pueden asignar a un gesto en "Gestos y

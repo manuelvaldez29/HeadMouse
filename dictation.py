@@ -125,6 +125,15 @@ HALLUCINATIONS = {"gracias.", "gracias por ver el video.", "¡gracias por ver el
                   "gracias por ver.", "...", "."}
 
 
+# Ayuda visible en la GUI. Mantener en sincronía con parse_command (lo verifica test_dictation).
+VOICE_COMMANDS = (
+    ("«borrar»", "borra lo último que dictaste", "Borrar."),
+    ("«borrar palabra» · «borrar tres palabras»", "borra palabra por palabra", "Borrar tres palabras"),
+    ("«borrar letra» · «borrar cinco letras»", "borra letra por letra", "borrar cinco letras"),
+    ("«borrar todo»", "vacía el campo", "Borrar todo."),
+    ("«deshacer»", "deshace lo último (Ctrl+Z)", "Deshacer"),
+)
+
 NUMBERS = dict(un=1, una=1, uno=1, dos=2, tres=3, cuatro=4, cinco=5, seis=6, siete=7,
                ocho=8, nueve=9, diez=10)
 MAX_REPEAT = 50  # tope de teclas por comando, por seguridad
@@ -319,7 +328,7 @@ class Dictation:
         started = self.clock()
         self.cue("start")
         with self._lock:
-            self._set("listening", "Escuchando… hablá. Ambas cejas: cancelar.")
+            self._set("listening", "Escuchando… hablá. Decí «borrar» para corregir · ambas cejas cancelan.")
         endpoint = Endpointer(self.config.silence_s, self.config.max_utterance_s,
                               self.config.no_speech_timeout_s)
         with self.recorder_factory() as recorder:
@@ -364,7 +373,8 @@ class Dictation:
         latency = self.clock() - spoken_at
         with self._lock:
             self.last_text = text.strip()
-            self.message = (f"Escrito: {self.last_text}" + (" ⏎" if send else "")) if text or send else \
+            self.message = (f"Escrito: {self.last_text}" + (" ⏎" if send else " · decí «borrar» para quitarlo")) \
+                if text or send else \
                 "No se entendió; probá de nuevo."
         self._record(dict(result="typed" if text or send else "empty", listen_s=spoken_at - started,
                           audio_s=len(audio) / SAMPLE_RATE, transcribe_s=latency,
