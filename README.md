@@ -173,6 +173,7 @@ individuales ni imágenes, en `data/calibration/`.
 - [Experimentos y jitter](docs/EXPERIMENTS.md)
 - [Mapeo de gestos y acciones](docs/ACTION_MAPPING.md)
 - [Estudio de señales de cejas frente a la pose](docs/BROW_SIGNAL_STUDY.md)
+- [Dictado por voz local](docs/DICTATION.md)
 - [Informe v0.3: implementación, pruebas y limitaciones](docs/IMPLEMENTATION_REPORT_V03.md)
 - [Informe histórico v0.2](docs/IMPLEMENTATION_REPORT.md)
 

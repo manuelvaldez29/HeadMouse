@@ -25,6 +25,9 @@ class SessionMetrics:
         self.events = {}
         self.actions = {}
         self.tracking_losses = 0
+        self.dictations = {}  # resultado -> cantidad; nunca audio ni texto
+        self.dictation_audio_s = self.dictation_transcribe_s = 0.0
+        self.dictation_characters = 0
         self._tracking = False
         self._path = None
 
@@ -62,6 +65,16 @@ class SessionMetrics:
                 self.latency_max = max(self.latency_max, latency)
                 self.latency_count += 1
 
+    def dictation(self, data):
+        if not self.enabled:
+            return
+        with self._lock:
+            result = data.get("result", "unknown")
+            self.dictations[result] = self.dictations.get(result, 0) + 1
+            self.dictation_audio_s += data.get("audio_s", 0)
+            self.dictation_transcribe_s += data.get("transcribe_s", 0)
+            self.dictation_characters += data.get("characters", 0)
+
     def snapshot(self):
         with self._lock:
             duration = max(0, self.clock() - self.started)
@@ -76,7 +89,11 @@ class SessionMetrics:
                         actions_executed=dict(self.actions), events_total=sum(self.events.values()),
                         clicks=sum(self.actions.get(k, 0) for k in ("LEFT_CLICK", "RIGHT_CLICK", "DOUBLE_CLICK")),
                         scrolls=sum(self.actions.get(k, 0) for k in ("SCROLL_UP", "SCROLL_DOWN")),
-                        tracking_losses=self.tracking_losses)
+                        tracking_losses=self.tracking_losses, dictations=dict(self.dictations),
+                        dictation_audio_s=self.dictation_audio_s,
+                        dictation_transcribe_s_mean=self.dictation_transcribe_s / self.dictations["typed"]
+                        if self.dictations.get("typed") else None,
+                        dictation_characters=self.dictation_characters)
 
     def close(self):
         if not self.enabled or self._path is not None:

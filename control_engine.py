@@ -85,7 +85,7 @@ class ControlEngine:
                  vision:  VisionEngine,
                  gesture: GestureEngine,
                  config:  ControlConfig = None, backend=None, metrics=None, mapping=None,
-                 wheel_unit=None):
+                 wheel_unit=None, dictation=None):
 
         self.vision  = vision
         self.gesture = gesture
@@ -103,6 +103,7 @@ class ControlEngine:
         self.backend.FAILSAFE = True
         self.metrics = metrics
         self.mapping = mapping or ActionMapping()
+        self.dictation = dictation  # opcional: dictation.Dictation
         self.last_events = ()
         self.last_actions = ()
         self.output_allowed = threading.Event()
@@ -227,6 +228,12 @@ class ControlEngine:
         # ── Ejecutar eventos ──────────────────────────────────────────────────
         # Toggle tiene prioridad sobre todas las acciones del mismo frame.
         actions = [self.mapping.resolve(ev) for ev in events]
+        if self.dictation is not None and self.dictation.busy:
+            # Hablar mueve boca, ojos y cejas: mientras se dicta solo se mueve el
+            # cursor, y el gesto de pausa cancela el dictado en lugar de pausar.
+            if any(ev.type == "PAUSE" for ev in actions):
+                self.dictation.cancel()
+            actions = [ev for ev in actions if ev.type == EV_CURSOR_MOVE]
         toggle = next((ev for ev in actions if ev.type == "PAUSE"), None)
         if toggle is not None and fresh and self.output_allowed.is_set():
             self.toggle_pause()
@@ -270,6 +277,8 @@ class ControlEngine:
         elif ev.type == EV_LEFT_CLICK:
             self.backend.click(_pause=False)
             self._log_event("LEFT_CLICK", clicks=True)
+            if self.dictation is not None:
+                self.dictation.on_click()
 
         elif ev.type == EV_RIGHT_CLICK:
             self.backend.rightClick(_pause=False)
@@ -290,6 +299,12 @@ class ControlEngine:
         elif ev.type == "DOUBLE_CLICK":
             self.backend.doubleClick(interval=0.1, _pause=False)
             self._log_event("DOUBLE_CLICK", clicks=True)
+            if self.dictation is not None:
+                self.dictation.on_click()
+        elif ev.type == "DICTATE":
+            if self.dictation is not None:
+                self.dictation.start_now()
+            self._log_event("DICTATE")
         elif ev.type in ("KEY_ENTER", "KEY_ESCAPE", "KEY_SPACE"):
             self.backend.press({"KEY_ENTER": "enter", "KEY_ESCAPE": "esc", "KEY_SPACE": "space"}[ev.type], _pause=False)
             self._log_event(ev.type)

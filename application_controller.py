@@ -20,10 +20,13 @@ from tracking import create_strategy
 
 class ApplicationController:
     def __init__(self, profiles=None, vision_factory=None, backend_factory=None,
-                 data_dir=None, clock=time.monotonic):
+                 data_dir=None, clock=time.monotonic, dictation_factory=None):
         self.profiles = profiles or ProfileManager()
         self.vision_factory = vision_factory
         self.backend_factory = backend_factory
+        self.dictation_factory = dictation_factory
+        self.dictation = None
+        self._voice_download = None
         self.data_dir = Path(data_dir) if data_dir else ROOT / "data"
         self.clock = clock
         self.emergency = threading.Event()
@@ -51,6 +54,9 @@ class ApplicationController:
         control = self.control
         if control is not None:
             control.output_allowed.clear()
+        dictation = self.dictation
+        if dictation is not None:
+            dictation.cancel()  # nunca escribir texto después de F8 / Detener
 
     def _require_profile(self, calibrated=False, validated=False):
         if self.profile is None:
@@ -128,9 +134,14 @@ class ApplicationController:
 
     def stop_control(self):
         self.emergency_stop()
-        if self.control:
-            self.control.stop()
-            self.control = None
+        try:
+            if self.control:
+                self.control.stop()
+                self.control = None
+        finally:
+            if self.dictation:
+                self.dictation.close()
+                self.dictation = None
         if self.state == "CONTROL":
             self.state = "PREVIEW" if self.vision else "HOME"
         self.message = "Control del sistema desactivado."
@@ -176,16 +187,51 @@ class ApplicationController:
         self.start_camera()
         if self.emergency.is_set():
             return  # F8/STOP durante inicialización no puede ser anulado
+        voice_warning = ""
         if not self.control:
             backend = self.backend_factory() if self.backend_factory else None
+            voice_warning = self._start_dictation()
             self.control = ControlEngine(self.vision, self.gesture, self.config.control,
                                          backend=backend, metrics=self.metrics,
-                                         mapping=ActionMapping(self.config.actions.bindings))
+                                         mapping=ActionMapping(self.config.actions.bindings),
+                                         dictation=self.dictation)
             self.control.toggle_pause()
         if self.emergency.is_set():
             self.stop_control()
             return
-        self.state, self.message = "CONTROL", "Control del sistema activo. F8 o Detener control para salir."
+        self.state, self.message = "CONTROL", "Control del sistema activo. F8 o Detener control para salir." + voice_warning
+
+    def _start_dictation(self):
+        """El dictado es opcional: si no está preparado, el control funciona igual."""
+        if not self.config.voice.enabled:
+            return ""
+        try:
+            if self.dictation_factory:
+                self.dictation = self.dictation_factory(self.config.voice, self.metrics)
+            else:
+                from dictation import create_dictation
+                self.dictation = create_dictation(self.config.voice, self.metrics)
+            self.dictation.start()
+            return " Dictado por voz activo."
+        except Exception as exc:
+            self.dictation = None
+            return f" Dictado no disponible: {exc}"
+
+    def prepare_voice_model(self, model=None):
+        """Descarga en segundo plano: puede tardar minutos y no debe frenar la GUI."""
+        if self._voice_download and self._voice_download.is_alive():
+            raise ValueError("La descarga del modelo de voz ya está en curso")
+        model = model or self.config.voice.model
+        def download():
+            try:
+                from dictation import WhisperTranscriber
+                WhisperTranscriber.download(model)
+                self.message = f"Modelo de voz '{model}' listo. Activá el dictado en Configuración y guardá."
+            except Exception as exc:
+                self.message = f"No se pudo preparar el modelo de voz: {exc}"
+        self.message = f"Descargando el modelo de voz '{model}'… podés seguir usando la aplicación."
+        self._voice_download = threading.Thread(target=download, name="VoiceDownload", daemon=True)
+        self._voice_download.start()
 
     def start_diagnostic(self):
         self.stop_control()
@@ -385,7 +431,8 @@ class ApplicationController:
                     wizard=self.wizard.snapshot() if self.wizard else None,
                     experiment=self.experiment.snapshot() if self.experiment else None,
                     jitter=self.jitter_result, jitter_remaining=max(0, self.jitter.duration_s-(self.clock()-self.jitter.started)) if self.jitter else None,
-                    metrics=self.metrics.snapshot() if self.metrics else {}, history=deepcopy(self.history))
+                    metrics=self.metrics.snapshot() if self.metrics else {}, history=deepcopy(self.history),
+                    dictation=self.dictation.snapshot() if self.dictation else None)
 
     def fail(self, message):
         self.emergency_stop()

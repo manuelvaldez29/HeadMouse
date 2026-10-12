@@ -172,6 +172,41 @@ class DesktopLogicTests(unittest.TestCase):
         self.assertIsNone(c.control)
         c.shutdown()
 
+    def test_voice_enabled_profile_starts_and_stops_dictation(self):
+        import time
+        vision=Mock(error=None)
+        vision.get_face_data.return_value=FaceData(True,timestamp_ms=int(time.monotonic()*1000))
+        backend=Mock()
+        backend.size.return_value=(1920,1080)
+        dictation=Mock(busy=False)
+        dictation.snapshot.return_value=dict(state="idle",message="",last_text="")
+        factory=Mock(return_value=dictation)
+        c=ApplicationController(self.manager,Mock(return_value=vision),lambda:backend,self.root,
+                                dictation_factory=factory)
+        p=calibration()
+        p["validation"]={"passed":True}
+        p["settings"]={"voice":{"enabled":True}}
+        self.manager.store.save(p)
+        c.select_profile("julian")
+        c.emergency.clear()
+        c.activate_control(True)
+        self.assertIs(c.control.dictation,dictation)
+        dictation.start.assert_called_once()
+        self.assertIn("Dictado por voz activo",c.message)
+        self.assertEqual(c.snapshot()["dictation"]["state"],"idle")
+        c.emergency_stop()
+        dictation.cancel.assert_called()
+        c.stop_control()
+        dictation.close.assert_called_once()
+        self.assertIsNone(c.dictation)
+        # Sin modelo o dependencias, el control se activa igual y avisa.
+        c.emergency.clear()
+        factory.side_effect=RuntimeError("Falta el modelo de voz")
+        c.activate_control(True)
+        self.assertIsNotNone(c.control)
+        self.assertIn("Dictado no disponible",c.message)
+        c.shutdown()
+
     def test_wizard_requires_validation_and_reuses_statistics(self):
         now=[1.]
         cc=load_config()

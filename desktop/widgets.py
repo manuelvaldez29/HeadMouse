@@ -202,3 +202,56 @@ class ExperimentCanvas(QWidget):
         self.setFocus()
         if self.data and self.data["mode"]=="real" and event.button()==Qt.MouseButton.LeftButton:
             self.input.emit(*self.logical(event.position()),True,True)
+
+
+class DictationOverlay(QWidget):
+    """Aviso flotante del dictado. Nunca toma el foco: el texto debe ir al campo
+    que el usuario eligió, no a HeadMouse. Tampoco recibe clicks."""
+    COLORS = {"arming": "#c4d3e8", "listening": "#ff6b81", "transcribing": "#ffd166", "done": "#8ce5cd"}
+
+    def __init__(self):
+        super().__init__(None, Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint |
+                         Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.WindowDoesNotAcceptFocus |
+                         Qt.WindowType.WindowTransparentForInput)
+        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.text, self.kind = "", "listening"
+        self.resize(560, 64)
+
+    def present(self, dictation, done_message="", screen=None):
+        state = (dictation or {}).get("state", "idle")
+        if state in ("listening", "transcribing"):
+            text, kind = dictation["message"], state
+        elif done_message:
+            text, kind = done_message, "done"
+        else:
+            if self.isVisible():
+                self.hide()
+            return
+        if (text, kind) != (self.text, self.kind):
+            self.text, self.kind = text, kind
+            self.update()
+        if not self.isVisible():
+            if screen is not None:
+                area = screen.availableGeometry()
+                self.move(area.center().x() - self.width() // 2, area.bottom() - self.height() - 40)
+            self.show()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        color = QColor(self.COLORS.get(self.kind, "#c4d3e8"))
+        painter.setBrush(QColor(15, 23, 36, 235))
+        painter.setPen(QPen(color, 2))
+        painter.drawRoundedRect(QRectF(self.rect()).adjusted(1, 1, -1, -1), 16, 16)
+        painter.setBrush(color)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.drawEllipse(QPointF(30, self.height() / 2), 9, 9)
+        painter.setPen(QColor("#eef3fb"))
+        font = painter.font()
+        font.setPointSize(12)
+        painter.setFont(font)
+        width = self.width() - 64
+        painter.drawText(QRectF(52, 0, width, self.height()),
+                         Qt.AlignmentFlag.AlignVCenter | Qt.TextFlag.TextSingleLine,
+                         painter.fontMetrics().elidedText(self.text, Qt.TextElideMode.ElideRight, width))

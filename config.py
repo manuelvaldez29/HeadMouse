@@ -145,6 +145,41 @@ class CalibrationConfig:
             raise ValueError("Fuente de cejas desconocida")
 
 
+WHISPER_MODELS = ("tiny", "base", "small", "medium")
+
+
+@dataclass
+class VoiceConfig:
+    """Dictado local al enfocar un campo de texto con un click de HeadMouse."""
+    enabled: bool = False             # requiere preparar el modelo una vez
+    model: str = "small"              # faster-whisper; "base" para equipos lentos
+    language: str = "es"
+    focus_window_ms: float = 800      # espera tras el click para que cambie el foco
+    silence_s: float = 1.2            # silencio que termina el dictado
+    max_utterance_s: float = 20
+    no_speech_timeout_s: float = 6
+    append_space: bool = True
+    send_word: str = ""               # p. ej. "enviar": si es la última palabra, se quita y se presiona Enter
+    sound_cues: bool = True
+    after_dictation_ms: float = 600   # gestos bloqueados al terminar (cola del habla)
+
+    def __post_init__(self):
+        for name in ("enabled", "append_space", "sound_cues"):
+            if type(getattr(self, name)) is not bool:
+                raise ValueError(f"{name} debe ser true o false")
+        if self.model not in WHISPER_MODELS:
+            raise ValueError("Modelo de voz desconocido")
+        if not isinstance(self.language, str) or not 2 <= len(self.language) <= 5:
+            raise ValueError("Idioma de voz inválido")
+        if not isinstance(self.send_word, str) or len(self.send_word) > 30:
+            raise ValueError("send_word debe ser una palabra corta o vacío")
+        bounded("focus_window_ms", self.focus_window_ms, 100, 5000)
+        bounded("silence_s", self.silence_s, .3, 5)
+        bounded("max_utterance_s", self.max_utterance_s, 2, 120)
+        bounded("no_speech_timeout_s", self.no_speech_timeout_s, 1, 60)
+        bounded("after_dictation_ms", self.after_dictation_ms, 0, 5000)
+
+
 @dataclass
 class UIConfig:
     show_overlay: bool = True
@@ -174,6 +209,7 @@ class AppConfig:
     calibration: CalibrationConfig = field(default_factory=CalibrationConfig)
     ui: UIConfig = field(default_factory=UIConfig)
     actions: MappingConfig = field(default_factory=MappingConfig)
+    voice: VoiceConfig = field(default_factory=VoiceConfig)
     log_level: str = "INFO"
     metrics_enabled: bool = True
 
@@ -185,7 +221,7 @@ class AppConfig:
 
 
 SECTIONS = dict(vision=VisionConfig, gesture=GestureConfig, control=ControlConfig,
-                calibration=CalibrationConfig, ui=UIConfig, actions=MappingConfig)
+                calibration=CalibrationConfig, ui=UIConfig, actions=MappingConfig, voice=VoiceConfig)
 
 
 def load_config(path=None, overrides=None):

@@ -1,5 +1,6 @@
 """Ventana desktop: presentación, formularios y comandos; sin inferencia ni acciones SO."""
 import json
+import time
 from copy import deepcopy
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QShortcut, QKeySequence, QCursor
@@ -8,14 +9,14 @@ from PySide6.QtWidgets import (QMainWindow, QWidget, QFrame, QVBoxLayout, QHBoxL
     QMessageBox, QFormLayout, QDoubleSpinBox, QSpinBox, QCheckBox, QProgressBar,
     QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView)
 from action_mapping import ACTIONS, DEFAULT_MAPPING
-from desktop.widgets import CameraPreview, ExperimentCanvas, CalibrationMeter, label, card
+from desktop.widgets import CameraPreview, ExperimentCanvas, CalibrationMeter, DictationOverlay, label, card
 
 GESTURE_LABELS = dict(LEFT_WINK="Guiño izquierdo", RIGHT_WINK="Guiño derecho", LEFT_BROW="Ceja izquierda",
                       RIGHT_BROW="Ceja derecha", BOTH_BROWS="Ambas cejas", MOUTH_OPEN="Boca abierta")
 ACTION_LABELS = dict(LEFT_CLICK="Click izquierdo",RIGHT_CLICK="Click derecho",DOUBLE_CLICK="Doble click",
                      SCROLL_UP="Scroll arriba",SCROLL_DOWN="Scroll abajo",PAUSE="Pausar / reanudar",
                      KEY_ENTER="Enter",KEY_ESCAPE="Escape",KEY_SPACE="Espacio",
-                     OPEN_START_MENU="Abrir Inicio",NONE="Sin acción")
+                     OPEN_START_MENU="Abrir Inicio",DICTATE="Dictado por voz",NONE="Sin acción")
 
 
 def button(text, fn, style=""):
@@ -96,6 +97,9 @@ class MainWindow(QMainWindow):
             shortcut.activated.connect(self.bridge.stop)
         self.bridge.error.connect(self.show_error)
         self.bridge.closed.connect(self._closed)
+        self.dictation_overlay=DictationOverlay()
+        self._dictation_message=("",0.)
+        self._last_dictation_state="idle"
         self.timer=QTimer(self)
         self.timer.setInterval(50)
         self.timer.timeout.connect(self.refresh)
@@ -327,6 +331,20 @@ class MainWindow(QMainWindow):
             field.setAccessibleName(title)
             form.addRow(title,field)
             self.fields[key]=field
+        self.voice_check=QCheckBox("Dictado por voz: al hacer click en un campo de texto, escuchar y escribir")
+        self.voice_check.setAccessibleName("Dictado por voz")
+        form.addRow(self.voice_check)
+        self.voice_model=QComboBox()
+        for title,value in (("Small · recomendado","small"),("Base · equipos lentos","base"),
+                            ("Tiny · muy rápido, menos preciso","tiny"),("Medium · más preciso y lento","medium")):
+            self.voice_model.addItem(title,value)
+        self.voice_model.setAccessibleName("Modelo de voz")
+        form.addRow("Modelo de voz",self.voice_model)
+        self.voice_send=QComboBox()
+        self.voice_send.setEditable(True)
+        self.voice_send.addItems(["","enviar"])
+        self.voice_send.setAccessibleName("Palabra final que presiona Enter")
+        form.addRow("Palabra final que presiona Enter (vacío: ninguna)",self.voice_send)
         self.overlay_check=QCheckBox("Mostrar punto de tracking, neutral, zona muerta y dirección")
         self.landmarks_check=QCheckBox("Mostrar landmarks relevantes")
         form.addRow(self.overlay_check)
@@ -342,6 +360,16 @@ class MainWindow(QMainWindow):
         row.addWidget(button("Guardar configuración",self.save_settings,"Primary"))
         layout.addLayout(row)
         layout.addWidget(button("Preparar modelo local (requiere Internet una vez)",self.prepare_model))
+        layout.addWidget(button("Preparar modelo de voz (requiere Internet una vez)",self.prepare_voice_model))
+
+    def prepare_voice_model(self):
+        model=self.voice_model.currentData()
+        sizes=dict(tiny="75 MB",base="145 MB",small="480 MB",medium="1,5 GB")
+        text=(f"Se descargará el modelo de voz '{model}' (≈ {sizes[model]}) de Hugging Face (Systran/faster-whisper).\n"
+              "Después el dictado funciona sin Internet y el audio nunca sale de la computadora.")
+        if QMessageBox.question(self,"Preparar modelo de voz",text,
+                                QMessageBox.StandardButton.Yes|QMessageBox.StandardButton.No)==QMessageBox.StandardButton.Yes:
+            self.bridge.request("prepare_voice_model",model=model)
 
     def prepare_model(self):
         if QMessageBox.question(self,"Preparar modelo","Se descargará el modelo oficial de MediaPipe.\nNo se enviarán imágenes.",
@@ -356,6 +384,9 @@ class MainWindow(QMainWindow):
             settings[section][name]=widget.value()
         settings["ui"]["show_overlay"]=self.overlay_check.isChecked()
         settings["ui"]["show_landmarks"]=self.landmarks_check.isChecked()
+        settings["voice"]["enabled"]=self.voice_check.isChecked()
+        settings["voice"]["model"]=self.voice_model.currentData()
+        settings["voice"]["send_word"]=self.voice_send.currentText().strip().lower()
         self.bridge.request("save_settings",settings=settings)
 
     def restore_defaults(self):
@@ -446,6 +477,7 @@ class MainWindow(QMainWindow):
         if not s: return
         self.snapshot=s
         self.banner.setText(s["message"])
+        self._present_dictation(s.get("dictation"))
         enabled=s["control_enabled"]
         self.control_status.setText("CONTROL DEL SISTEMA\n"+("PAUSADO" if s["paused"] else "ACTIVO") if enabled else "CONTROL DEL SISTEMA\nDESACTIVADO")
         style=(s["state"]=="ERROR",enabled)
@@ -485,6 +517,9 @@ class MainWindow(QMainWindow):
                 widget.setValue(value)
             self.overlay_check.setChecked(s["settings"]["ui"]["show_overlay"])
             self.landmarks_check.setChecked(s["settings"]["ui"]["show_landmarks"])
+            self.voice_check.setChecked(s["settings"]["voice"]["enabled"])
+            self.voice_model.setCurrentIndex(max(0,self.voice_model.findData(s["settings"]["voice"]["model"])))
+            self.voice_send.setCurrentText(s["settings"]["voice"]["send_word"])
             for k,widget in self.mapping_fields.items(): widget.setCurrentIndex(widget.findData(s["settings"]["actions"]["bindings"][k]))
             self.calibration_source.setCurrentIndex(self.calibration_source.findData(s["settings"]["calibration"]["brow_signal_source"]))
             for key,check in self.calibration_enabled.items():
@@ -572,6 +607,18 @@ class MainWindow(QMainWindow):
                 for col,value in enumerate((h.get("profile_id","—"),h.get("started_at","—"),f"{h.get('duration_s',0):.1f}",f"{h.get('fps_mean',0):.1f}",h.get("clicks",0))):
                     self.sessions.setItem(row,col,QTableWidgetItem(str(value)))
 
+    def _present_dictation(self,dictation):
+        """Aviso flotante; al terminar muestra el resultado durante 2,5 s."""
+        state=(dictation or {}).get("state","idle")
+        now=time.monotonic()
+        if state in ("listening","transcribing"):
+            self._dictation_message=("",0.)
+        elif state=="idle" and self._last_dictation_state!="idle" and dictation and dictation.get("message"):
+            self._dictation_message=(dictation["message"],now+2.5)
+        self._last_dictation_state=state
+        message=self._dictation_message[0] if now<self._dictation_message[1] else ""
+        self.dictation_overlay.present(dictation,message,self.screen())
+
     def closeEvent(self,event):
         if self._allow_close:
             event.accept()
@@ -584,5 +631,6 @@ class MainWindow(QMainWindow):
 
     def _closed(self):
         self.timer.stop()
+        self.dictation_overlay.close()
         self._allow_close=True
         self.close()

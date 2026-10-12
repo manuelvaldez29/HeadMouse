@@ -1,0 +1,5 @@
+# Dictado por voz local (opcional). El modelo se descarga una vez con:
+#   python dictation.py --download-model
+faster-whisper>=1.0,<2
+comtypes>=1.2
+sounddevice>=0.4
