@@ -4,6 +4,7 @@ import logging
 import os
 import re
 import tempfile
+import time
 from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
@@ -83,6 +84,23 @@ def validate_profile(data):
     return data
 
 
+def replace_with_retry(source, target, attempts=10, delay_s=.05):
+    """os.replace atómico, reintentando si otro proceso tiene el archivo abierto.
+
+    En Windows, OneDrive, el antivirus o el indexador abren el JSON recién
+    escrito un instante y os.replace falla con "Acceso denegado" (WinError 5 o
+    32). Medido el 2026-10-12: fallaba en alrededor de una de cada dos corridas
+    de la suite dentro de la carpeta sincronizada.
+    """
+    for attempt in range(attempts):
+        try:
+            return os.replace(source, target)
+        except PermissionError:
+            if attempt == attempts - 1:
+                raise
+            time.sleep(delay_s * (attempt + 1))
+
+
 class ProfileStore:
     def __init__(self, directory=None):
         self.directory = Path(directory) if directory is not None else ROOT / "data" / "profiles"
@@ -126,7 +144,7 @@ class ProfileStore:
                 json.dump(data, stream, indent=2, ensure_ascii=False, allow_nan=False)
                 stream.flush()
                 os.fsync(stream.fileno())
-            os.replace(temporary, path)
+            replace_with_retry(temporary, path)
         finally:
             if temporary and os.path.exists(temporary):
                 os.unlink(temporary)

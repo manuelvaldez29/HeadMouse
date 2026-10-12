@@ -25,6 +25,7 @@ import queue
 import sys
 import threading
 import time
+import unicodedata
 from dataclasses import dataclass
 
 from config import ROOT, VoiceConfig, configure_logging
@@ -124,6 +125,47 @@ HALLUCINATIONS = {"gracias.", "gracias por ver el video.", "¡gracias por ver el
                   "gracias por ver.", "...", "."}
 
 
+NUMBERS = dict(un=1, una=1, uno=1, dos=2, tres=3, cuatro=4, cinco=5, seis=6, siete=7,
+               ocho=8, nueve=9, diez=10)
+MAX_REPEAT = 50  # tope de teclas por comando, por seguridad
+
+
+def _normalize(text):
+    text = unicodedata.normalize("NFD", text.lower())
+    text = "".join(c for c in text if unicodedata.category(c) != "Mn")
+    return " ".join("".join(c if c.isalnum() else " " for c in text).split())
+
+
+def parse_command(text):
+    """Comando de edición si la frase entera es un comando; None si es texto.
+
+    "borrar" (lo último dictado), "borrar todo", "borrar [N] letra(s)",
+    "borrar [N] palabra(s)" y "deshacer". Un comando dentro de una frase más
+    larga ("hay que borrar la pizarra") se escribe como texto normal.
+    """
+    words = _normalize(text).split()
+    if words == ["deshacer"]:
+        return "undo", 1
+    if not words or words[0] not in ("borrar", "borra", "borre"):
+        return None
+    rest = words[1:]
+    if rest in ([], ["eso"], ["ultimo"], ["lo", "ultimo"]):
+        return "last", 1
+    if rest == ["todo"]:
+        return "all", 1
+    count = 1
+    if rest and (rest[0].isdigit() or rest[0] in NUMBERS):
+        count = int(rest[0]) if rest[0].isdigit() else NUMBERS[rest[0]]
+        rest = rest[1:]
+    if not 1 <= count <= MAX_REPEAT:
+        return None
+    if rest in (["letra"], ["letras"], ["caracter"], ["caracteres"]):
+        return "char", count
+    if rest in (["palabra"], ["palabras"]):
+        return "word", count
+    return None
+
+
 def finish_text(text, config):
     """Limpia la transcripción. Devuelve (texto a escribir, presionar Enter)."""
     text = " ".join(text.split())
@@ -166,6 +208,7 @@ class Dictation:
         self.transcriber, self.typer, self.clock, self.metrics = transcriber, typer, clock, metrics
         self.cue = cue or (lambda kind: None)
         self.state, self.message, self.last_text = "idle", "", ""
+        self._last_typed = ""  # para "borrar": lo escrito por el último dictado
         self._lock = threading.Lock()
         self._request = None
         self._wake = threading.Event()
@@ -307,11 +350,17 @@ class Dictation:
         if self._cancel.is_set():
             self._record(dict(result="cancelled", listen_s=spoken_at - started))
             return
+        command = parse_command(text) if self.config.commands else None
+        if command:
+            self._command(*command, listen_s=spoken_at - started, audio_s=len(audio) / SAMPLE_RATE,
+                          transcribe_s=self.clock() - spoken_at)
+            return
         text, send = finish_text(text, self.config)
         if text:
             self.typer.type_text(text)
         if send:
             self.typer.press_enter()
+        self._last_typed = "" if send else text
         latency = self.clock() - spoken_at
         with self._lock:
             self.last_text = text.strip()
@@ -320,6 +369,34 @@ class Dictation:
         self._record(dict(result="typed" if text or send else "empty", listen_s=spoken_at - started,
                           audio_s=len(audio) / SAMPLE_RATE, transcribe_s=latency,
                           characters=len(text.strip()), sent=send))
+
+    def _command(self, name, count, **timing):
+        if name == "last":
+            if not self._last_typed:
+                with self._lock:
+                    self.message = "No hay un dictado anterior para borrar."
+                self._record(dict(result="command", command=name, **timing))
+                return
+            self.typer.backspace(len(self._last_typed))
+            message = "Borrado lo último dictado."
+        elif name == "all":
+            self.typer.select_all()
+            self.typer.backspace(1)
+            message = "Campo borrado."
+        elif name == "char":
+            self.typer.backspace(count)
+            message = f"Borrada{'s' if count > 1 else ''} {count} letra{'s' if count > 1 else ''}."
+        elif name == "word":
+            self.typer.delete_words(count)
+            message = f"Borrada{'s' if count > 1 else ''} {count} palabra{'s' if count > 1 else ''}."
+        else:
+            self.typer.undo()
+            message = "Deshecho."
+        self._last_typed = ""
+        with self._lock:
+            self.last_text = ""
+            self.message = message
+        self._record(dict(result="command", command=name, **timing))
 
     def _record(self, data):
         if self.metrics and hasattr(self.metrics, "dictation"):
@@ -507,9 +584,31 @@ class SendInputTyper:
             self._send(batch)
             time.sleep(.005)
 
+    def press(self, vk, times=1, ctrl=False):
+        VK_CONTROL, KEYEVENTF_KEYUP = 0x11, 0x0002
+        for start in range(0, times, 32):
+            batch = []
+            for _ in range(min(32, times - start)):
+                batch += [self._key(vk=VK_CONTROL)] if ctrl else []
+                batch += [self._key(vk=vk), self._key(vk=vk, flags=KEYEVENTF_KEYUP)]
+                batch += [self._key(vk=VK_CONTROL, flags=KEYEVENTF_KEYUP)] if ctrl else []
+            self._send(batch)
+            time.sleep(.005)
+
     def press_enter(self):
-        VK_RETURN, KEYEVENTF_KEYUP = 0x0D, 0x0002
-        self._send([self._key(vk=VK_RETURN), self._key(vk=VK_RETURN, flags=KEYEVENTF_KEYUP)])
+        self.press(0x0D)
+
+    def backspace(self, times=1):
+        self.press(0x08, times)
+
+    def delete_words(self, times=1):
+        self.press(0x08, times, ctrl=True)  # Ctrl+Retroceso
+
+    def select_all(self):
+        self.press(0x41, ctrl=True)  # Ctrl+A
+
+    def undo(self):
+        self.press(0x5A, ctrl=True)  # Ctrl+Z
 
 
 def sound_cue(kind):

@@ -16,7 +16,8 @@ GESTURE_LABELS = dict(LEFT_WINK="Guiño izquierdo", RIGHT_WINK="Guiño derecho",
 ACTION_LABELS = dict(LEFT_CLICK="Click izquierdo",RIGHT_CLICK="Click derecho",DOUBLE_CLICK="Doble click",
                      SCROLL_UP="Scroll arriba",SCROLL_DOWN="Scroll abajo",PAUSE="Pausar / reanudar",
                      KEY_ENTER="Enter",KEY_ESCAPE="Escape",KEY_SPACE="Espacio",
-                     OPEN_START_MENU="Abrir Inicio",DICTATE="Dictado por voz",NONE="Sin acción")
+                     OPEN_START_MENU="Abrir Inicio",DICTATE="Dictado por voz",
+                     KEY_BACKSPACE="Borrar letra",DELETE_WORD="Borrar palabra",NONE="Sin acción")
 
 
 def button(text, fn, style=""):
@@ -359,8 +360,10 @@ class MainWindow(QMainWindow):
         row.addWidget(button("Restaurar valores predeterminados",self.restore_defaults))
         row.addWidget(button("Guardar configuración",self.save_settings,"Primary"))
         layout.addLayout(row)
-        layout.addWidget(button("Preparar modelo local (requiere Internet una vez)",self.prepare_model))
-        layout.addWidget(button("Preparar modelo de voz (requiere Internet una vez)",self.prepare_voice_model))
+        self.prepare_model_button=button("Preparar modelo facial (requiere Internet una vez)",self.prepare_model)
+        self.prepare_voice_button=button("Preparar modelo de voz (requiere Internet una vez)",self.prepare_voice_model)
+        layout.addWidget(self.prepare_model_button)
+        layout.addWidget(self.prepare_voice_button)
 
     def prepare_voice_model(self):
         model=self.voice_model.currentData()
@@ -478,6 +481,7 @@ class MainWindow(QMainWindow):
         self.snapshot=s
         self.banner.setText(s["message"])
         self._present_dictation(s.get("dictation"))
+        self._present_models(s.get("models") or {})
         enabled=s["control_enabled"]
         self.control_status.setText("CONTROL DEL SISTEMA\n"+("PAUSADO" if s["paused"] else "ACTIVO") if enabled else "CONTROL DEL SISTEMA\nDESACTIVADO")
         style=(s["state"]=="ERROR",enabled)
@@ -606,6 +610,22 @@ class MainWindow(QMainWindow):
             for row,h in enumerate(history):
                 for col,value in enumerate((h.get("profile_id","—"),h.get("started_at","—"),f"{h.get('duration_s',0):.1f}",f"{h.get('fps_mean',0):.1f}",h.get("clicks",0))):
                     self.sessions.setItem(row,col,QTableWidgetItem(str(value)))
+
+    def _present_models(self,models):
+        """Los botones de descarga solo hacen falta si el modelo todavía no está."""
+        sizes=dict(tiny="75 MB",base="145 MB",small="480 MB",medium="1,5 GB")
+        face=models.get("face")
+        text="Modelo facial instalado ✓" if face else "Preparar modelo facial (≈ 4 MB, requiere Internet una vez)"
+        if self.prepare_model_button.text()!=text:
+            self.prepare_model_button.setText(text)
+            self.prepare_model_button.setEnabled(not face)
+        model=self.voice_model.currentData()
+        voice=models.get("voice",{}).get(model)
+        text=(f"Modelo de voz '{model}' instalado ✓" if voice else
+              f"Preparar modelo de voz '{model}' (≈ {sizes.get(model,'?')}, requiere Internet una vez)")
+        if self.prepare_voice_button.text()!=text:
+            self.prepare_voice_button.setText(text)
+            self.prepare_voice_button.setEnabled(not voice)
 
     def _present_dictation(self,dictation):
         """Aviso flotante; al terminar muestra el resultado durante 2,5 s."""

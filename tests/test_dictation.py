@@ -7,7 +7,7 @@ import unittest
 from unittest.mock import Mock
 from config import VoiceConfig, load_config
 from control_engine import ControlEngine
-from dictation import Dictation, Endpointer, FocusInfo, SAMPLE_RATE, finish_text
+from dictation import Dictation, Endpointer, FocusInfo, SAMPLE_RATE, finish_text, parse_command
 from gesture_engine import GestureEvent
 
 RNG = random.Random(7)
@@ -70,6 +70,23 @@ class TextTests(unittest.TestCase):
         for bad in ({"model": "huge"}, {"enabled": "si"}, {"silence_s": 0}, {"send_word": "x" * 40}):
             with self.subTest(bad=bad), self.assertRaises(ValueError):
                 load_config(overrides={"voice": bad})
+
+
+class CommandParseTests(unittest.TestCase):
+    def test_spoken_commands(self):
+        cases = {"Borrar.": ("last", 1), "borrar eso": ("last", 1), "Borrar lo último.": ("last", 1),
+                 "Borrar todo": ("all", 1), "Borrar palabra.": ("word", 1), "Borrar una palabra": ("word", 1),
+                 "Borrar tres palabras.": ("word", 3), "borrar 5 letras": ("char", 5),
+                 "Borrar letra": ("char", 1), "Deshacer.": ("undo", 1), "BORRÁ dos letras": ("char", 2)}
+        for text, expected in cases.items():
+            with self.subTest(text=text):
+                self.assertEqual(parse_command(text), expected)
+
+    def test_commands_inside_sentences_are_text(self):
+        for text in ("Hay que borrar la pizarra", "borrar mil letras", "borrar 0 letras",
+                     "Deshacer las valijas", "", "Hola"):
+            with self.subTest(text=text):
+                self.assertIsNone(parse_command(text))
 
 
 class FakeFocus:
@@ -193,6 +210,35 @@ class DictationTests(unittest.TestCase):
         self.wait_idle(d)
         self.assertIn("No hay un campo", d.snapshot()["message"])
 
+    def test_delete_commands_drive_keyboard(self):
+        d = self.make(FakeFocus(FocusInfo(True)), text="Borrar dos palabras.")
+        d.on_click()
+        self.wait_idle(d)
+        self.typer.delete_words.assert_called_once_with(2)
+        self.typer.type_text.assert_not_called()
+        self.assertIn("2 palabras", d.snapshot()["message"])
+        self.assertEqual(self.metrics.dictation.call_args.args[0]["command"], "word")
+
+    def test_delete_last_dictation_removes_exactly_what_was_typed(self):
+        d = self.make(FakeFocus(FocusInfo(True)), text="hola mundo")
+        d.on_click()
+        self.wait_idle(d)
+        self.transcriber.transcribe.return_value = "Borrar."
+        d.on_click()
+        self.wait_idle(d)
+        self.typer.backspace.assert_called_once_with(len("hola mundo "))
+        d.on_click()  # ya no queda nada propio para borrar
+        self.wait_idle(d)
+        self.assertEqual(self.typer.backspace.call_count, 1)
+        self.assertIn("No hay un dictado anterior", d.snapshot()["message"])
+
+    def test_commands_can_be_disabled_and_sentences_are_typed(self):
+        d = self.make(FakeFocus(FocusInfo(True)), text="Borrar todo", commands=False)
+        d.on_click()
+        self.wait_idle(d)
+        self.typer.type_text.assert_called_once_with("Borrar todo ")
+        self.typer.select_all.assert_not_called()
+
     def test_quiet_period_after_dictation(self):
         clock = [100.]
         d = Dictation(VoiceConfig(enabled=True, after_dictation_ms=500), FakeFocus(FocusInfo(False)),
@@ -228,6 +274,13 @@ class ControlIntegrationTests(unittest.TestCase):
         dictation.cancel.assert_called_once()
         self.assertFalse(control.paused)
 
+    def test_delete_actions_for_gestures(self):
+        control, gesture, backend, dictation = self.control(busy=False)
+        control._execute(GestureEvent("KEY_BACKSPACE"))
+        backend.press.assert_called_once_with("backspace", _pause=False)
+        control._execute(GestureEvent("DELETE_WORD"))
+        backend.hotkey.assert_called_once_with("ctrl", "backspace", _pause=False)
+
     def test_click_arms_dictation_and_dictate_action_starts_it(self):
         control, gesture, backend, dictation = self.control(busy=False)
         control._execute(GestureEvent("LEFT_CLICK"))
@@ -243,6 +296,16 @@ class SendInputLayoutTests(unittest.TestCase):
         from dictation import SendInputTyper
         typer = SendInputTyper()
         self.assertEqual(ctypes.sizeof(typer.INPUT), 40 if ctypes.sizeof(ctypes.c_void_p) == 8 else 28)
+
+    def test_ctrl_shortcuts_wrap_each_key_press(self):
+        from dictation import SendInputTyper
+        typer, sent = SendInputTyper(), []
+        typer._send = lambda batch: sent.append([(k.u.ki.wVk, k.u.ki.dwFlags) for k in batch])
+        typer.delete_words(2)
+        self.assertEqual(sent, [[(0x11, 0), (0x08, 0), (0x08, 2), (0x11, 2)] * 2])
+        sent.clear()
+        typer.backspace(40)  # lotes de 32
+        self.assertEqual([len(b) for b in sent], [64, 16])
 
 
 if __name__ == "__main__": unittest.main()

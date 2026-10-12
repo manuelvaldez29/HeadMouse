@@ -161,10 +161,11 @@ class VoiceConfig:
     append_space: bool = True
     send_word: str = ""               # p. ej. "enviar": si es la última palabra, se quita y se presiona Enter
     sound_cues: bool = True
+    commands: bool = True             # "borrar", "borrar palabra", "deshacer"… dichos solos
     after_dictation_ms: float = 600   # gestos bloqueados al terminar (cola del habla)
 
     def __post_init__(self):
-        for name in ("enabled", "append_space", "sound_cues"):
+        for name in ("enabled", "append_space", "sound_cues", "commands"):
             if type(getattr(self, name)) is not bool:
                 raise ValueError(f"{name} debe ser true o false")
         if self.model not in WHISPER_MODELS:

@@ -27,6 +27,7 @@ class ApplicationController:
         self.dictation_factory = dictation_factory
         self.dictation = None
         self._voice_download = None
+        self._models, self._models_checked = {}, -1e9
         self.data_dir = Path(data_dir) if data_dir else ROOT / "data"
         self.clock = clock
         self.emergency = threading.Event()
@@ -432,7 +433,21 @@ class ApplicationController:
                     experiment=self.experiment.snapshot() if self.experiment else None,
                     jitter=self.jitter_result, jitter_remaining=max(0, self.jitter.duration_s-(self.clock()-self.jitter.started)) if self.jitter else None,
                     metrics=self.metrics.snapshot() if self.metrics else {}, history=deepcopy(self.history),
-                    dictation=self.dictation.snapshot() if self.dictation else None)
+                    dictation=self.dictation.snapshot() if self.dictation else None,
+                    models=self._model_status())
+
+    def _model_status(self):
+        """Qué modelos locales ya están instalados (se revisa cada 2 s)."""
+        now = self.clock()
+        if now - self._models_checked >= 2:
+            from config import WHISPER_MODELS
+            from dictation import MODEL_DIR
+            face = Path(self.config.vision.model_path)
+            face = face if face.is_absolute() else ROOT / face
+            self._models = dict(face=face.is_file() and face.stat().st_size > 0,
+                                voice={m: (MODEL_DIR / m / "model.bin").is_file() for m in WHISPER_MODELS})
+            self._models_checked = now
+        return self._models
 
     def fail(self, message):
         self.emergency_stop()

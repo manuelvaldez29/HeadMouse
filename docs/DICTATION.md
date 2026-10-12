@@ -39,6 +39,25 @@ carga con `local_files_only` y no hay tráfico de red.
    signos de apertura, sin tocar el portapapeles. Con `send_word` (por ejemplo,
    "enviar") como última palabra, esa palabra se quita y se presiona Enter.
 
+### Comandos de edición
+
+Si la frase **entera** es un comando, no se escribe: se ejecuta. Dentro de una
+frase más larga ("hay que borrar la pizarra"), se escribe como texto normal. Se
+desactivan con `voice.commands: false`.
+
+| Frase | Teclas |
+|---|---|
+| "borrar", "borrar eso", "borrar lo último" | Retroceso × largo del último dictado (solo lo que escribió HeadMouse) |
+| "borrar palabra", "borrar tres palabras" | Ctrl+Retroceso × N |
+| "borrar letra", "borrar 5 letras" | Retroceso × N |
+| "borrar todo" | Ctrl+A, Retroceso |
+| "deshacer" | Ctrl+Z |
+
+N va de 1 a 50, en dígitos o palabras ("una" a "diez"). Se ignoran mayúsculas,
+tildes y puntuación ("Borrá dos letras." funciona). Sin hablar, las acciones
+**Borrar letra** y **Borrar palabra** se pueden asignar a un gesto en "Gestos y
+acciones".
+
 Mientras se dicta, y `after_dictation_ms` después, **solo se mueve el cursor**:
 hablar mueve boca, ojos y cejas, y abriría Inicio, haría clicks o scroll. El
 gesto de pausa (ambas cejas) **cancela el dictado** en lugar de pausar. F8 y

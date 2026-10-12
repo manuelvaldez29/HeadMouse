@@ -301,6 +301,12 @@ class ControlEngine:
             self._log_event("DOUBLE_CLICK", clicks=True)
             if self.dictation is not None:
                 self.dictation.on_click()
+        elif ev.type == "KEY_BACKSPACE":
+            self.backend.press("backspace", _pause=False)
+            self._log_event(ev.type)
+        elif ev.type == "DELETE_WORD":
+            self.backend.hotkey("ctrl", "backspace", _pause=False)
+            self._log_event(ev.type)
         elif ev.type == "DICTATE":
             if self.dictation is not None:
                 self.dictation.start_now()
