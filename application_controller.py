@@ -48,6 +48,37 @@ class ApplicationController:
         self.closed = False
         self.history = []
         self.refresh_metrics()
+        self._restore_last_profile()
+
+    # ── Último perfil usado ───────────────────────────────────────────────────
+    # Al abrir la app el último perfil queda elegido: con un solo click se inicia.
+
+    @property
+    def _last_profile_path(self):
+        return self.data_dir / "last_profile.json"
+
+    def _remember_profile(self):
+        from profiles import replace_with_retry
+        try:
+            self.data_dir.mkdir(parents=True, exist_ok=True)
+            temporary = self._last_profile_path.with_suffix(".tmp")
+            temporary.write_text(json.dumps({"user_id": self.profile["user_id"]}), encoding="utf-8")
+            replace_with_retry(temporary, self._last_profile_path)
+        except OSError:
+            pass  # recordarlo es una comodidad, nunca un error para el usuario
+
+    def _restore_last_profile(self):
+        try:
+            user_id = json.loads(self._last_profile_path.read_text(encoding="utf-8"))["user_id"]
+        except (OSError, ValueError, KeyError, TypeError):
+            profiles = [p for p in self.profiles.list_profiles() if not p["error"]]
+            if len(profiles) != 1:
+                return
+            user_id = profiles[0]["user_id"]  # un solo perfil: no hay nada que elegir
+        try:
+            self.select_profile(user_id)
+        except Exception:
+            self.profile = None
 
     def emergency_stop(self):
         """Única operación permitida desde otro hilo: revoca salida inmediatamente."""
@@ -78,6 +109,7 @@ class ApplicationController:
         self.state = "HOME"
         self.wizard = None
         self.message = self.profiles.status(self.profile)
+        self._remember_profile()
 
     def rename_profile(self, name):
         self._require_profile()
@@ -90,6 +122,10 @@ class ApplicationController:
         self.stop_camera()
         self.profiles.delete(self.profile["user_id"], confirmed)
         self.profile = None
+        try:
+            self._last_profile_path.unlink()
+        except OSError:
+            pass
         self.config = load_config()
         self.state, self.message = "HOME", "Perfil eliminado. Los resultados históricos se conservaron."
 
@@ -390,6 +426,9 @@ class ApplicationController:
         if self.state == "CALIBRATING" and self.wizard:
             self.wizard.update(face)
             self._flush_calibration_telemetry()
+            if self.wizard.state == "measured" and self.wizard.validator is None:
+                # La prueba de gestos arranca sola: antes había que descubrir el botón Validar.
+                self.wizard.validate()
         elif self.control:
             self.control._tick()  # mismo ciclo seguro v0.2, conducido por el worker Qt
             events, actions = list(self.control.last_events), list(self.control.last_actions)

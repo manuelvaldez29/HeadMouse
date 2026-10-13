@@ -38,3 +38,11 @@ QScrollBar:vertical { background: #101827; width: 14px; }
 QScrollBar::handle:vertical { background: #4a6484; min-height: 30px; border-radius: 6px; }
 QToolTip { background: #253651; color: #fff; border: 1px solid #93a8c5; padding: 8px; }
 QDialog { background: #172337; }
+QPushButton#Hero { background: #57d4c3; color: #071f26; border-color: #57d4c3; font-size: 22px;
+                   min-height: 62px; border-radius: 14px; }
+QPushButton#Hero:hover { background: #84e5d9; }
+QPushButton#Hero:disabled { background: #1b3c49; color: #8aefe0; border: 1px dashed #3f7f86; }
+QPushButton#HeroStop { background: #803847; border-color: #ff8796; color: #ffffff; font-size: 22px;
+                       min-height: 62px; border-radius: 14px; }
+QPushButton#HeroStop:hover { background: #a44355; }
+QLabel#HomeState { font-size: 19px; font-weight: 600; color: #8ce5cd; }

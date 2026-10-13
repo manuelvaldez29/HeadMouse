@@ -66,14 +66,16 @@ class CalibrationGUIRegressionTests(unittest.TestCase):
                 attempts=set()
                 for _ in range(1500):
                     s=c.wizard
-                    if s.state in ("measured","error"): break
+                    # Al terminar de medir, la prueba de gestos arranca sola.
+                    if s.state in ("validation","error"): break
                     snap=tick(ACTIVE.get(s.gesture_id,{}) if s.stage=="active" else {})
-                    if snap["gesture_id"]:
+                    if snap["gesture_id"] and snap["state"]!="validation":
                         attempts.add((snap["gesture_id"],snap["attempt"]))
                         self.assertIn(f"Intento {snap['attempt']}/3",window.wizard_status.text())
-                self.assertEqual(c.wizard.state,"measured")
+                self.assertEqual(c.wizard.state,"validation")
                 self.assertEqual(len(attempts),18)
-                c.validate_calibration()
+                self.assertIn("Probando",window.calibration_primary.text())
+                c.validate_calibration()  # reiniciar la prueba también funciona
                 snap=tick()
                 self.assertEqual(snap["phase"],1)
                 self.assertEqual(snap["attempt"],0)
@@ -81,7 +83,7 @@ class CalibrationGUIRegressionTests(unittest.TestCase):
                 for _ in range(45): tick()
                 self.assertIn("Esperando gesto",window.wizard_instruction.text())
                 for _ in range(24): snap=tick(ACTIVE["LEFT_WINK"])
-                self.assertIn("Detectado",window.capture_feedback.text())
+                self.assertIn("Guiño izquierdo <span style='color:#8192aa'>· detectado",window.calibration_steps.text())
                 self.assertEqual(snap["gesture_id"],"LEFT_WINK")
                 for _ in range(45): snap=tick()
                 self.assertEqual(snap["phase"],2)

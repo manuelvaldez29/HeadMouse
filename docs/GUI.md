@@ -6,16 +6,16 @@ La instalación inicial todavía requiere preparar Python y las dependencias; es
 
 ## Primer uso
 
-1. En **Inicio**, elegí **Nuevo perfil**, escribí un nombre y confirmá. También podés seleccionar uno existente desde **Perfiles**. Un perfil nuevo aparece como «Sin calibrar».
+1. En **Inicio**, el botón principal indica el próximo paso: **Crear mi perfil**, **Calibrar mis gestos**, **Validar mi calibración** o **Iniciar HeadMouse**. El último perfil usado queda elegido al abrir la aplicación (`data/last_profile.json`); si hay un solo perfil, se elige solo. El selector de Inicio permite cambiarlo. Un perfil nuevo aparece como «Sin calibrar».
 2. En **Configuración**, seleccioná el índice de cámara y guardá. Si falta el modelo local, usá **Preparar modelo**, que solicita confirmación antes de descargarlo.
-3. En **Calibración**, desplegá **Gestos disponibles y tipo de señal** y desmarcá los que no podés realizar. GEOMETRIC es la fuente predeterminada; las otras son experimentales. Elegí **Comenzar / recalibrar** y seguí neutral y tres intentos cómodos por gesto: guiños, cejas individuales, boca y ambas cejas. La cámara y el medidor muestran la señal actual, neutral, activación, liberación y extremo cómodo.
-4. Si un gesto tiene calidad débil, usá **Repetir gesto**; el selector permite volver a medir uno específico conservando los demás. También podés marcarlo no disponible desde las opciones. Iniciá **Validar** y realizá solamente los gestos habilitados, volviendo a neutral entre ellos. El ruido breve se tolera; un gesto incorrecto sostenido requiere repetir. **Guardar perfil** se habilita solamente después de superar la validación.
-5. Elegí **Probar HeadMouse** para abrir el diagnóstico. Revisá la posición, las proporciones faciales, los umbrales y el desplazamiento esperado sin mover el mouse del sistema.
-6. Cuando estés listo, elegí **Activar control** y confirmá «HeadMouse comenzará a controlar el puntero del sistema.».
+3. En **Calibración**, tocá **Comenzar calibración**. A la izquierda, una lista muestra cada gesto en orden de captura: ✓ listo, ● en curso (intento N de 3), ✗ hay que repetir, ○ pendiente, — no disponible. La cámara y el medidor muestran la señal actual, el neutral, la activación, la liberación y el extremo cómodo. Un único botón grande indica el próximo paso; mientras mide aparece como estado ("Midiendo…") y al lado queda **Cancelar**.
+4. Si un gesto falla, el botón pasa a **Repetir este gesto** y al lado aparece **No puedo hacer este gesto**, que lo marca no disponible sin perder los demás. Al terminar de medir, **la prueba de gestos arranca sola**: la lista pasa a "Prueba de gestos" y marca cada uno como detectado. Si la prueba falla, el botón ofrece **Reintentar la prueba**. Al aprobarla aparece **Guardar perfil**, y después **Ir a Inicio**. **Más opciones** (plegado, muestra la señal de cejas elegida) agrupa los gestos disponibles, la señal de cejas, volver a medir un gesto específico, recalibrar desde cero y cancelar.
+5. En **Diagnóstico** (menú izquierdo), elegí **Iniciar diagnóstico**. Revisá la posición, las proporciones faciales, los umbrales y el desplazamiento esperado sin mover el mouse del sistema.
+6. Cuando estés listo, tocá **Iniciar HeadMouse** en Inicio: un solo click enciende la cámara y activa el control **en pausa** (levantá ambas cejas para mover el cursor). El mismo botón pasa a **Detener HeadMouse**. **Activar control**, en la barra superior, conserva su diálogo de confirmación.
 
 ## Seguridad y estados
 
-Al abrir la aplicación, la cámara y el control están desactivados. Abrir la cámara, calibrar, diagnosticar o usar simulación no habilita acciones del sistema. El control requiere un perfil validado y una confirmación explícita.
+Al abrir la aplicación, la cámara y el control están desactivados. Abrir la cámara, calibrar, diagnosticar o usar simulación no habilita acciones del sistema. El control requiere un perfil validado y una acción explícita: el botón **Iniciar HeadMouse**, o **Activar control** con su confirmación. En ambos casos arranca en pausa.
 
 **Detener control** interrumpe la salida. **F8** y **Escape** también la detienen cuando la aplicación recibe el teclado: son atajos locales a la aplicación, no atajos globales de Windows. Se conserva el failsafe de PyAutoGUI al llevar el puntero a una esquina. Una llamada al sistema que ya esté en ejecución puede terminar antes de que se aplique la detención.
 
@@ -25,9 +25,9 @@ El estado superior distingue control desactivado, activo y pausado. La pausa por
 
 | Pantalla | Uso |
 |---|---|
-| Inicio | Preview, perfil, cámara, MediaPipe, rostro, FPS, procesamiento, gesto y acción prevista. |
+| Inicio | Saludo, selector de perfil, botón principal con el próximo paso (crear, calibrar, validar, iniciar o detener), estado (listo, en pausa, activo) con su indicación, rostro detectado y vista de cámara. Los datos técnicos (FPS, procesamiento, MediaPipe) están en Diagnóstico; la navegación, solo en el menú izquierdo. |
 | Perfiles | Crear, seleccionar, renombrar, eliminar con confirmación y consultar calibración. Renombrar conserva el identificador interno y los resultados históricos. |
-| Calibración | Captura guiada, repetición, validación y guardado. También permite validar perfiles anteriores. |
+| Calibración | Lista de gestos con su estado, botón con el próximo paso (comenzar, repetir, reintentar, guardar), prueba automática al terminar de medir y opciones avanzadas plegadas. La página se desplaza al abrir las opciones. |
 | Diagnóstico | Coordenadas faciales, cursor virtual esperado, desplazamientos, ratios, umbrales, smoothing y dead zone. Incluye medición de estabilidad y datos avanzados de señal, histéresis y calidad por gesto. |
 | Configuración | Cámara, sensibilidad por eje, smoothing, dead zone, timeout, duración y cooldown de gestos, overlays y landmarks. El método disponible es Nariz. |
 | Gestos y acciones | Seleccionar la acción de cada gesto y guardar en el perfil. |

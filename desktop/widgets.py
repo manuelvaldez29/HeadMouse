@@ -26,8 +26,9 @@ def card(title, value="—"):
 
 
 class CameraPreview(QWidget):
-    def __init__(self):
+    def __init__(self, empty_text="Cámara apagada\n\nAbrí la cámara para ver tu posición"):
         super().__init__()
+        self.empty_text = empty_text
         self.setMinimumSize(360, 260)
         self.setAccessibleName("Vista previa de cámara")
         self.snapshot = {}
@@ -48,7 +49,7 @@ class CameraPreview(QWidget):
         p.fillRect(self.rect(),QColor("#091220"))
         if self.image is None:
             p.setPen(QColor("#b1c6df"))
-            p.drawText(self.rect(),Qt.AlignmentFlag.AlignCenter,"Cámara apagada\n\nAbrí la cámara para ver tu posición")
+            p.drawText(self.rect(),Qt.AlignmentFlag.AlignCenter,self.empty_text)
             return
         scale=min(self.width()/self.image.width(),self.height()/self.image.height())
         w,h=self.image.width()*scale,self.image.height()*scale
