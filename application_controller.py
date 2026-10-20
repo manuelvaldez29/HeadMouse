@@ -16,6 +16,7 @@ from gesture_engine import GestureEngine
 from metrics import SessionMetrics
 from profile_manager import ProfileManager
 from tracking import create_strategy
+from tracking_calibration import EyeTrackingCalibrationSession
 
 
 class ApplicationController:
@@ -36,6 +37,7 @@ class ApplicationController:
         self.config = load_config()
         self.vision = self.gesture = self.control = self.metrics = None
         self.wizard = self.experiment = self.jitter = None
+        self.eye_calibration = None
         self._calibration_session_id = None
         self._calibration_logged = 0
         self.jitter_result = None
@@ -144,7 +146,8 @@ class ApplicationController:
     def _make_gesture(self):
         if self.profile and self.profile.get("status") != "draft":
             self.gesture = GestureEngine(self.vision, config=self.config.gesture, calibration=self.profile,
-                                         strategy=create_strategy(self.config.ui.tracking_method), clock=self.clock)
+                                         strategy=create_strategy(self.config.ui.tracking_method,
+                                             self.profile.get("tracking_calibration"), self.config.eye), clock=self.clock)
         else:
             self.gesture = None
 
@@ -210,6 +213,7 @@ class ApplicationController:
             self.metrics = None
         self.gesture = None
         self.jitter = None
+        self.eye_calibration = None
         self.state = "HOME"
         self.refresh_metrics()
         if errors:
@@ -217,9 +221,10 @@ class ApplicationController:
 
     def activate_control(self, confirmed=False):
         self._require_profile(calibrated=True, validated=True)
+        self._require_tracking_calibration()
         if not confirmed or self.emergency.is_set():
             raise ValueError("La activación fue cancelada o no está autorizada")
-        if self.state in ("CALIBRATING", "JITTER") or (self.experiment and self.experiment.active):
+        if self.state in ("CALIBRATING", "EYE_CALIBRATING", "JITTER") or (self.experiment and self.experiment.active):
             raise ValueError("Terminá o cancelá la medición antes de activar")
         self.start_camera()
         if self.emergency.is_set():
@@ -289,6 +294,7 @@ class ApplicationController:
         if self.experiment and self.experiment.active:
             self.experiment.cancel()
         self.jitter = None
+        self.eye_calibration = None
         self.start_camera()
         self.state, self.message = "DIAGNOSTIC", "Diagnóstico seguro: el cursor del sistema no se mueve."
 
@@ -297,6 +303,7 @@ class ApplicationController:
         if self.experiment and self.experiment.active:
             self.experiment.cancel()
         self.jitter = None
+        self.eye_calibration = None
         self.start_camera()
         self.wizard = CalibrationSession(self.profile, self.config, self.clock, enabled, source)
         self._calibration_session_id = uuid.uuid4().hex
@@ -309,6 +316,7 @@ class ApplicationController:
         if self.experiment and self.experiment.active:
             self.experiment.cancel()
         self.jitter = None
+        self.eye_calibration = None
         self.start_camera()
         if self.wizard is None:
             self._require_profile(calibrated=True)
@@ -343,6 +351,9 @@ class ApplicationController:
         if self.wizard is None:
             raise ValueError("No hay calibración para guardar")
         result = self.wizard.result()
+        # La calibración facial reconstruye su perfil; preservar el tracking aparte.
+        if self.profile and "tracking_calibration" in self.profile:
+            result["tracking_calibration"] = deepcopy(self.profile["tracking_calibration"])
         self.profiles.store.save(result)
         self.profile = self.profiles.store.load(result["user_id"])
         self.config = load_config(overrides=self.profile.get("settings", {}))
@@ -350,7 +361,44 @@ class ApplicationController:
         self.state = "PREVIEW"
         self.message = "Perfil guardado y validado. Ya podés probar HeadMouse."
 
+    def _require_tracking_calibration(self):
+        if self.config.ui.tracking_method == "eye" and not (self.profile or {}).get("tracking_calibration"):
+            raise ValueError("Modo experimental: calibrá el tracking ocular antes de continuar")
+
+    def start_eye_calibration(self):
+        if self.state == "CALIBRATING":
+            raise ValueError("Terminá o cancelá la calibración de gestos primero")
+        self.stop_control()
+        if self.experiment and self.experiment.active:
+            self.experiment.cancel()
+        self.jitter = None
+        self.start_camera()
+        self.eye_calibration = EyeTrackingCalibrationSession(
+            self.clock, stale_after_s=self.config.gesture.stale_after_s)
+        self.state = "EYE_CALIBRATING"
+        self.message = "Modo experimental: calibración de tracking ocular, con el control desactivado."
+
+    def save_eye_calibration(self):
+        if self.state != "EYE_CALIBRATING" or self.eye_calibration is None:
+            raise ValueError("Iniciá la calibración ocular primero")
+        candidate = deepcopy(self.profile)
+        candidate["tracking_calibration"] = self.eye_calibration.result()
+        self.profiles.store.save(candidate)
+        self.profile = self.profiles.store.load(candidate["user_id"])
+        self.eye_calibration = None
+        self._make_gesture()
+        self.state, self.message = "DIAGNOSTIC", "Neutral ocular guardado. Probá las direcciones en Diagnóstico seguro."
+
+    def cancel_eye_calibration(self):
+        self.eye_calibration = None
+        if self.state == "EYE_CALIBRATING":
+            self.state, self.message = "PREVIEW", "Calibración ocular cancelada."
+
     def start_experiment(self, mode="simulation", source="headmouse"):
+        if self.state in ("CALIBRATING", "EYE_CALIBRATING"):
+            raise ValueError("Terminá o cancelá la calibración antes de medir")
+        if source == "headmouse":
+            self._require_tracking_calibration()
         if mode == "real" and (not self.control or self.emergency.is_set()):
             raise ValueError("Activá el control explícitamente antes del experimento real")
         if self.experiment and self.experiment.active:
@@ -362,7 +410,8 @@ class ApplicationController:
             self.start_camera()
         self.jitter = None
         self.experiment = ExperimentEngine(self.profile["user_id"] if self.profile else "demo", mode, source,
-                                            ResultStore(self.data_dir / "experiments"), self.clock)
+                                            ResultStore(self.data_dir / "experiments"), self.clock,
+                                            tracking_method=self.config.ui.tracking_method)
         self.state = "EXPERIMENT"
         self.message = "Seleccioná los objetivos. Los resultados se guardan automáticamente."
 
@@ -384,17 +433,22 @@ class ApplicationController:
         self.state = "PREVIEW" if self.vision else "HOME"
 
     def start_jitter(self):
+        if self.state in ("CALIBRATING", "EYE_CALIBRATING"):
+            raise ValueError("Terminá o cancelá la calibración antes de medir")
         self.stop_control()
         self._require_profile(calibrated=True)
+        self._require_tracking_calibration()
         self.start_camera()
         if self.experiment and self.experiment.active:
             self.experiment.cancel()
-        self.jitter = JitterMeasurement((self.profile.get("neutral_nose_x", .5),
+        eye = self.config.ui.tracking_method == "eye"
+        self.jitter = JitterMeasurement((0., 0.) if eye else (self.profile.get("neutral_nose_x", .5),
                                         self.profile.get("neutral_nose_y", .5)),
-                                       self.config.gesture.dead_zone, clock=self.clock)
+                                       self.config.eye.dead_zone if eye else self.config.gesture.dead_zone,
+                                       clock=self.clock, strategy=self.gesture.strategy)
         self.jitter_result = None
         self.state = "JITTER"
-        self.message = "Mantené la cabeza en neutral durante 10 segundos."
+        self.message = "Mantené la mirada en neutral durante 10 segundos." if eye else "Mantené la cabeza en neutral durante 10 segundos."
 
     def prepare_model(self):
         from vision_engine import VisionEngine
@@ -423,7 +477,9 @@ class ApplicationController:
         face = self.vision.get_face_data()
         fresh = face.fresh(self.config.gesture.stale_after_s, self.clock())
         events, actions = [], []
-        if self.state == "CALIBRATING" and self.wizard:
+        if self.state == "EYE_CALIBRATING" and self.eye_calibration:
+            self.eye_calibration.update(face)
+        elif self.state == "CALIBRATING" and self.wizard:
             self.wizard.update(face)
             self._flush_calibration_telemetry()
             if self.wizard.state == "measured" and self.wizard.validator is None:
@@ -470,7 +526,7 @@ class ApplicationController:
             self.jitter.add(face, self.config.gesture.stale_after_s)
             if self.jitter.done:
                 self.jitter_result = self.jitter.summary()
-                record = dict(experiment="jitter", profile_id=self.profile["user_id"], tracking_method="nose",
+                record = dict(experiment="jitter", profile_id=self.profile["user_id"], tracking_method=self.config.ui.tracking_method,
                               recorded_at=time.time(), **self.jitter_result)
                 self.jitter_result["path"] = ResultStore(self.data_dir / "experiments").append(uuid.uuid4().hex, record)
                 self.jitter = None
@@ -492,6 +548,8 @@ class ApplicationController:
                     gesture=self.last_gesture, action=self.last_action, cursor=self.cursor,
                     diagnostic=self.gesture.diagnostic() if self.gesture else {},
                     wizard=self.wizard.snapshot() if self.wizard else None,
+                    eye_calibration=self.eye_calibration.snapshot() if self.eye_calibration else None,
+                    tracking_calibrated=self.config.ui.tracking_method=="nose" or bool((self.profile or {}).get("tracking_calibration")),
                     experiment=self.experiment.snapshot() if self.experiment else None,
                     jitter=self.jitter_result, jitter_remaining=max(0, self.jitter.duration_s-(self.clock()-self.jitter.started)) if self.jitter else None,
                     metrics=self.metrics.snapshot() if self.metrics else {}, history=deepcopy(self.history),

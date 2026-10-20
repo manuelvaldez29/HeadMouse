@@ -26,6 +26,26 @@ class FaceData:
     head_pitch: float | None = None
     head_yaw: float | None = None
     head_roll: float | None = None
+    left_gaze_x: float | None = None
+    left_gaze_y: float | None = None
+    right_gaze_x: float | None = None
+    right_gaze_y: float | None = None
+    gaze_x: float | None = None
+    gaze_y: float | None = None
+    gaze_confidence: float = 0.0  # cobertura: .5 un ojo, 1 ambos; no probabilidad
+    iris_points: tuple = ()  # centros normalizados del preview, solo RAM
+
+    @property
+    def gaze_available(self):
+        # La señal opcional se valida aparte: ausencia de iris no invalida nariz/gestos.
+        unit = lambda v: (isinstance(v, (int, float)) and not isinstance(v, bool)
+                          and math.isfinite(v) and 0 <= v <= 1)
+        pairs = ((self.left_gaze_x, self.left_gaze_y), (self.right_gaze_x, self.right_gaze_y))
+        count = sum(all(unit(v) for v in pair) for pair in pairs)
+        return (self.detected and self.valid() and count > 0
+                and all(all(v is None for v in p) or all(unit(v) for v in p) for p in pairs)
+                and unit(self.gaze_x) and unit(self.gaze_y) and unit(self.gaze_confidence)
+                and self.gaze_confidence == count/2)
 
     def valid(self):
         values = (self.nose_x, self.nose_y, self.eye_left_ratio,

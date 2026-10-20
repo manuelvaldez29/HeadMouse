@@ -1,5 +1,25 @@
 # HEADMOUSE v0.3.1 — arquitectura desktop y motores compartidos
 
+## Extensión experimental de tracking ocular
+
+En `experiment/eye-tracking` se agrega EyeGazeTrackingStrategy, seleccionable
+con ui.tracking_method=eye; nose conserva el default y comportamiento previo.
+VisionEngine delega geometría de iris/comisuras/párpados a eye_geometry y
+FaceData transporta la señal relativa opcional. La estrategia normaliza contra
+TrackingCalibration; GestureEngine aplica el joystick con parámetros settings.eye
+y emite los mismos CURSOR_MOVE limitados por ControlEngine. Sin iris válido no
+hay movimiento ocular. No cambia el motor de calibración ni el arbitraje de gestos.
+
+EyeTrackingCalibrationSession captura neutral binocular y persiste solo su
+agregado en profile.tracking_calibration, independiente de GestureCalibration.
+El controlador añade EYE_CALIBRATING, sin salida real, y bloquea activación ocular
+sin calibración. La GUI tiene selector, captura separada y diagnóstico ocular.
+ExperimentEngine identifica nose/eye en resultados; jitter declara sus unidades.
+No hay compensación de pose ni gaze absoluto. La descripción de la base nasal
+que sigue se conserva como referencia histórica; las alternativas oculares
+antes propuestas quedan parcialmente implementadas por este experimento.
+Ver [diseño, fórmulas, límites y pruebas pendientes](EYE_TRACKING_EXPERIMENT.md).
+
 ## Capa de escritorio
 
 ```text

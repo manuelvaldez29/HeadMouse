@@ -35,6 +35,9 @@ def validate_profile(data):
         raise ValueError("Estado de validación inválido")
     if type(data.get("schema_version", 1)) is not int or data.get("schema_version", 1) not in (1, 2):
         raise ValueError("Versión de perfil no soportada")
+    if "tracking_calibration" in data:
+        from tracking_calibration import TrackingCalibration
+        TrackingCalibration.from_record(data["tracking_calibration"])
     if data.get("status") == "draft":
         if "thresholds" in data or data.get("calibrated_at"):
             raise ValueError("Un borrador no puede simular una calibración")

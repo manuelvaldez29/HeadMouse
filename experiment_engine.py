@@ -30,10 +30,13 @@ class ExperimentEngine:
     TARGETS = ((640, 120), (160, 380), (650, 380), (150, 120), (400, 250))
 
     def __init__(self, profile_id, mode="simulation", source="headmouse", store=None,
-                 clock=time.monotonic, targets=None, radius=35, timeout_s=60):
+                 clock=time.monotonic, targets=None, radius=35, timeout_s=60, tracking_method="nose"):
         if mode not in ("simulation", "real") or source not in ("headmouse", "keyboard"):
             raise ValueError("Modo o fuente experimental inválida")
         self.profile_id, self.mode, self.source = profile_id, mode, source
+        if tracking_method not in ("nose", "eye"):
+            raise ValueError("Método de tracking desconocido")
+        self.tracking_method = tracking_method if source=="headmouse" else None
         self.clock, self.store = clock, store or ResultStore()
         self.targets = tuple(targets or self.TARGETS)
         self.radius, self.timeout_s = radius, timeout_s
@@ -99,7 +102,7 @@ class ExperimentEngine:
     def _finish(self, completed, reason="completed", advance=True):
         record = dict(schema_version=1, experiment="target_acquisition", session_id=self.session_id,
                       profile_id=self.profile_id, mode=self.mode, input_source=self.source,
-                      tracking_method="nose", trial=self.index+1, target=list(self.targets[self.index]),
+                      tracking_method=self.tracking_method, trial=self.index+1, target=list(self.targets[self.index]),
                       radius=self.radius, coordinate_space=[self.WIDTH, self.HEIGHT],
                       started_at=self.started_at, ended_at=datetime.now(timezone.utc).isoformat(),
                       duration_s=self.clock()-self.started, trajectory=self.trajectory,
@@ -121,11 +124,14 @@ class ExperimentEngine:
         return dict(active=self.active, index=min(self.index+1, len(self.targets)), total=len(self.targets),
                     cursor=self.cursor, target=self.targets[min(self.index, len(self.targets)-1)],
                     radius=self.radius, completed=sum(r["completed"] for r in self.results), path=self.path,
-                    elapsed_s=self.clock()-self.started, mode=self.mode, source=self.source)
+                    elapsed_s=self.clock()-self.started, mode=self.mode, source=self.source,
+                    tracking_method=self.tracking_method)
 
 
 class JitterMeasurement:
-    def __init__(self, neutral=(.5,.5), dead_zone=.03, duration_s=10, clock=time.monotonic):
+    def __init__(self, neutral=(.5,.5), dead_zone=.03, duration_s=10, clock=time.monotonic, strategy=None):
+        from tracking import NoseTrackingStrategy
+        self.strategy = strategy or NoseTrackingStrategy()
         self.neutral, self.dead_zone, self.duration_s = neutral, dead_zone, duration_s
         self.clock, self.started = clock, clock()
         self.samples = []
@@ -141,7 +147,10 @@ class JitterMeasurement:
         if self.done or not face.fresh(max_age_s, self.clock()) or face.timestamp_ms <= self.last_timestamp:
             return
         self.last_timestamp = face.timestamp_ms
-        dx, dy = face.nose_x-self.neutral[0], face.nose_y-self.neutral[1]
+        position = self.strategy.position(face)
+        if position is None:
+            return
+        dx, dy = position[0]-self.neutral[0], position[1]-self.neutral[1]
         outside = abs(dx) > self.dead_zone or abs(dy) > self.dead_zone
         if outside and not self.outside:
             self.exits += 1
@@ -154,7 +163,8 @@ class JitterMeasurement:
         xs, ys = zip(*self.samples)
         deviations = [math.hypot(x, y) for x, y in self.samples]
         steps = [math.dist(a, b) for a, b in zip(self.samples, self.samples[1:])]
-        return dict(valid=True, samples=len(xs), duration_s=self.duration_s, units="normalized_frame",
+        return dict(valid=True, samples=len(xs), duration_s=self.duration_s,
+                    units="comfortable_eye_range" if self.strategy.name=="eye" else "normalized_frame",
                     mean_deviation=mean(deviations), std_deviation=pstdev(deviations),
                     std_x=pstdev(xs), std_y=pstdev(ys), range_x=max(xs)-min(xs), range_y=max(ys)-min(ys),
                     jitter_rms=math.sqrt(mean(v*v for v in steps)), dead_zone_exits=self.exits)

@@ -5,6 +5,7 @@ from PySide6.QtCore import QObject, QThread, QTimer, Signal, Slot, Qt
 from application_controller import ApplicationController
 
 COMMANDS = {"create_profile", "select_profile", "rename_profile", "delete_profile", "save_settings",
+            "start_eye_calibration", "save_eye_calibration", "cancel_eye_calibration",
             "restore_defaults", "start_camera", "stop_camera", "activate_control", "stop_control",
             "start_diagnostic", "start_calibration", "validate_calibration", "repeat_calibration",
             "save_calibration", "start_experiment", "experiment_input", "cancel_experiment",

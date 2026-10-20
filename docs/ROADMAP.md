@@ -1,5 +1,20 @@
 # Roadmap de tesis
 
+## Línea experimental eye tracking
+
+La rama `experiment/eye-tracking`, basada en `32caef6`, implementa un primer
+joystick ocular local con EyeGazeTrackingStrategy: extracción relativa de iris,
+neutral independiente, configuración, diagnóstico seguro y tests sintéticos.
+Nariz continúa como default. Esta es una realización parcial de la comparación
+prevista en v0.6; no implica que las metas físicas de la tabla estén completadas.
+
+Pendientes: prueba con webcam/personas, captura de rangos cómodos, sesgos al
+alternar ojos, validación monocular, evaluación de esfuerzo y benchmarking
+contrabalanceado nariz/ojos. La compensación de pose requiere evidencia on/off.
+El gaze absoluto de nueve puntos queda para una fase posterior con regresión
+local y validación independiente, todavía sin implementación.
+Ver [experimento ocular](EYE_TRACKING_EXPERIMENT.md).
+
 La contribución se centra en personalización, supresión de activaciones
 involuntarias, interacción multimodal, accesibilidad y evaluación cuantitativa
 sobre hardware convencional. Todas las etapas mantienen funcionamiento local.

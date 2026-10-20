@@ -66,6 +66,11 @@ class CameraPreview(QWidget):
             p.setBrush(QColor("#ffd477"))
             for x,y in face.landmarks:
                 p.drawEllipse(point(x,y),3,3)
+            if face.gaze_available:
+                p.setBrush(Qt.BrushStyle.NoBrush)
+                p.setPen(QPen(QColor("#cfb3ff"),2))
+                for x,y in face.iris_points:
+                    p.drawEllipse(point(x,y),5,5)
         if settings["ui"]["show_overlay"]:
             profile=s.get("profile") or {}
             diagnostic=s.get("diagnostic") or {}

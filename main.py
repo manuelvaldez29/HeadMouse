@@ -116,6 +116,10 @@ def main(argv=None):
         if profile.get("status") == "draft":
             raise ValueError("Perfil pendiente de calibración")
         config = load_config(args.config, profile.get("settings", {}))
+        from tracking import create_strategy
+        strategy = create_strategy(config.ui.tracking_method, profile.get("tracking_calibration"), config.eye)
+        if config.ui.tracking_method == "eye" and strategy.calibration is None:
+            raise ValueError("Calibrá el tracking ocular en la aplicación desktop antes de usar ojos")
         if args.camera is not None:
             config.vision.camera_index = args.camera
             config.vision.__post_init__()
@@ -141,7 +145,7 @@ def main(argv=None):
             cleanup.callback(vision.stop)
             vision.start()
             vision.wait_ready()
-            gesture = GestureEngine(vision, config=config.gesture, calibration=profile)
+            gesture = GestureEngine(vision, config=config.gesture, calibration=profile, strategy=strategy)
             control = ControlEngine(vision, gesture, config.control, metrics=metrics,
                                     mapping=ActionMapping(config.actions.bindings))
             cleanup.callback(control.stop)

@@ -222,6 +222,7 @@ class GestureEngine:
         # ── Suavizado del cursor ───────────────────────────────────────────────
         self._smooth_x = self.config.neutral_x
         self._smooth_y = self.config.neutral_y
+        self._eye_smooth_x = self._eye_smooth_y = 0.
         self.head_still = True
         # En pausa (o sin control) ambas cejas valen en cualquier postura: si el
         # centro quedó mal, la nariz relajada cae fuera de la zona muerta y el
@@ -273,7 +274,8 @@ class GestureEngine:
         # 2. Gestos binarios
         gesture_evs = self._update_gestures(fd)
         events.extend(gesture_evs)
-        x, y = self.strategy.position(fd)
+        # El historial de recentrado facial conserva siempre coordenadas nasales.
+        x, y = fd.nose_x, fd.nose_y
         self._history.append((fd.timestamp_ms, x, y, dict(self.last_signals), any(self.last_active.values())))
 
         for event in events:
@@ -295,9 +297,22 @@ class GestureEngine:
                     # Umbrales que el detector usa ahora (incluye el ajuste del recentrado).
                     gates={key: dict(activation=dict(g.activation), release=dict(g.release),
                                      enabled=key in self.enabled_gestures)
-                           for key, g in self._gates.items()})
+                           for key, g in self._gates.items()},
+                    tracking=self.tracking_diagnostic())
+
+    def tracking_diagnostic(self):
+        eye = self.strategy.name == "eye"
+        c = self.strategy.config if eye else self.config
+        calibration = self.strategy.calibration if eye else None
+        return dict(method=self.strategy.name, calibrated=bool(calibration) if eye else True,
+                    neutral_x=calibration.neutral_x if calibration else None if eye else self.config.neutral_x,
+                    neutral_y=calibration.neutral_y if calibration else None if eye else self.config.neutral_y,
+                    delta_x=self._eye_smooth_x if eye else self._smooth_x-self.config.neutral_x,
+                    delta_y=self._eye_smooth_y if eye else self._smooth_y-self.config.neutral_y,
+                    dead_zone=c.dead_zone, smoothing_alpha=c.smoothing_alpha)
 
     def reset(self):
+        self._eye_smooth_x = self._eye_smooth_y = 0.
         self._smooth_x = self.config.neutral_x
         self._smooth_y = self.config.neutral_y
         self.head_still = True
@@ -341,6 +356,8 @@ class GestureEngine:
         reposo→activación calibrada. Nunca acumula: parte siempre de la
         calibración. Devuelve un dict con `ok` y, si no recentró, `reason`.
         """
+        if self.strategy.name == "eye":
+            return dict(ok=False, reason="el neutral ocular se ajusta en Calibrar tracking ocular")
         end = before_ms - guard_ms
         candidates = [r for r in self._history if end - search_ms <= r[0] <= end and not r[4]]
 
@@ -413,6 +430,14 @@ class GestureEngine:
             - Más desviada = más rápido
             - La zona muerta previene deriva por micro-movimientos
         """
+        if self.strategy.name == "eye":
+            # La puerta de cejas sigue dependiendo de cabeza/nariz, nunca de mirada.
+            alpha = self.config.smoothing_alpha
+            self._smooth_x = alpha*self._smooth_x+(1-alpha)*fd.nose_x
+            self._smooth_y = alpha*self._smooth_y+(1-alpha)*fd.nose_y
+            self.head_still = (abs(self._smooth_x-self.config.neutral_x) <= self.config.dead_zone
+                               and abs(self._smooth_y-self.config.neutral_y) <= self.config.dead_zone)
+            return self._update_eye_cursor(fd)
         alpha = self.config.smoothing_alpha
 
         x, y = self.strategy.position(fd)
@@ -450,6 +475,22 @@ class GestureEngine:
         py = dy * sy + (dy * abs(dy)) * acc
 
         return GestureEvent(type=EV_CURSOR_MOVE, dx=px, dy=py)
+
+    def _update_eye_cursor(self, fd):
+        position = self.strategy.position(fd)
+        if position is None:
+            # Cortar inmediatamente: no emitir la cola del EMA sin iris válido.
+            self._eye_smooth_x = self._eye_smooth_y = 0.
+            return None
+        c = self.strategy.config
+        a = c.smoothing_alpha
+        self._eye_smooth_x = a*self._eye_smooth_x+(1-a)*position[0]
+        self._eye_smooth_y = a*self._eye_smooth_y+(1-a)*position[1]
+        def delta(value):
+            d = max(0., abs(value)-c.dead_zone)*(1 if value >= 0 else -1)
+            return max(-c.max_delta, min(c.max_delta, d*c.sensitivity+d*abs(d)*c.acceleration))
+        dx, dy = delta(self._eye_smooth_x), delta(self._eye_smooth_y)
+        return GestureEvent(type=EV_CURSOR_MOVE, dx=dx, dy=dy) if dx or dy else None
 
     # ── Gestos binarios ───────────────────────────────────────────────────────
 

@@ -29,6 +29,7 @@ from config import ROOT, VisionConfig
 from face_data import FaceData
 from gesture_signals import extract_blendshapes
 from face_geometry import brow_lift_3d, head_pose
+from eye_geometry import extract_gaze
 
 logger = logging.getLogger(__name__)
 import threading
@@ -265,7 +266,7 @@ class VisionEngine(threading.Thread):
             return FaceData(detected=False, timestamp_ms=timestamp_ms)
 
         lms = result.face_landmarks[0]
-        if len(lms) < 455 or not all(np.isfinite(p.x) and np.isfinite(p.y) for p in lms):
+        if len(lms) < 455 or not all(np.isfinite(p.x) and np.isfinite(p.y) for p in lms[:468]):
             return FaceData(False, timestamp_ms=timestamp_ms)
 
         # Escala facial: distancia entre orejas (invariante a distancia cámara)
@@ -302,6 +303,7 @@ class VisionEngine(threading.Thread):
         brow_r_lift = float((eye_r_y - brow_r_y) / scale)            
 
         width, height = self._frame_size
+        gaze = extract_gaze(lms, width, height, mirrored=True)
         lift_3d = brow_lift_3d(lms, width, height) if all(
             np.isfinite(getattr(p, "z", np.nan)) for p in lms) else None
         pose = head_pose(lms, width, height) if lift_3d is not None else None
@@ -313,6 +315,7 @@ class VisionEngine(threading.Thread):
 
         return FaceData(
             detected        = True,
+            **gaze,
             nose_x          = nose.x,
             nose_y          = nose.y,
             eye_left_ratio  = eye_l,

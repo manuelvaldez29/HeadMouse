@@ -186,6 +186,22 @@ class VoiceConfig:
 
 
 @dataclass
+class EyeTrackingConfig:
+    sensitivity: float = 12.0
+    acceleration: float = 8.0
+    dead_zone: float = .15  # fracción del rango cómodo nominal
+    smoothing_alpha: float = .65
+    max_delta: float = 20.0
+
+    def __post_init__(self):
+        bounded("eye.sensitivity", self.sensitivity, 0, 100)
+        bounded("eye.acceleration", self.acceleration, 0, 100)
+        bounded("eye.dead_zone", self.dead_zone, 0, .8)
+        bounded("eye.smoothing_alpha", self.smoothing_alpha, 0, 1, inclusive_high=False)
+        bounded("eye.max_delta", self.max_delta, 1, 60)
+
+
+@dataclass
 class UIConfig:
     show_overlay: bool = True
     show_landmarks: bool = True
@@ -194,8 +210,8 @@ class UIConfig:
     def __post_init__(self):
         if type(self.show_overlay) is not bool or type(self.show_landmarks) is not bool:
             raise ValueError("Overlays y landmarks deben ser booleanos")
-        if self.tracking_method != "nose":
-            raise ValueError("Por ahora solo está disponible tracking de nariz")
+        if self.tracking_method not in ("nose", "eye"):
+            raise ValueError("Método de tracking desconocido")
 
 
 @dataclass
@@ -215,6 +231,7 @@ class AppConfig:
     ui: UIConfig = field(default_factory=UIConfig)
     actions: MappingConfig = field(default_factory=MappingConfig)
     voice: VoiceConfig = field(default_factory=VoiceConfig)
+    eye: EyeTrackingConfig = field(default_factory=EyeTrackingConfig)
     log_level: str = "INFO"
     metrics_enabled: bool = True
 
@@ -226,7 +243,7 @@ class AppConfig:
 
 
 SECTIONS = dict(vision=VisionConfig, gesture=GestureConfig, control=ControlConfig,
-                calibration=CalibrationConfig, ui=UIConfig, actions=MappingConfig, voice=VoiceConfig)
+                calibration=CalibrationConfig, ui=UIConfig, actions=MappingConfig, voice=VoiceConfig, eye=EyeTrackingConfig)
 
 
 def load_config(path=None, overrides=None):
