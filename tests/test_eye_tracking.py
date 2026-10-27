@@ -181,7 +181,10 @@ class EyeStrategyTests(unittest.TestCase):
         for side in ("left","right"):
             face=eye_face(.7,.5)
             face=replace(face,**{f"{side}_gaze_x":None,f"{side}_gaze_y":None,"gaze_confidence":.5})
-            self.assertGreater(self.strategy.position(face)[0],0)
+            self.assertIsNone(self.strategy.position(face))  # binocular nunca hace fallback
+            selected = "right" if side == "left" else "left"
+            strategy=EyeGazeTrackingStrategy(TrackingCalibration(eye_source=selected),eye_source=selected)
+            self.assertGreater(strategy.position(face)[0],0)
 
     def test_eye_recenter_never_modifies_gesture_thresholds_or_neutral(self):
         old=deepcopy(self.engine.diagnostic())
@@ -348,6 +351,8 @@ class EyeControllerTests(unittest.TestCase):
         self.select_eye(True)
         for with_neutral in (True,False):
             p=deepcopy(self.controller.profile)
+            from profiles import save_gesture_mode
+            p=save_gesture_mode(p,p,"eye")  # esta prueba requiere gestos oculares medidos/aprobados
             if not with_neutral: p.pop("tracking_calibration")
             vision=Mock(error=None)
             control=Mock(error=None)

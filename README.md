@@ -3,6 +3,36 @@
 Control local de PC con movimiento de cabeza y gestos faciales.
 Tesis UNSTA 2026 — Bloj · Domfrocht · Petrelli · Valdez.
 
+La interfaz presenta **Nariz** y **Ojos**, dentro de un perfil por persona.
+Inicio permite elegirlos y Calibración tiene esas mismas dos pestañas. Los
+parámetros, gestos y acciones de cada configuración son independientes.
+Internamente se conservan el joystick ocular y el modelo de posición 9+5;
+la [migración compatible](docs/TWO_METHOD_ORGANIZATION.md) mantiene la respuesta
+guardada sin convertir modelos ni cambiar de comportamiento automáticamente.
+
+Para usar Ojos: seleccioná el perfil y Ojos en Inicio, entrá en **Calibración →
+Ojos**, calibrá movimiento, guardá y probá el movimiento seguro antes de activar.
+La webcam permanece visible, utilizando el mismo flujo de captura. Los modelos
+de posición aprenden nueve objetivos y comprueban otros cinco independientes en
+el monitor principal, aunque haya más pantallas conectadas. La precisión física
+todavía requiere evaluación. La calibración de gestos es independiente; cuando
+sólo el movimiento está preparado, los clics quedan deshabilitados.
+Los logs de Python y `faulthandler` quedan en `data/logs/`.
+
+La [etapa de fuentes oculares](docs/EYE_SOURCES_STAGE_A.md) permite elegir
+**Ambos ojos (predeterminado), Ojo izquierdo u Ojo derecho** en Ojos.
+Cada fuente conserva sus modelos internos independientes; una
+fuente sin calibrar permite diagnóstico y bloquea control real. La fuente puede
+seleccionarse en Calibración → Ojos. Podés mantener ambos ojos abiertos.
+Ver [pilotaje físico pendiente](docs/EYE_SOURCE_PILOT.md) y
+[plan de consolidación/distribución](docs/INTEGRATION_DISTRIBUTION_PLAN.md).
+
+Para el problema de inicio de la Logitech C270, ver
+[diagnóstico y reparación de captura](docs/CAMERA_C270_REPAIR.md). Configuración
+permite DirectShow/Automático/Media Foundation y un preset de captura USB.
+El arranque informa etapas de captura e inferencia; Detener cancela mientras carga.
+La prueba física debe hacerse con las demás aplicaciones de cámara cerradas.
+
 Esta versión conserva MediaPipe Face Landmarker, tracking nasal y PyAutoGUI;
 agrega una aplicación PySide6 con perfiles, calibración visual, diagnóstico,
 configuración, mapeo de acciones y experimentos locales. Plataforma inicial:
@@ -24,7 +54,7 @@ podés ejecutar desde este repositorio:
 ```
 
 Con el entorno activado, funciona `python app.py`. Creá o seleccioná un perfil,
-calibrá y validá los gestos, probá el diagnóstico y confirmá **Activar control**.
+elegí Nariz u Ojos, completá su calibración, probá el diagnóstico y confirmá **Activar control**.
 El control real comienza desactivado. **Detener control**, F8 o Escape lo
 detienen; los atajos requieren que HeadMouse reciba el teclado.
 
@@ -56,11 +86,13 @@ también se puede copiar ese archivo desde una instalación preparada. El inicio
 normal nunca intenta descargarlo. No se envían imágenes ni ratios a servidores.
 Se usa la ruta del repositorio aunque Python se invoque desde otro directorio.
 
-Entorno verificado: Windows, Python 3.14.4, MediaPipe 1.0.1, OpenCV contrib
+Entorno histórico verificado: Windows, Python 3.14.4, MediaPipe 1.0.1, OpenCV contrib
 5.0.0.93, NumPy 2.5.3, PyAutoGUI 0.9.54 y PySide6 6.11.2. Para reproducir exactamente esas
 dependencias en Windows con esa versión de Python, usar
 `-r requirements-windows.lock.txt` en lugar de `-r requirements.txt`.
-El archivo general conserva rangos de versiones; otras combinaciones requieren
+La continuación local del 26/10/2026 verificó Python 3.12.6, MediaPipe 1.1.1,
+NumPy 2.5.4 y PySide6 6.12.0; no se cambió el lock histórico ni se reinstalaron
+dependencias. El archivo general conserva rangos de versiones; otras combinaciones requieren
 verificación. Si instalar demora por bytecode, pip acepta `--no-compile`.
 
 Los comandos siguientes usan directamente el Python del entorno, sin cambiar
@@ -161,6 +193,9 @@ individuales ni imágenes, en `data/calibration/`.
 
 ## Documentación y validación manual pendiente
 
+- [Organización Nariz/Ojos, migración compatible y webcam en calibración](docs/TWO_METHOD_ORGANIZATION.md)
+- [Interfaz restaurada, medición vertical real y prueba ocular pendiente](docs/RESTORED_UI_VERTICAL_AUDIT.md)
+- [Reparación del guardado ocular y prueba física C270](docs/GAZE_CALIBRATION_SAVE_REPAIR.md)
 - [Auditoría inicial](docs/AUDIT.md)
 - [Arquitectura y cambios de comportamiento](docs/ARCHITECTURE.md)
 - [Calibración y perfiles](docs/CALIBRATION.md)

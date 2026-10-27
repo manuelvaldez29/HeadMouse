@@ -9,6 +9,7 @@ data/experiments/
 data/calibration/
 data/last_profile.json
 config.local.json
+data/logs/
 
 # Python
 __pycache__/

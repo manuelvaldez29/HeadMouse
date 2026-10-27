@@ -38,6 +38,44 @@ def validate_profile(data):
     if "tracking_calibration" in data:
         from tracking_calibration import TrackingCalibration
         TrackingCalibration.from_record(data["tracking_calibration"])
+    if "absolute_calibration" in data:
+        from gaze_mapping import GazeModel
+        GazeModel(data["absolute_calibration"])
+    from gaze_source import EYE_SOURCES
+    for key in ("tracking_calibration", "absolute_calibration"):
+        if key in data and data[key].get("eye_source", "both") != "both":
+            raise ValueError("El campo histórico de calibración debe ser binocular")
+        if key+"s" not in data:
+            continue
+        banks = data[key+"s"]
+        if not isinstance(banks, dict) or banks.keys() - set(EYE_SOURCES):
+            raise ValueError("Banco de fuentes oculares inválido")
+        for source, record in banks.items():
+            if not isinstance(record, dict) or record.get("eye_source", "both") != source:
+                raise ValueError("La fuente del modelo no coincide con su banco")
+            if key == "tracking_calibration":
+                from tracking_calibration import TrackingCalibration
+                TrackingCalibration.from_record(record)
+            else:
+                from gaze_mapping import GazeModel
+                GazeModel(record)
+    if "gesture_modes" in data:
+        records = data["gesture_modes"]
+        if not isinstance(records, dict) or records.keys() - {"nose", "eyes", "eye", "eye_absolute"}:
+            raise ValueError("Calibraciones por modalidad inválidas")
+        for record in records.values():
+            if not isinstance(record, dict) or record.keys() - set(GESTURE_PROFILE_KEYS):
+                raise ValueError("Campos de calibración por modalidad inválidos")
+            candidate = deepcopy(data)
+            candidate.pop("gesture_modes")
+            for key in GESTURE_PROFILE_KEYS:
+                candidate.pop(key, None)
+            candidate.update(deepcopy(record))
+            validate_profile(candidate)
+    if "gesture_mode_origin" in data:
+        origins=data["gesture_mode_origin"]
+        if not isinstance(origins,dict) or origins.keys()-{"nose","eyes","eye","eye_absolute"} or any(v!="measured" for v in origins.values()):
+            raise ValueError("Origen de calibraciones de gestos inválido")
     if data.get("status") == "draft":
         if "thresholds" in data or data.get("calibrated_at"):
             raise ValueError("Un borrador no puede simular una calibración")
@@ -147,6 +185,12 @@ class ProfileStore:
                 json.dump(data, stream, indent=2, ensure_ascii=False, allow_nan=False)
                 stream.flush()
                 os.fsync(stream.fileno())
+            # Verificar el JSON realmente escrito antes del reemplazo atómico.
+            with open(temporary, encoding="utf-8") as stream:
+                written = json.load(stream)
+            validate_profile(written)
+            if written != data:
+                raise ValueError("El perfil escrito no coincide con los datos validados")
             replace_with_retry(temporary, path)
         finally:
             if temporary and os.path.exists(temporary):
@@ -157,3 +201,45 @@ class ProfileStore:
 def load_legacy(path):
     with open(path, encoding="utf-8") as stream:
         return validate_profile(json.load(stream))
+
+
+GESTURE_PROFILE_KEYS = ("status", "thresholds", "neutral_nose_x", "neutral_nose_y", "neutral",
+    "gesture_extremes", "gesture_calibrations", "validation", "calibrated_at", "neutral_variability",
+    "gesture_variability", "calibration_metadata", "sample_counts", "calibration_version", "calibration_telemetry")
+
+
+def gesture_profile(profile, method):
+    """Vista por modalidad; fallback histórico, sin escribir ni borrar el original."""
+    result = deepcopy(profile)
+    record = profile.get("gesture_modes", {}).get(method)
+    if record is not None:
+        for key in GESTURE_PROFILE_KEYS:
+            result.pop(key, None)
+        result.update(deepcopy(record))
+    result.pop("gesture_modes", None)
+    return result
+
+
+def save_gesture_mode(profile, candidate, method):
+    if profile is None:
+        return deepcopy(candidate)
+    result = deepcopy(profile)
+    # Los bancos copiados para compatibilidad no equivalen a una medición ocular.
+    origins=result.setdefault("gesture_mode_origin",{})
+    origins[method]="measured"
+    legacy = {key: deepcopy(profile[key]) for key in GESTURE_PROFILE_KEYS if key in profile}
+    bank = result.setdefault("gesture_modes", {})
+    for name in (("nose",) if method=="eyes" else ("nose", "eye", "eye_absolute")):
+        bank.setdefault(name, deepcopy(legacy))
+    record = {key: deepcopy(candidate[key]) for key in GESTURE_PROFILE_KEYS if key in candidate}
+    bank[method] = record
+    if method == "nose":
+        for key in GESTURE_PROFILE_KEYS:
+            result.pop(key, None)
+        result.update(deepcopy(record))
+    # Un borrador necesita un perfil raíz válido para contener el banco.
+    elif profile.get("status") == "draft":
+        for key in GESTURE_PROFILE_KEYS:
+            result.pop(key, None)
+        result.update(deepcopy(record))
+    return result

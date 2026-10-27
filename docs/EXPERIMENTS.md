@@ -1,5 +1,12 @@
 # Experimentos locales v0.3
 
+Actualización experimental del 26/10/2026: el selector también ofrece mouse
+convencional real sin activar HeadMouse; las modalidades HeadMouse pueden ser
+`nose`, `eye` o `eye_absolute`. Cada ensayo incluye `conditions` con notas,
+pantalla, parámetros y calibraciones congeladas. El jitter absoluto declara
+`normalized_screen`. Ver [protocolo reproducible](GAZE_EXPERIMENT_PROTOCOL.md)
+y [límites/validación de mirada](CONTINUATION_2026-10-26.md).
+
 Esta versión incorpora infraestructura para adquisición de objetivos y estabilidad. No contiene resultados con participantes ni demuestra precisión con una cámara real. Los tests usan datos sintéticos y entradas simuladas.
 
 ## Adquisición de objetivos

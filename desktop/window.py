@@ -2,13 +2,14 @@
 import json
 import time
 from copy import deepcopy
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QTimer, Slot
 from PySide6.QtGui import QShortcut, QKeySequence, QCursor
 from PySide6.QtWidgets import (QMainWindow, QWidget, QFrame, QVBoxLayout, QHBoxLayout,
     QGridLayout, QPushButton, QStackedWidget, QScrollArea, QComboBox, QInputDialog,
     QMessageBox, QFormLayout, QDoubleSpinBox, QSpinBox, QCheckBox, QProgressBar,
-    QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView)
+    QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView, QApplication, QLineEdit, QTabWidget)
 from action_mapping import ACTIONS, DEFAULT_MAPPING
+from gaze_source import SOURCE_LABELS as EYE_SOURCE_LABELS, eye_coordinates
 from desktop.widgets import CameraPreview, ExperimentCanvas, CalibrationMeter, DictationOverlay, label, card
 
 GESTURE_LABELS = dict(LEFT_WINK="Guiño izquierdo", RIGHT_WINK="Guiño derecho", LEFT_BROW="Ceja izquierda",
@@ -78,6 +79,9 @@ class MainWindow(QMainWindow):
         self.snapshot={}
         self._profiles_key=None
         self._settings_key=None
+        self.gaze_overlay = None
+        self._gaze_preview = False
+        self._vertical_preview=False
         self._history_key=None
         self._status_style=None
         self._closing=False
@@ -120,6 +124,9 @@ class MainWindow(QMainWindow):
         top.addWidget(self.activate_button)
         top.addWidget(button("DETENER CONTROL · F8",self.bridge.stop,"Danger"))
         content.addLayout(top)
+        self.activation_requirements=label("", "Subtitle")
+        self.activation_requirements.setWordWrap(True)
+        content.addWidget(self.activation_requirements)
         self.banner=label("Preparando HeadMouse…","Subtitle")
         self.banner.setMinimumHeight(42)
         content.addWidget(self.banner)
@@ -137,10 +144,12 @@ class MainWindow(QMainWindow):
         for key in ("F8","Escape"):
             shortcut=QShortcut(QKeySequence(key),self)
             shortcut.setContext(Qt.ShortcutContext.ApplicationShortcut)
-            shortcut.activated.connect(self.bridge.stop)
+            shortcut.activated.connect(self.stop_immediately)
         self.bridge.error.connect(self.show_error)
+        signal=getattr(self.bridge,"snapshot_ready",None)
+        if signal is not None:signal.connect(self.update_live_preview)
         self.bridge.closed.connect(self._closed)
-        self.dictation_overlay=DictationOverlay()
+        self.dictation_overlay=DictationOverlay(self)
         self._dictation_message=("",0.)
         self._last_dictation_state="idle"
         self.timer=QTimer(self)
@@ -162,6 +171,26 @@ class MainWindow(QMainWindow):
         self.stack.setCurrentIndex(index)
         for i,b in enumerate(self.nav): b.setChecked(i==index)
         if index==7: self.bridge.request("refresh_metrics")
+        self.update_live_preview()
+
+    @Slot()
+    def update_live_preview(self):
+        s=self.bridge.snapshot()
+        if not s or not hasattr(self,"calibration_tabs"):return
+        key=(id(s),self.stack.currentIndex(),self.calibration_tabs.currentIndex(),
+             self.ocular_content.currentIndex(),bool(self.gaze_overlay and self.gaze_overlay.isVisible()))
+        if key==getattr(self,"_preview_key",None):return
+        self._preview_key=key
+        index=self.stack.currentIndex()
+        preview=self.preview if index==0 else self.diagnostic_preview if index==3 else None
+        if index==2:
+            preview=self.eye_preview if self.calibration_tabs.currentIndex()==1 and self.ocular_content.currentIndex()==0 else self.calibration_preview
+        if preview:
+            camera=s
+            if index==2 and self.calibration_tabs.currentIndex()==1:
+                camera=dict(s,settings=dict(s["settings"],ui=dict(s["settings"]["ui"],show_landmarks=True,show_overlay=True)))
+            preview.present(camera)
+        if self.gaze_overlay and self.gaze_overlay.isVisible():self.gaze_overlay.present_camera(s)
 
     def command_page(self,name,index,**kwargs):
         self.show_page(index)
@@ -180,6 +209,13 @@ class MainWindow(QMainWindow):
         self.home_profile_combo.setAccessibleName("Perfil")
         self.home_profile_combo.currentIndexChanged.connect(lambda _index:self._select_profile_from(self.home_profile_combo))
         side.addWidget(self.home_profile_combo)
+        side.addWidget(label("¿Cómo querés controlar el mouse?","Subtitle"))
+        self.home_method=QComboBox()
+        self.home_method.addItem("Nariz","nose")
+        self.home_method.addItem("Ojos","eyes")
+        self.home_method.setAccessibleName("Método de control: Nariz u Ojos")
+        self.home_method.activated.connect(lambda _index:self.select_public_method(self.home_method.currentData()))
+        side.addWidget(self.home_method)
         self.home_action=button("Iniciar HeadMouse",self.home_primary,"Hero")
         side.addWidget(self.home_action)
         self.home_state=label("","HomeState")
@@ -207,25 +243,38 @@ class MainWindow(QMainWindow):
         p=s.get("profile")
         if s["control_enabled"]:
             return "■  Detener HeadMouse","HeroStop",self.bridge.stop
+        if s["state"]=="CAMERA_STARTING":
+            return "Iniciando cámara…","Hero",None
         if not s.get("profiles") and not p:
             return "Crear mi perfil","Hero",self.new_profile
         if not p:
             return "Elegí un perfil","Hero",lambda:self.show_page(1)
+        if s["settings"]["ui"]["tracking_method"]!="nose":
+            if s["state"] in ("CALIBRATING","EYE_CALIBRATING","GAZE_CALIBRATING","VERTICAL_DIAGNOSTIC","JITTER"):
+                return "Terminá la medición en curso","Hero",None
+            if not s.get("tracking_calibrated"):
+                return "Calibrar Ojos","Hero",self.open_eye_calibration
+            return "▶  Iniciar HeadMouse","Hero",self.activate
         if p.get("status")=="draft":
             return "Calibrar mis gestos","Hero",self.start_calibration
         if not p.get("validation",{}).get("passed"):
             return "Validar mi calibración","Hero",lambda:self.command_page("validate_calibration",2)
-        if s["state"] in ("CALIBRATING","EYE_CALIBRATING","JITTER"):
+        if s["state"] in ("CALIBRATING","EYE_CALIBRATING","GAZE_CALIBRATING","JITTER"):
             return "Terminá la medición en curso","Hero",None
         if not s.get("tracking_calibrated",True):
+            if s["settings"]["ui"]["tracking_method"] == "eye_absolute":
+                return "Calibrar nueve puntos", "Hero", self.start_absolute_calibration
             return "Calibrar tracking ocular","Hero",self.start_eye_tracking_calibration
-        return "▶  Iniciar HeadMouse","Hero",self.bridge.activate
+        return "▶  Iniciar HeadMouse","Hero",self.activate
 
     def home_primary(self):
         _text,_style,action=self._home_step(self.snapshot)
         if action: action()
 
     def _present_home(self,s):
+        self.home_method.blockSignals(True)
+        self.home_method.setCurrentIndex(0 if s["settings"]["ui"]["tracking_method"]=="nose" else 1)
+        self.home_method.blockSignals(False)
         text,style,action=self._home_step(s)
         if self.home_action.text()!=text:
             self.home_action.setText(text)
@@ -240,6 +289,8 @@ class MainWindow(QMainWindow):
             state="EN PAUSA" if s["paused"] else "ACTIVO"
             hint=("Levantá ambas cejas para empezar a mover el cursor." if s["paused"] else
                   "Ambas cejas: pausar · Guiños: click · F8 o el botón rojo: detener.")
+        elif s["state"]=="CAMERA_STARTING":
+            state,hint="Iniciando",s["message"]+" · Detener/F8 cancela el inicio."
         elif p and p.get("status")!="draft" and p.get("validation",{}).get("passed"):
             state="Listo"
             hint=("Arranca en pausa: después de iniciar, levantá ambas cejas para mover el cursor. "
@@ -256,6 +307,22 @@ class MainWindow(QMainWindow):
         gesture=GESTURE_LABELS.get(s["gesture"],s["gesture"])
         last=f"   ·   Último gesto: {gesture}" if s["camera"] and s["gesture"]!="—" else ""
         self.live_events.setText(camera+last)
+        if s["settings"]["ui"]["tracking_method"]!="nose":
+            self.home_state.setText("Ojos preparado" if s.get("tracking_calibrated") else "Ojos: falta calibrar movimiento")
+            self.home_hint.setText("Calibración → Ojos reúne movimiento, gestos y prueba segura. "+
+                ("Clics disponibles según tu configuración." if s.get("actions_ready") else "Podés probar sólo movimiento; clics pendientes."))
+
+    def select_public_method(self,method):
+        latest=self.bridge.snapshot() or self.snapshot
+        if not latest.get("profile"):
+            return self.show_error("Primero elegí tu perfil personal")
+        self.bridge.request("select_control_method",method=method)
+
+    def open_eye_calibration(self):
+        self.show_page(2)
+        if self.calibration_tabs.currentIndex()!=1:self.calibration_tabs.setCurrentIndex(1)
+        elif not self.snapshot.get("settings",{}).get("ui",{}).get("unified_eyes"):
+            self.select_public_method("eyes")
 
     def _profiles(self):
         layout=self.page("Tus perfiles","Cada persona tiene su propia calibración. Cambiar de perfil detiene el control.")
@@ -301,7 +368,15 @@ class MainWindow(QMainWindow):
 
     def _calibration(self):
         """Una lista de gestos con su estado, un botón con el próximo paso y opciones plegadas."""
-        page=self.page("Calibración guiada","Tres intentos cómodos por gesto. Después se prueba cada gesto y se guarda el perfil.")
+        page=self.page("Calibración","Nariz conserva su calibración original. Ojos reúne movimiento, gestos y diagnóstico.")
+        self.calibration_tabs=QTabWidget()
+        self.nose_calibration_tab=QWidget()
+        self.eyes_calibration_tab=QWidget()
+        self.nose_calibration_layout=QVBoxLayout(self.nose_calibration_tab)
+        self.eyes_calibration_layout=QVBoxLayout(self.eyes_calibration_tab)
+        self.calibration_tabs.addTab(self.nose_calibration_tab,"Nariz")
+        self.calibration_tabs.addTab(self.eyes_calibration_tab,"Ojos")
+        page.addWidget(self.calibration_tabs,1)
         # Con desplazamiento: al abrir "Más opciones" la página crece en lugar de aplastarse.
         scroll=QScrollArea()
         scroll.setWidgetResizable(True)
@@ -310,7 +385,8 @@ class MainWindow(QMainWindow):
         outer.setContentsMargins(0,0,12,0)
         outer.setSpacing(12)
         scroll.setWidget(body)
-        page.addWidget(scroll,1)
+        self.gesture_calibration_scroll=scroll
+        self.nose_calibration_layout.addWidget(scroll,1)
         self.wizard_instruction=label("Elegí un perfil y comenzá cuando estés cómodo.","BigInstruction")
         outer.addWidget(self.wizard_instruction)
         self.wizard_progress=QProgressBar()
@@ -404,6 +480,66 @@ class MainWindow(QMainWindow):
             f"Más opciones ▾  ·  cejas: {self.calibration_source.currentText().split(' ·')[0].split(' (')[0]}")
         self.calibration_source.currentIndexChanged.connect(show_source)
         show_source()
+        self._build_ocular_calibration()
+        self.calibration_tabs.currentChanged.connect(self.calibration_tab_changed)
+
+    def _build_ocular_calibration(self):
+        self.ocular_back=button("Volver a movimiento ocular",lambda:self.ocular_content.setCurrentIndex(0))
+        self.eyes_calibration_layout.addWidget(self.ocular_back)
+        self.ocular_back.hide()
+        self.ocular_content=QStackedWidget()
+        self.ocular_content.currentChanged.connect(lambda index:self.ocular_back.setVisible(index==1))
+        self.eyes_calibration_layout.addWidget(self.ocular_content,1)
+        movement=QWidget();body=QVBoxLayout(movement)
+        self.ocular_source_combo=QComboBox()
+        for source,title in EYE_SOURCE_LABELS.items():self.ocular_source_combo.addItem(title,source)
+        self.ocular_source_combo.activated.connect(lambda _index:self.bridge.request("select_eye_source",source=self.ocular_source_combo.currentData()))
+        body.addWidget(label("Fuente ocular"));body.addWidget(self.ocular_source_combo)
+        self.ocular_readiness=label("Seleccioná tu perfil y prepará el movimiento.","Subtitle")
+        body.addWidget(self.ocular_readiness)
+        self.eye_preview=CameraPreview("La cámara se abre al iniciar la calibración ocular")
+        live=QHBoxLayout();live.addWidget(self.eye_preview,1)
+        controls=QWidget();row=QVBoxLayout(controls)
+        row.addWidget(button("Calibrar movimiento",self.start_public_ocular_movement,"Primary"))
+        row.addWidget(button("Calibrar gestos",self.start_ocular_gestures))
+        row.addWidget(button("Probar movimiento · seguro",self.preview_public_eyes))
+        center=QHBoxLayout()
+        self.eye_start=button("Capturar centro",self.start_eye_tracking_calibration)
+        self.eye_save=button("Guardar centro",lambda:self.bridge.request("save_eye_calibration"),"Primary")
+        self.eye_save.setEnabled(False)
+        center.addWidget(self.eye_start);center.addWidget(self.eye_save)
+        row.addLayout(center)
+        row.addWidget(button("Cancelar captura",lambda:self.bridge.request("cancel_eye_calibration")))
+        self.eye_status=label("Centro ocular: sin capturar","Subtitle")
+        self.eye_progress=QProgressBar();self.eye_progress.setRange(0,100)
+        row.addWidget(self.eye_status);row.addWidget(self.eye_progress)
+        row.addWidget(button("Diagnóstico vertical",self.start_vertical_diagnostic))
+        row.addStretch()
+        controls_scroll=QScrollArea();controls_scroll.setWidgetResizable(True);controls_scroll.setWidget(controls)
+        controls_scroll.setMinimumWidth(300)
+        live.addWidget(controls_scroll,1);body.addLayout(live,1)
+        self.ocular_content.addWidget(movement)
+        gestures=QWidget();self.ocular_gesture_layout=QVBoxLayout(gestures)
+        self.ocular_content.addWidget(gestures)
+
+    def calibration_tab_changed(self,index):
+        target=self.nose_calibration_layout if index==0 else self.ocular_gesture_layout
+        target.addWidget(self.gesture_calibration_scroll,1)
+        self.gesture_calibration_scroll.show()
+        self.select_public_method("nose" if index==0 else "eyes")
+
+    def start_public_ocular_movement(self):
+        self.select_public_method("eyes")
+        latest=self.bridge.snapshot() or self.snapshot
+        method=latest.get("settings",{}).get("ui",{}).get("ocular_engine","eye_absolute")
+        if not latest.get("settings",{}).get("ui",{}).get("unified_eyes"):
+            old=latest.get("settings",{}).get("ui",{}).get("tracking_method")
+            if old in ("eye","eye_absolute"):method=old
+        self.start_absolute_calibration(relative=method=="eye")
+
+    def preview_public_eyes(self):
+        if self.snapshot.get("settings",{}).get("ui",{}).get("tracking_method")=="eye_absolute":self.preview_absolute()
+        else:self.command_page("start_diagnostic",2)
 
     def toggle_calibration_options(self):
         visible=not self.calibration_options.isVisible()
@@ -518,6 +654,7 @@ class MainWindow(QMainWindow):
         page.addWidget(scroll,1)
         row=QHBoxLayout()
         row.addWidget(button("Iniciar diagnóstico",lambda:self.bridge.request("start_diagnostic"),"Primary"))
+        row.addWidget(button("Diagnóstico vertical · centro / arriba / abajo",self.start_vertical_diagnostic))
         row.addWidget(button("Medir estabilidad · 10 s",lambda:self.bridge.request("start_jitter")))
         layout.addLayout(row)
         self.diagnostic_preview=CameraPreview()
@@ -541,7 +678,6 @@ class MainWindow(QMainWindow):
 
     def _settings(self):
         layout=self.page("Configuración","Los cambios se guardan en el perfil seleccionado. Aplicar detiene el control y la cámara.")
-        layout.addWidget(button("Calibrar tracking ocular · Experimental",self.start_eye_tracking_calibration))
         scroll=QScrollArea()
         self.settings_scroll=scroll
         scroll.setWidgetResizable(True)
@@ -550,6 +686,11 @@ class MainWindow(QMainWindow):
         form.setVerticalSpacing(14)
         self.fields={}
         specs=[("vision.camera_index","Cámara",0,100,0),
+               ("vision.frame_width","Cámara: ancho solicitado · 0 automático",0,8192,0),
+               ("vision.frame_height","Cámara: alto solicitado · 0 automático",0,8192,0),
+               ("vision.target_fps","Cámara: FPS solicitados",1,240,0),
+               ("vision.startup_timeout_s","Cámara/MediaPipe: espera inicial máxima · s",.1,120,1),
+               ("vision.shutdown_timeout_s","Cámara: espera de cierre por intento · s",.05,30,2),
                ("gesture.sensitivity_x","Sensibilidad horizontal",0,1000,1),
                ("gesture.sensitivity_y","Sensibilidad vertical",0,1000,1),
                ("gesture.smoothing_alpha","Suavizado (0: directo; 0,95: suave)",0,.95,2),
@@ -564,6 +705,9 @@ class MainWindow(QMainWindow):
                   ("eye.dead_zone","Ojos: zona muerta (fracción de rango)",0,.8,3),
                   ("eye.smoothing_alpha","Ojos: suavizado",0,.95,2),
                   ("eye.max_delta","Ojos: delta máximo por detección · px",1,60,1)]
+        specs += [("absolute.smoothing_alpha", "Posición ocular: suavizado", 0, .95, 2),
+                  ("absolute.max_step_px", "Posición ocular: paso máximo · px", 1, 100, 1),
+                  ("absolute.jitter_px", "Posición ocular: tolerancia de vibración · px", 0, 30, 1)]
         for group,title in (("blink","Guiños"),("brow","Cejas"),("both_brows","Ambas cejas"),("mouth","Boca")):
             specs += [(f"gesture.{group}_hold_ms",f"{title}: sostener · ms",0,5000,0),
                       (f"gesture.{group}_cooldown_ms",f"{title}: espera · ms",0,10000,0)]
@@ -574,6 +718,15 @@ class MainWindow(QMainWindow):
             field.setAccessibleName(title)
             form.addRow(title,field)
             self.fields[key]=field
+        self.capture_backend_combo=QComboBox()
+        for title,value in (("DirectShow · Webcams USB en Windows","dshow"),
+                            ("Automático · OpenCV", "auto"),("Media Foundation · Windows", "msmf")):
+            self.capture_backend_combo.addItem(title,value)
+        self.capture_backend_combo.setAccessibleName("Backend de captura de cámara")
+        form.addRow("Backend de cámara",self.capture_backend_combo)
+        form.addRow(button("Preparar captura USB · DirectShow · 640 × 480 · 15 FPS",self.usb_camera_preset))
+        form.addRow(label("El preset se aplica al guardar y detiene la cámara. No cambia de backend durante la sesión. "
+                          "Una resolución nueva puede exigir recalibrar el tracking ocular.","Subtitle"))
         self.voice_check=QCheckBox("Dictado por voz: al hacer click en un campo de texto, escuchar y escribir")
         self.voice_check.setAccessibleName("Dictado por voz")
         form.addRow(self.voice_check)
@@ -596,34 +749,41 @@ class MainWindow(QMainWindow):
         form.addRow(self.landmarks_check)
         self.tracking_combo=QComboBox()
         self.tracking_combo.addItem("Nariz","nose")
-        self.tracking_combo.addItem("Ojos — Experimental","eye")
+        self.tracking_combo.addItem("Ojos","eyes")
         self.tracking_combo.setAccessibleName("Método de tracking")
         form.addRow("Método de tracking",self.tracking_combo)
-        self.eye_warning=label("Modo experimental. Guardá la configuración para aplicar el método. "
-                               "Requiere neutral ocular; probá primero en Diagnóstico seguro.","Subtitle")
+        self.tracking_combo.activated.connect(lambda _index:self.select_public_method(self.tracking_combo.currentData()))
+        form.addRow(label("Opciones avanzadas de Ojos","Subtitle"))
+        self.eye_axis_zones=QCheckBox("Definir zona muerta horizontal y vertical de Ojos")
+        self.eye_dead_zone_x=QDoubleSpinBox();self.eye_dead_zone_y=QDoubleSpinBox()
+        for widget in (self.eye_dead_zone_x,self.eye_dead_zone_y):widget.setRange(0,.8);widget.setDecimals(3);widget.setSingleStep(.01)
+        self.eye_axis_zones.toggled.connect(lambda value:[w.setEnabled(value) for w in (self.eye_dead_zone_x,self.eye_dead_zone_y)])
+        form.addRow(self.eye_axis_zones)
+        form.addRow("Zona muerta horizontal",self.eye_dead_zone_x)
+        form.addRow("Zona muerta vertical",self.eye_dead_zone_y)
+        self.eye_source_label=label("Fuente ocular")
+        self.eye_source_combo=QComboBox()
+        for source,title in EYE_SOURCE_LABELS.items():
+            self.eye_source_combo.addItem(title,source)
+        self.eye_source_combo.setAccessibleName("Fuente ocular: ambos ojos, izquierdo o derecho")
+        form.addRow(self.eye_source_label,self.eye_source_combo)
+        self.eye_source_hint=label("Podés mantener ambos ojos abiertos. Izquierdo y derecho son tus lados. "
+                                   "Las marcas I/D del preview permiten verificarlos. Guardá antes de calibrar.","Subtitle")
+        form.addRow(self.eye_source_hint)
+        self.eye_vertical_reference=QComboBox()
+        self.eye_vertical_reference.addItem("Párpados · referencia original","eyelids")
+        self.eye_vertical_reference.addItem("Comisuras · prueba vertical; requiere calibrar rangos","canthi")
+        self.eye_vertical_reference.setAccessibleName("Referencia vertical del joystick ocular")
+        form.addRow("Referencia vertical de seguimiento",self.eye_vertical_reference)
+        self.eye_warning=label("La calibración y los gestos están en Calibración → Ojos. "
+                               "La respuesta guardada se mantiene; no se cambia automáticamente de algoritmo.","Subtitle")
         form.addRow(self.eye_warning)
-        self.tracking_combo.currentIndexChanged.connect(
-            lambda _index:self.eye_warning.setVisible(self.tracking_combo.currentData()=="eye"))
-        self.eye_warning.hide()
-        form.addRow(label("Calibrar tracking ocular","Subtitle"))
-        form.addRow(label("Mirada al centro durante 2 segundos, ambos ojos abiertos. "
-                          "Se guarda solo el neutral; los rangos cómodos son nominales. "
-                          "Esta captura es independiente de Calibrar gestos.","Subtitle"))
-        eye_actions=QHBoxLayout()
-        self.eye_start=button("Calibrar tracking ocular",self.start_eye_tracking_calibration)
-        self.eye_save=button("Guardar neutral ocular",lambda:self.bridge.request("save_eye_calibration"),"Primary")
-        self.eye_save.setEnabled(False)
-        eye_actions.addWidget(self.eye_start)
-        eye_actions.addWidget(self.eye_save)
-        eye_actions.addWidget(button("Cancelar captura ocular",lambda:self.bridge.request("cancel_eye_calibration")))
-        form.addRow(eye_actions)
-        self.eye_status=label("Neutral ocular: sin capturar","Subtitle")
-        self.eye_progress=QProgressBar()
-        self.eye_progress.setRange(0,100)
-        self.eye_preview=CameraPreview("La cámara se abre al calibrar el tracking ocular")
-        form.addRow(self.eye_status)
-        form.addRow(self.eye_progress)
-        form.addRow(self.eye_preview)
+        self.ocular_upgrade=button("Preparar seguimiento por zonas de pantalla",self.confirm_ocular_upgrade)
+        form.addRow(self.ocular_upgrade)
+        self.tracking_combo.currentIndexChanged.connect(self._show_eye_source)
+        self._show_eye_source()
+        form.addRow(label("La calibración usa sólo la pantalla primaria, aunque haya otros monitores conectados. "
+                          "Cambiar pantalla, DPI o cámara requiere recalibrar. Las acciones pertenecen a la modalidad guardada.", "Subtitle"))
         scroll.setWidget(container)
         layout.addWidget(scroll,1)
         row=QHBoxLayout()
@@ -636,9 +796,101 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.prepare_voice_button)
 
     def start_eye_tracking_calibration(self):
-        self.show_page(4)
+        self.open_eye_calibration()
+        self.select_public_method("eyes")
+        self.ocular_content.setCurrentIndex(0)
         self.bridge.request("start_eye_calibration")
-        QTimer.singleShot(0,lambda:self.settings_scroll.ensureWidgetVisible(self.eye_status))
+
+    def confirm_ocular_upgrade(self):
+        text=("Se conservarán las calibraciones anteriores. Ojos pasará a requerir aprendizaje y comprobación "
+              "de posición en pantalla antes de controlar el cursor. No se cambiará de respuesta durante el uso. ¿Continuar?")
+        if QMessageBox.question(self,"Actualizar respuesta de Ojos",text,
+            QMessageBox.StandardButton.Yes|QMessageBox.StandardButton.No,QMessageBox.StandardButton.No)==QMessageBox.StandardButton.Yes:
+            self.bridge.request("upgrade_ocular_response",confirmed=True)
+
+    def start_ocular_gestures(self):
+        self.open_eye_calibration()
+        self.select_public_method("eyes")
+        self.ocular_gesture_layout.addWidget(self.gesture_calibration_scroll,1)
+        self.gesture_calibration_scroll.show()
+        self.ocular_content.setCurrentIndex(1)
+        self.calibration_options.hide()
+        self.bridge.request("start_calibration")
+
+    def start_vertical_diagnostic(self):
+        self.bridge.stop()
+        self._vertical_preview=True
+        self._gaze_preview=False
+        self._open_gaze_overlay()
+        self.bridge.request("start_vertical_diagnostic")
+
+    def _show_eye_source(self, index=None):
+        visible=self.tracking_combo.currentData()!="nose"
+        for widget in (self.eye_source_label,self.eye_source_combo,self.eye_source_hint,self.eye_warning):
+            widget.setVisible(visible)
+        engine=self.snapshot.get("settings",{}).get("ui",{}).get("tracking_method")
+        for key,widget in self.fields.items():
+            if key.startswith("eye."):widget.setEnabled(visible and engine=="eye")
+            elif key.startswith("absolute."):widget.setEnabled(visible and engine=="eye_absolute")
+        self.eye_vertical_reference.setEnabled(visible and engine=="eye")
+        self.eye_axis_zones.setEnabled(visible and engine=="eye")
+        for widget in (self.eye_dead_zone_x,self.eye_dead_zone_y):widget.setEnabled(visible and engine=="eye" and self.eye_axis_zones.isChecked())
+
+    def screen_context(self):
+        import os
+        from screen_mapping import primary_context,windows_monitors
+        screens = QApplication.screens()
+        screen = QApplication.primaryScreen()
+        rect, dpr = screen.geometry(), screen.devicePixelRatio()
+        return primary_context(dict(rect=[rect.x(),rect.y(),rect.width(),rect.height()],dpr=dpr,
+            screen=screen.name() or "primary",monitor_count=len(screens),primary=True),
+            windows_monitors() if os.name=="nt" and QApplication.platformName()!="offscreen" else None)
+
+    def _open_gaze_overlay(self):
+        from desktop.gaze_overlay import GazeOverlay
+        if self.gaze_overlay:
+            self.gaze_overlay.blockSignals(True)
+            self.gaze_overlay.close()
+            self.gaze_overlay.deleteLater()
+        overlay = self.gaze_overlay = GazeOverlay(self)
+        overlay.cancel.connect(self.cancel_gaze_overlay)
+        overlay.repeat.connect(lambda index:self.bridge.request("repeat_vertical_point" if self._vertical_preview else "repeat_gaze_point", index=index))
+        overlay.save.connect(lambda:self.bridge.request("save_gaze_calibration"))
+        overlay.setGeometry(QApplication.primaryScreen().geometry())
+        overlay.winId()
+        overlay.windowHandle().setScreen(QApplication.primaryScreen())
+        overlay.showFullScreen()
+
+    def start_absolute_calibration(self, checked=False, relative=False):
+        self._vertical_preview=False
+        try:
+            context=self.screen_context()
+        except ValueError as exc:
+            return self.show_error(str(exc))
+        self._gaze_preview = False
+        self.bridge.stop()
+        self._open_gaze_overlay()
+        self.bridge.request("start_gaze_calibration", screen_context=context, relative=relative)
+
+    def preview_absolute(self):
+        self._vertical_preview=False
+        if self.snapshot.get("settings", {}).get("ui", {}).get("tracking_method") != "eye_absolute":
+            return self.show_error("Esta prueba requiere una calibración de posición ocular guardada y compatible")
+        self._gaze_preview = True
+        self.bridge.stop()
+        self._open_gaze_overlay()
+        self.bridge.request("start_diagnostic")
+
+    def cancel_gaze_overlay(self):
+        self.bridge.stop()
+        self.bridge.request("cancel_vertical_diagnostic" if self._vertical_preview else "cancel_gaze_calibration")
+        self._vertical_preview=False
+        self._gaze_preview = False
+
+    def stop_immediately(self):
+        self.bridge.stop()
+        if self.gaze_overlay and self.gaze_overlay.isVisible():
+            self.gaze_overlay.close()
 
     def prepare_voice_model(self):
         model=self.voice_model.currentData()
@@ -662,11 +914,22 @@ class MainWindow(QMainWindow):
             settings[section][name]=widget.value()
         settings["ui"]["show_overlay"]=self.overlay_check.isChecked()
         settings["ui"]["show_landmarks"]=self.landmarks_check.isChecked()
-        settings["ui"]["tracking_method"]=self.tracking_combo.currentData()
+        public_method=self.tracking_combo.currentData()
+        settings["ui"]["eye_source"]=self.eye_source_combo.currentData()
+        settings["eye"]["vertical_reference"]=self.eye_vertical_reference.currentData()
+        settings["eye"]["dead_zone_x"]=self.eye_dead_zone_x.value() if self.eye_axis_zones.isChecked() else None
+        settings["eye"]["dead_zone_y"]=self.eye_dead_zone_y.value() if self.eye_axis_zones.isChecked() else None
+        settings["vision"]["capture_backend"]=self.capture_backend_combo.currentData()
         settings["voice"]["enabled"]=self.voice_check.isChecked()
         settings["voice"]["model"]=self.voice_model.currentData()
         settings["voice"]["send_word"]=self.voice_send.currentText().strip().lower()
-        self.bridge.request("save_settings",settings=settings)
+        self.bridge.request("save_public_settings",settings=settings,method=public_method)
+
+    def usb_camera_preset(self):
+        self.capture_backend_combo.setCurrentIndex(self.capture_backend_combo.findData("dshow"))
+        for key,value in (("frame_width",640),("frame_height",480),("target_fps",15),("startup_timeout_s",20)):
+            self.fields["vision."+key].setValue(value)
+        self.show_error("Ajustes de captura USB preparados. Guardá para aplicarlos antes de abrir la cámara.")
 
     def restore_defaults(self):
         if QMessageBox.question(self,"Restaurar configuración","¿Restaurar parámetros y acciones predeterminados de este perfil?",
@@ -732,8 +995,14 @@ class MainWindow(QMainWindow):
         self.experiment_mode.addItem("Simulación · HeadMouse",("simulation","headmouse"))
         self.experiment_mode.addItem("Simulación · flechas y espacio",("simulation","keyboard"))
         self.experiment_mode.addItem("Control real · HeadMouse",("real","headmouse"))
+        self.experiment_mode.addItem("Mouse convencional · Sin HeadMouse",("real","mouse"))
         row.addWidget(self.experiment_mode,1)
         row.addWidget(button("Comenzar serie",self.start_experiment,"Primary"))
+        self.experiment_conditions = QLineEdit()
+        self.experiment_conditions.setMaxLength(500)
+        self.experiment_conditions.setPlaceholderText("Condiciones: webcam, luz, distancia (cm), sesión y fatiga previa 0–10")
+        self.experiment_conditions.setAccessibleName("Condiciones experimentales registradas por el operador")
+        layout.addWidget(self.experiment_conditions)
         row.addWidget(button("Finalizar",lambda:self.bridge.request("cancel_experiment")))
         layout.addLayout(row)
         self.canvas=ExperimentCanvas()
@@ -745,7 +1014,8 @@ class MainWindow(QMainWindow):
 
     def start_experiment(self):
         mode,source=self.experiment_mode.currentData()
-        self.bridge.request("start_experiment",mode=mode,source=source)
+        self.bridge.request("start_experiment",mode=mode,source=source,
+            conditions=dict(notes=self.experiment_conditions.text(), screen=self.screen_context()))
         self.canvas.setFocus()
 
     def experiment_input(self,x,y,click,absolute):
@@ -773,7 +1043,7 @@ class MainWindow(QMainWindow):
         if QMessageBox.question(self,"Activar control","HeadMouse comenzará a controlar el puntero del sistema.",
                                 QMessageBox.StandardButton.Yes|QMessageBox.StandardButton.No,
                                 QMessageBox.StandardButton.No)==QMessageBox.StandardButton.Yes:
-            self.bridge.activate()
+            self.bridge.activate(screen_context=self.screen_context())
 
     def show_error(self,message):
         self.banner.setText(str(message))
@@ -795,22 +1065,51 @@ class MainWindow(QMainWindow):
             self.banner.setStyleSheet("color: #ffb4bf;" if style[0] else "")
             self.control_status.setStyleSheet("color: #8ce5cd;" if enabled else "color: #c4d3e8;")
         p=s["profile"]
+        if enabled and s["settings"]["ui"]["tracking_method"] == "eye_absolute":
+            from screen_mapping import same_context
+            saved = (p or {}).get("absolute_calibration", {}).get("context", {})
+            try:
+                context=self.screen_context()
+                compatible=same_context(saved,dict(context,**{k:saved.get(k) for k in ("camera_index","frame_width","frame_height")}))
+            except ValueError:
+                compatible=False
+            if not compatible:
+                self.bridge.stop()
+                self.show_error("Cambió la pantalla o DPI: control detenido; recalibrá Ojos")
         name=p.get("display_name",p["user_id"]) if p else "Sin perfil seleccionado"
         self.home_profile.setText(f"Hola, {name}" if p else "Bienvenido a HeadMouse")
         self._present_home(s)
         self.profile_detail.setText(name+"\n"+s["profile_status"]+"\nCalibración: "+str(p.get("calibrated_at","Pendiente") if p else "Pendiente"))
-        self.activate_button.setEnabled(bool(p and p.get("validation",{}).get("passed") and not enabled
+        method_key=((p or {}).get("user_id"),s["settings"]["ui"]["tracking_method"]=="nose")
+        if method_key!=getattr(self,"_calibration_method_key",None):
+            self._calibration_method_key=method_key
+            index=0 if method_key[1] else 1
+            self.calibration_tabs.blockSignals(True);self.calibration_tabs.setCurrentIndex(index);self.calibration_tabs.blockSignals(False)
+            target=self.nose_calibration_layout if index==0 else self.ocular_gesture_layout
+            target.addWidget(self.gesture_calibration_scroll,1)
+            self.gesture_calibration_scroll.show()
+        self.ocular_source_combo.setCurrentIndex(self.ocular_source_combo.findData(s["settings"]["ui"]["eye_source"]))
+        self.ocular_readiness.setText("Movimiento: "+("preparado" if s.get("tracking_calibrated") and not method_key[1] else "pendiente")+
+            " · Gestos: "+("validados" if s.get("actions_ready") and not method_key[1] else "pendientes; clics deshabilitados")+
+            "\nRespuesta guardada: "+s.get("ocular_response","posición en pantalla")+
+            ". La calibración nunca cambia de respuesta automáticamente.")
+        self.activation_requirements.setText(" · ".join(s.get("activation_conditions", [])))
+        self.activate_button.setToolTip(self.activation_requirements.text())
+        self.activate_button.setEnabled(bool(p and (s["settings"]["ui"]["tracking_method"]!="nose" or p.get("validation",{}).get("passed")) and not enabled
                                             and s.get("tracking_calibrated",True)
-                                            and s["state"] not in ("CALIBRATING","EYE_CALIBRATING","JITTER")))
+                                            and s["state"] not in ("CAMERA_STARTING","CALIBRATING","EYE_CALIBRATING","GAZE_CALIBRATING","VERTICAL_DIAGNOSTIC","JITTER")))
         eye_session=s.get("eye_calibration")
         self.eye_save.setEnabled(bool(eye_session and eye_session["can_save"] and s["state"]=="EYE_CALIBRATING"))
-        self.eye_start.setEnabled(bool(p and s["state"]!="CALIBRATING"))
+        self.eye_start.setEnabled(bool(p and s["state"]!="CALIBRATING" and s["settings"]["ui"]["tracking_method"]=="eye"))
+        self.eye_start.setToolTip("El centro se captura automáticamente en Calibrar movimiento para la respuesta por posición.")
+        self.ocular_upgrade.setVisible(s["settings"]["ui"]["tracking_method"]=="eye")
         self.eye_progress.setValue(int(100*eye_session["progress"]) if eye_session else 0)
         self.eye_status.setText(eye_session["message"] if eye_session else
                                "Neutral ocular guardado. Recalibrá si cambia la cámara o tu postura."
                                if (p or {}).get("tracking_calibration") else "Neutral ocular: falta calibrar")
-        for index,preview in ((0,self.preview),(2,self.calibration_preview),(3,self.diagnostic_preview),(4,self.eye_preview)):
-            if self.stack.currentIndex()==index: preview.present(s)
+        if not eye_session and s["settings"]["ui"]["tracking_method"]=="eye_absolute":
+            self.eye_status.setText("El centro se aprende automáticamente dentro de Calibrar movimiento.")
+        self.update_live_preview()
         profiles_key=json.dumps([s.get("profiles",[]),(s.get("profile") or {}).get("user_id")],sort_keys=True)
         if profiles_key!=self._profiles_key:
             self._profiles_key=profiles_key
@@ -839,7 +1138,14 @@ class MainWindow(QMainWindow):
                 widget.setValue(value)
             self.overlay_check.setChecked(s["settings"]["ui"]["show_overlay"])
             self.landmarks_check.setChecked(s["settings"]["ui"]["show_landmarks"])
-            self.tracking_combo.setCurrentIndex(self.tracking_combo.findData(s["settings"]["ui"]["tracking_method"]))
+            self.tracking_combo.setCurrentIndex(self.tracking_combo.findData("nose" if s["settings"]["ui"]["tracking_method"]=="nose" else "eyes"))
+            self.capture_backend_combo.setCurrentIndex(self.capture_backend_combo.findData(s["settings"]["vision"].get("capture_backend","auto")))
+            self.eye_source_combo.setCurrentIndex(self.eye_source_combo.findData(s["settings"]["ui"].get("eye_source","both")))
+            self.eye_vertical_reference.setCurrentIndex(self.eye_vertical_reference.findData(s["settings"]["eye"].get("vertical_reference","eyelids")))
+            eye=s["settings"]["eye"]
+            self.eye_axis_zones.setChecked(eye.get("dead_zone_x") is not None or eye.get("dead_zone_y") is not None)
+            self.eye_dead_zone_x.setValue(eye["dead_zone"] if eye.get("dead_zone_x") is None else eye["dead_zone_x"])
+            self.eye_dead_zone_y.setValue(eye["dead_zone"] if eye.get("dead_zone_y") is None else eye["dead_zone_y"])
             self.voice_check.setChecked(s["settings"]["voice"]["enabled"])
             self.voice_model.setCurrentIndex(max(0,self.voice_model.findData(s["settings"]["voice"]["model"])))
             self.voice_send.setCurrentText(s["settings"]["voice"]["send_word"])
@@ -898,12 +1204,24 @@ class MainWindow(QMainWindow):
         fd=s["face"]
         d=s["diagnostic"]
         tracking=d.get("tracking",{})
+        session = s.get("vertical_diagnostic") if self._vertical_preview else s.get("gaze_calibration")
+        if self.gaze_overlay and self.gaze_overlay.isVisible():
+            self.gaze_overlay.present(session, tracking.get("prediction"),
+                tracking.get("block_reason") or tracking.get("model_reason", ""))
+            if self._vertical_preview:self.gaze_overlay.save_button.hide()
+            if s["state"] == "ERROR" or (not self._gaze_preview and not session and s["state"] == "DIAGNOSTIC"):
+                self.gaze_overlay.close()
         fmt=lambda v:f"{v:.4f}" if v is not None else "ausente"
-        eye_available=s["detected"] and fd.gaze_available
+        source=s["settings"]["ui"].get("eye_source","both")
+        eye_available=s["detected"] and eye_coordinates(fd,source) is not None
+        availability=s.get("eye_availability",{})
         self.eye_diagnostic.setText(
             f"Estrategia activa: {s['settings']['ui']['tracking_method']}"
             +(" · Modo experimental" if s["settings"]["ui"]["tracking_method"]=="eye" else "")+"\n"
-            f"left_gaze_x/y: {fmt(fd.left_gaze_x)} / {fmt(fd.left_gaze_y)} · "
+            +f"Fuente ocular: {EYE_SOURCE_LABELS[source]} · Iris izquierdo: {availability.get('left',False)} · "
+             f"Iris derecho: {availability.get('right',False)} · Señal utilizada: {s.get('used_gaze')}\n"
+            +f"Calibración de esta fuente: {'disponible' if s.get('tracking_calibrated') else 'ausente o incompatible'}\n"
+            +f"left_gaze_x/y: {fmt(fd.left_gaze_x)} / {fmt(fd.left_gaze_y)} · "
             f"right_gaze_x/y: {fmt(fd.right_gaze_x)} / {fmt(fd.right_gaze_y)}\n"
             f"gaze_x/y: {fmt(fd.gaze_x)} / {fmt(fd.gaze_y)} · Disponible: {eye_available} · "
             f"Confianza (cobertura): {fd.gaze_confidence:.1f}\n"
@@ -911,7 +1229,31 @@ class MainWindow(QMainWindow):
                f"Delta X/Y (rango): {fmt(tracking.get('delta_x'))} / {fmt(tracking.get('delta_y'))} · "
                f"Zona muerta ocular: {s['settings']['eye']['dead_zone']:.3f}\n"
                if s["settings"]["ui"]["tracking_method"]=="eye" else "")
-            +f"Head yaw / pitch: {fmt(fd.head_yaw)} / {fmt(fd.head_pitch)} · Sin compensación de pose")
+            +(f"Referencia vertical: {s['settings']['eye'].get('vertical_reference','eyelids')}\n" if s["settings"]["ui"]["tracking_method"]=="eye" else "")
+            +f"Head yaw / pitch: {fmt(fd.head_yaw)} / {fmt(fd.head_pitch)} · Sin compensación de pose\n"
+            +f"Predicción: {tracking.get('prediction')} · Delta calculado: {tracking.get('cursor_delta')}\n"
+            +f"Control: {'activo' if enabled else 'desactivado'} · Pausa: {s['paused']} · "
+            +f"Bloqueo: {tracking.get('block_reason') or tracking.get('model_reason') or 'ninguno'}")
+        vertical=s.get("vertical_trace",{})
+        if self._vertical_preview:
+            from gaze_source import gaze_position
+            lines=[f"Referencia {ref} · I/D/ambos: "+str([gaze_position(fd,source,ref) for source in ("left","right","both")]) for ref in ("eyelids","canthi")]
+            lines.append("Medición cruda en píxeles (iris, párpados, comisuras): "+str(fd.ocular_geometry))
+            lines.append("Filtrado / delta calculado / envío simulado: "+str(vertical))
+            lines.append("Resultados centro/arriba/abajo: "+str((s.get("vertical_report") or {}).get("comparison",{})))
+            self.eye_diagnostic.setText(self.eye_diagnostic.text()+"\n"+"\n".join(lines))
+        camera=s.get("camera_status",{})
+        face_status_labels=dict(WAITING="Esperando resultado facial",NO_LANDMARKS="MediaPipe no detecta rostro",
+            EXTRACTION_REJECTED="Landmarks recibidos; geometría inválida",INVALID_FACE_DATA="Señales faciales inválidas",
+            VALID_FACE="Rostro válido")
+        self.eye_diagnostic.setText(self.eye_diagnostic.text()+
+            f"\nCámara: {camera.get('stage','sin datos')} · Operación: {camera.get('operation','—')} · "
+            f"Backend: {camera.get('backend_effective') or camera.get('backend_requested','—')} · "
+            f"Frames/resultados: {camera.get('captured_frames',0)}/{camera.get('processed_results',0)} · "
+            f"FPS procesados: {camera.get('processing_fps',0)}\nAceptado por driver: {camera.get('accepted',{})}\n"
+            f"{face_status_labels.get(camera.get('face_status','WAITING'))} · Resultados con rostro: "
+            f"{camera.get('raw_face_results',0)} · Válidos: {camera.get('valid_face_results',0)} · "
+            f"Descartados: {camera.get('rejected_face_results',0)}")
         if d:
             advanced=[]
             for key,record in d.get("gesture_calibrations",{}).items():
@@ -1001,6 +1343,9 @@ class MainWindow(QMainWindow):
 
     def _closed(self):
         self.timer.stop()
+        if self.gaze_overlay:
+            self.gaze_overlay.blockSignals(True)
+            self.gaze_overlay.close()
         self.dictation_overlay.close()
         self._allow_close=True
         self.close()

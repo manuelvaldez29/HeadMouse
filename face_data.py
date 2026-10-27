@@ -34,6 +34,10 @@ class FaceData:
     gaze_y: float | None = None
     gaze_confidence: float = 0.0  # cobertura: .5 un ojo, 1 ambos; no probabilidad
     iris_points: tuple = ()  # centros normalizados del preview, solo RAM
+    gaze_mirrored: bool = True  # imagen presentada al detector; pipeline histórico
+    left_canthi_y: float | None = None
+    right_canthi_y: float | None = None
+    ocular_geometry: tuple = ()  # mediciones transitorias por canal; nunca imágenes
 
     @property
     def gaze_available(self):
@@ -59,6 +63,7 @@ class FaceData:
                 and all(v is None or (isinstance(v, (int, float)) and not isinstance(v, bool)
                                       and math.isfinite(v) and abs(v) <= limit) for v, limit in optional)
                 and isinstance(self.detected, bool)
+                and type(self.gaze_mirrored) is bool
                 and 0 <= self.nose_x <= 1 and 0 <= self.nose_y <= 1
                 and 0 <= self.eye_left_ratio <= 10 and 0 <= self.eye_right_ratio <= 10
                 and abs(self.brow_left_lift) <= 10 and abs(self.brow_right_lift) <= 10

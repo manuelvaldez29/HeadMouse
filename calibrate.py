@@ -280,7 +280,12 @@ def run(user_id: str, config=None, disabled=None):
             profile = store.load(user_id)
         except ValueError:
             logger.warning("Perfil inválido: se conservará hasta guardar una nueva calibración validada")
-    session = CalibrationSession(profile, config, enabled={key:False for key in (disabled or [])})
+    from profiles import gesture_profile, save_gesture_mode
+    from config import method_bank
+    from config import settings_for_save
+    from dataclasses import asdict
+    session = CalibrationSession(gesture_profile(profile, method_bank(config)), config,
+                                 enabled={key:False for key in (disabled or [])})
     telemetry = ResultStore(ROOT / "data" / "calibration")
     session_id, logged = uuid.uuid4().hex, 0
     logger.info("Calibración adaptativa de %s; salida: %s", user_id, store.path(user_id))
@@ -325,7 +330,11 @@ def run(user_id: str, config=None, disabled=None):
                 elif session.state == "measured":
                     session.validate()
                 elif session.state == "validated":
-                    path = store.save(session.result())
+                    candidate = session.result()
+                    existing = profile if "thresholds" in profile or profile.get("status") == "draft" else None
+                    merged = save_gesture_mode(existing, candidate, method_bank(config))
+                    merged["settings"] = asdict(settings_for_save(config, candidate["settings"]))
+                    path = store.save(merged)
                     logger.info("Perfil adaptativo validado guardado: %s", path)
                     return path
 

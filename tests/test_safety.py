@@ -131,7 +131,7 @@ class VisionLifecycleTests(unittest.TestCase):
 
     def engine(self):
         with patch.object(self.module.VisionEngine, "_ensure_model"):
-            return self.module.VisionEngine(config=VisionConfig(capture_failure_limit=1))
+            return self.module.VisionEngine(config=VisionConfig(capture_failure_limit=1,startup_timeout_s=.1))
 
     def test_camera_open_failure_releases(self):
         engine = self.engine()

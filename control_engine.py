@@ -85,7 +85,7 @@ class ControlEngine:
                  vision:  VisionEngine,
                  gesture: GestureEngine,
                  config:  ControlConfig = None, backend=None, metrics=None, mapping=None,
-                 wheel_unit=None, dictation=None):
+                 wheel_unit=None, dictation=None, screen_bounds=None, movement_only=False):
 
         self.vision  = vision
         self.gesture = gesture
@@ -95,6 +95,8 @@ class ControlEngine:
             import pyautogui
             backend = pyautogui
         self.backend = backend
+        self.screen_bounds = tuple(screen_bounds) if screen_bounds is not None else None
+        self.movement_only = movement_only
         # PyAutoGUI en Windows pasa el valor directo a mouse_event: una muesca de
         # rueda son 120 unidades (WHEEL_DELTA). Sin escalar, scroll(3) movía 3/120
         # de muesca. En macOS/Linux PyAutoGUI ya cuenta muescas.
@@ -108,6 +110,8 @@ class ControlEngine:
         self._pinned_since = None   # cursor apretado contra un borde (centro mal ubicado)
         self._pinned_retry = 0.
         self._last_cursor = None
+        self._fraction = [0., 0.]
+        self._fraction_frame = 0
         self.last_events = ()
         self.last_actions = ()
         self.output_allowed = threading.Event()
@@ -117,6 +121,16 @@ class ControlEngine:
 
         # Resolución de pantalla
         self._screen_w, self._screen_h = self.backend.size()
+        if self.screen_bounds is not None:
+            from screen_mapping import physical_coordinates
+            ox,oy,width,height = self.screen_bounds
+            with physical_coordinates():
+                self._screen_w, self._screen_h = self.backend.size()
+                x,y = self.backend.position()
+            if (width,height) != (self._screen_w,self._screen_h):
+                raise ValueError("La resolución física del backend no coincide con el monitor principal. Revisá DPI/escalado.")
+            if not (ox <= x < ox+width and oy <= y < oy+height):
+                raise ValueError("Llevá el cursor al monitor principal antes de activar el control ocular.")
         self.gesture.update_screen_size(self._screen_w, self._screen_h)
         logger.info(f"[ControlEngine] Pantalla: {self._screen_w}×{self._screen_h}")
 
@@ -160,6 +174,7 @@ class ControlEngine:
     def toggle_pause(self):
         """Pausa o reanuda el control manualmente."""
         self._paused = not self._paused
+        self._fraction = [0., 0.]
         state = "PAUSADO" if self._paused else "ACTIVO"
         logger.info(f"[ControlEngine] Control {state}.")
 
@@ -195,11 +210,13 @@ class ControlEngine:
             except self.backend.FailSafeException:
                 logger.info("\n[ControlEngine] Failsafe activado — deteniendo.")
                 self._running = False
+                self.output_allowed.clear()
                 break
             except Exception as e:
                 self.error = e
                 logger.exception("ControlEngine detenido por error")
                 self._running = False
+                self.output_allowed.clear()
                 break
 
             # Mantener frecuencia objetivo
@@ -216,6 +233,10 @@ class ControlEngine:
         events = self.gesture.update(fd)
         self.last_events = tuple(events)
         self.last_actions = ()
+        new_frame = fd.timestamp_ms != self._fraction_frame
+        if not fresh or self.paused or (new_frame and not any(e.type == EV_CURSOR_MOVE for e in events)):
+            self._fraction = [0., 0.]
+        self._fraction_frame = fd.timestamp_ms
         if self.metrics:
             self.metrics.tracking(fresh)
             self.metrics.generated(events)
@@ -233,12 +254,14 @@ class ControlEngine:
         # ── Ejecutar eventos ──────────────────────────────────────────────────
         # Toggle tiene prioridad sobre todas las acciones del mismo frame.
         actions = [self.mapping.resolve(ev) for ev in events]
+        if self.movement_only:
+            actions = [ev for ev in actions if ev.type in (EV_CURSOR_MOVE,"CURSOR_ABSOLUTE")]
         if self.dictation is not None and self.dictation.busy:
             # Hablar mueve boca, ojos y cejas: mientras se dicta solo se mueve el
             # cursor, y el gesto de pausa cancela el dictado en lugar de pausar.
             if any(ev.type == "PAUSE" for ev in actions):
                 self.dictation.cancel()
-            actions = [ev for ev in actions if ev.type == EV_CURSOR_MOVE]
+            actions = [ev for ev in actions if ev.type in (EV_CURSOR_MOVE, "CURSOR_ABSOLUTE")]
         toggle = next((ev for ev in actions if ev.type == "PAUSE"), None)
         if toggle is not None and fresh and self.output_allowed.is_set():
             resuming = self._paused
@@ -305,10 +328,37 @@ class ControlEngine:
     # ── Ejecución de acciones ─────────────────────────────────────────────────
 
     def _execute(self, ev: GestureEvent):
+        if self.movement_only and ev.type not in (EV_CURSOR_MOVE,"CURSOR_ABSOLUTE"):
+            return
+        if self.screen_bounds is not None:
+            from screen_mapping import physical_coordinates
+            with physical_coordinates():
+                return self._execute_event(ev)
+        return self._execute_event(ev)
+
+    def _execute_event(self, ev: GestureEvent):
         """Convierte un GestureEvent en una acción real de Windows."""
 
         if not math.isfinite(ev.dx) or not math.isfinite(ev.dy):
             raise ValueError("Delta no finito")
+
+        if ev.type == "CURSOR_ABSOLUTE":
+            if not 0 <= ev.dx <= 1 or not 0 <= ev.dy <= 1:
+                raise ValueError("Predicción fuera de pantalla")
+            x, y = self.backend.position()
+            ox, oy, width, height = self.screen_bounds or (0,0,self._screen_w,self._screen_h)
+            if not (ox <= x < ox+width and oy <= y < oy+height):
+                raise ValueError("El cursor salió del monitor principal. Detené el control, llevá el cursor al principal y volvé a activar.")
+            tx, ty = ox+ev.dx*(width-1), oy+ev.dy*(height-1)
+            limit = min(self.config.max_cursor_delta, self.gesture.strategy.config.max_step_px)
+            distance = math.hypot(tx-x, ty-y)
+            scale = min(1., limit/distance) if distance else 1.
+            if distance >= self.gesture.strategy.config.jitter_px:
+                self.backend.moveTo(round(max(ox, min(ox+width-1, x+(tx-x)*scale))),
+                                    round(max(oy, min(oy+height-1, y+(ty-y)*scale))), _pause=False)
+                if self.metrics:
+                    self.metrics.action(ev)
+            return
 
         if ev.type == EV_CURSOR_MOVE:
             # Limitar delta máximo para evitar saltos bruscos
@@ -316,8 +366,15 @@ class ControlEngine:
                      min(self.config.max_cursor_delta, ev.dx))
             dy = max(-self.config.max_cursor_delta,
                      min(self.config.max_cursor_delta, ev.dy))
-            if int(dx) != 0 or int(dy) != 0:
-                self.backend.moveRel(int(dx), int(dy), _pause=False)
+            if getattr(self.gesture.strategy, "name", None) == "eye":
+                # Sumar únicamente deltas nuevos; nunca integrar la posición del EMA.
+                dx, dy = dx+self._fraction[0], dy+self._fraction[1]
+                ix, iy = math.trunc(dx), math.trunc(dy)
+                self._fraction = [dx-ix, dy-iy]
+            else:
+                ix, iy = int(dx), int(dy)  # conservar la fórmula nasal histórica
+            if ix != 0 or iy != 0:
+                self.backend.moveRel(ix, iy, _pause=False)
                 if self.metrics:
                     self.metrics.action(ev)
             return   # no loguear CURSOR_MOVE para no spamear

@@ -15,9 +15,11 @@ def extract_gaze(landmarks, width, height, *, mirrored=True):
     result = dict(left_gaze_x=None, left_gaze_y=None, right_gaze_x=None,
                   right_gaze_y=None, gaze_x=None, gaze_y=None,
                   gaze_confidence=0., iris_points=())
+    result["gaze_mirrored"] = mirrored
     if not all(isinstance(v, (int, float)) and math.isfinite(v) and v > 0 for v in (width, height)):
         return result
-    values, preview = [], []
+    values, preview, diagnostics = [], [], []
+    result.update(left_canthi_y=None,right_canthi_y=None,ocular_geometry=())
     for side, (a, b, upper, lower, center, ring) in EYES.items():
         try:
             def point(index):
@@ -35,6 +37,11 @@ def extract_gaze(landmarks, width, height, *, mirrored=True):
             cross = lambda p, q: p[0]*q[1]-p[1]*q[0]
             det = cross(h, v)
             size = math.hypot(*h)
+            mid=((c1[0]+c2[0])/2,(c1[1]+c2[1])/2)
+            canthi=.5+cross(h,(iris[0]-mid[0],iris[1]-mid[1]))/(size*size) if size else None
+            lid_y=cross(h,(iris[0]-top[0],iris[1]-top[1]))/det if det else None
+            diagnostics.append((side,iris[0],iris[1],top[0],top[1],bottom[0],bottom[1],
+                                c1[0],c1[1],c2[0],c2[1],size,det,lid_y,canthi))
             # Ojo cerrado/degenerado: no dividir por una apertura casi nula.
             if size < 2 or det <= .08 * size * size:
                 continue
@@ -44,6 +51,8 @@ def extract_gaze(landmarks, width, height, *, mirrored=True):
                 continue
             x = x if mirrored else 1-x
             result[f"{side}_gaze_x"], result[f"{side}_gaze_y"] = x, y
+            if canthi is not None and 0 <= canthi <= 1:
+                result[f"{side}_canthi_y"]=canthi
             values.append((x, y))
             preview.append((iris[0]/width, iris[1]/height))
         except (IndexError, AttributeError, TypeError, ValueError, OverflowError):
@@ -52,4 +61,5 @@ def extract_gaze(landmarks, width, height, *, mirrored=True):
         result.update(gaze_x=sum(p[0] for p in values)/len(values),
                       gaze_y=sum(p[1] for p in values)/len(values),
                       gaze_confidence=len(values)/2, iris_points=tuple(preview))
+    result["ocular_geometry"]=tuple(diagnostics)
     return result

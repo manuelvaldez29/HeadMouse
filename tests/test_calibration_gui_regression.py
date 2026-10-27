@@ -95,7 +95,8 @@ class CalibrationGUIRegressionTests(unittest.TestCase):
             finally:
                 c.shutdown()
                 window.close()
-                window.deleteLater()
+                from desktop.lifecycle import dispose_window
+                dispose_window(window)
                 app.processEvents()
 
 

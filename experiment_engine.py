@@ -3,6 +3,7 @@ import json
 import math
 import time
 import uuid
+from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
 from statistics import mean, pstdev
@@ -30,11 +31,14 @@ class ExperimentEngine:
     TARGETS = ((640, 120), (160, 380), (650, 380), (150, 120), (400, 250))
 
     def __init__(self, profile_id, mode="simulation", source="headmouse", store=None,
-                 clock=time.monotonic, targets=None, radius=35, timeout_s=60, tracking_method="nose"):
-        if mode not in ("simulation", "real") or source not in ("headmouse", "keyboard"):
+                 clock=time.monotonic, targets=None, radius=35, timeout_s=60, tracking_method="nose", metadata=None):
+        if mode not in ("simulation", "real") or source not in ("headmouse", "keyboard", "mouse"):
             raise ValueError("Modo o fuente experimental inválida")
+        if source == "mouse" and mode != "real":
+            raise ValueError("Mouse convencional requiere modo real")
+        self.metadata = deepcopy(metadata or {})
         self.profile_id, self.mode, self.source = profile_id, mode, source
-        if tracking_method not in ("nose", "eye"):
+        if tracking_method not in ("nose", "eye", "eye_absolute"):
             raise ValueError("Método de tracking desconocido")
         self.tracking_method = tracking_method if source=="headmouse" else None
         self.clock, self.store = clock, store or ResultStore()
@@ -109,6 +113,7 @@ class ExperimentEngine:
                       distance_px=self.distance, overshoots=self.overshoots, failed_clicks=self.failed_clicks,
                       completed=completed, reason=reason, fps_mean=mean(self.fps) if self.fps else None,
                       processing_ms_mean=mean(self.latencies) if self.latencies else None)
+        record["conditions"] = deepcopy(self.metadata)
         self.path = self.store.append(self.session_id, record)
         self.results.append(record)
         self.index += 1
@@ -164,7 +169,7 @@ class JitterMeasurement:
         deviations = [math.hypot(x, y) for x, y in self.samples]
         steps = [math.dist(a, b) for a, b in zip(self.samples, self.samples[1:])]
         return dict(valid=True, samples=len(xs), duration_s=self.duration_s,
-                    units="comfortable_eye_range" if self.strategy.name=="eye" else "normalized_frame",
+                    units="comfortable_eye_range" if self.strategy.name=="eye" else "normalized_screen" if self.strategy.name=="eye_absolute" else "normalized_frame",
                     mean_deviation=mean(deviations), std_deviation=pstdev(deviations),
                     std_x=pstdev(xs), std_y=pstdev(ys), range_x=max(xs)-min(xs), range_y=max(ys)-min(ys),
                     jitter_rms=math.sqrt(mean(v*v for v in steps)), dead_zone_exits=self.exits)

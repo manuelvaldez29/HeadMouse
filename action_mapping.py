@@ -24,7 +24,7 @@ class ActionMapping:
             raise ValueError("Cada gesto debe tener una acción válida")
 
     def resolve(self, event):
-        if event.type == "CURSOR_MOVE":
+        if event.type in ("CURSOR_MOVE", "CURSOR_ABSOLUTE"):
             return event
         identity = gesture_identity(event)
         if identity not in self.mapping:

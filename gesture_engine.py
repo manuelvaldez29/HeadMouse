@@ -43,6 +43,7 @@ from action_mapping import LEGACY_GESTURES
 from adaptive_calibration import HysteresisGate, percentile
 from gesture_signals import GESTURE_SIGNALS
 from gesture_arbitration import BrowArbiter
+from gaze_source import gaze_position, channels
 
 if TYPE_CHECKING:
     from vision_engine import VisionEngine
@@ -173,7 +174,7 @@ class GestureEngine:
                  vision:             VisionEngine,
                  calibration_path:   str = "calibration.json",
                  config:             GestureConfig = None,
-                 calibration=None, strategy=None, clock=time.monotonic):
+                 calibration=None, strategy=None, clock=time.monotonic, movement_only=False):
 
         self.vision  = vision
         self.config = deepcopy(config or GestureConfig())
@@ -193,6 +194,8 @@ class GestureEngine:
         self._thresholds = calibration["thresholds"].copy()
         self.calibrations = deepcopy(calibration.get("gesture_calibrations", {}))
         self.enabled_gestures = {key for key in GESTURE_SIGNALS if self.calibrations.get(key, {}).get("enabled", True)}
+        if movement_only:
+            self.enabled_gestures.clear()
         self._gates = {}
         self._signal_sources = {}
         self.last_active = {}
@@ -223,6 +226,12 @@ class GestureEngine:
         self._smooth_x = self.config.neutral_x
         self._smooth_y = self.config.neutral_y
         self._eye_smooth_x = self._eye_smooth_y = 0.
+        self._eye_hold_until = 0
+        self._eye_physical_prev = {"LEFT_WINK": False, "RIGHT_WINK": False}
+        self._eye_recovering = False
+        self._eye_recovery = deque(maxlen=4)
+        self._tracking_block = "sin datos"
+        self._cursor_delta = (0., 0.)
         self.head_still = True
         # En pausa (o sin control) ambas cejas valen en cualquier postura: si el
         # centro quedó mal, la nariz relajada cae fuera de la zona muerta y el
@@ -274,6 +283,28 @@ class GestureEngine:
         # 2. Gestos binarios
         gesture_evs = self._update_gestures(fd)
         events.extend(gesture_evs)
+        if self.strategy.name in ("eye", "eye_absolute"):
+            # Usar el estado físico, incluso si el guiño no tiene acción asignada.
+            physical = {key: all(self._gates[key].states) for key in ("LEFT_WINK", "RIGHT_WINK")}
+            selected = {"LEFT_WINK" if side == "left" else "RIGHT_WINK"
+                        for side in channels(self.strategy.eye_source, fd.gaze_mirrored)}
+            closed = any(physical[key] for key in selected)
+            onset = any(physical[key] and not self._eye_physical_prev[key] for key in physical)
+            fired = any(e.gesture in ("LEFT_WINK", "RIGHT_WINK") or e.type in ("LEFT_CLICK", "RIGHT_CLICK") for e in gesture_evs)
+            interfering=any(value for key,value in self.last_active.items() if key not in ("LEFT_WINK","RIGHT_WINK"))
+            self._eye_physical_prev = physical
+            # El ojo elegido cerrado bloquea mientras dure; el otro solo protege
+            # el episodio/acción, sin imponer visibilidad permanente de su iris.
+            if closed or onset or fired or interfering:
+                self._eye_hold_until = fd.timestamp_ms + 180
+            if closed or fd.timestamp_ms < self._eye_hold_until:
+                events = [e for e in events if e.type not in ("CURSOR_MOVE", "CURSOR_ABSOLUTE")]
+                self._eye_smooth_x = self._eye_smooth_y = 0.
+                self._absolute_smooth = None
+                self._cursor_delta = (0., 0.)
+                self._tracking_block = "guiño/parpadeo o recuperación (180 ms)"
+                self._eye_recovering = True
+                self._eye_recovery.clear()
         # El historial de recentrado facial conserva siempre coordenadas nasales.
         x, y = fd.nose_x, fd.nose_y
         self._history.append((fd.timestamp_ms, x, y, dict(self.last_signals), any(self.last_active.values())))
@@ -301,18 +332,33 @@ class GestureEngine:
                     tracking=self.tracking_diagnostic())
 
     def tracking_diagnostic(self):
+        if self.strategy.name == "eye_absolute":
+            return dict(method="eye_absolute", calibrated=self.strategy.model is not None,
+                        eye_source=self.strategy.eye_source,
+                        prediction=getattr(self, "_absolute_smooth", None),
+                        block_reason=self._tracking_block, model_reason=self.strategy.reason,
+                        cursor_delta=self._cursor_delta)
         eye = self.strategy.name == "eye"
         c = self.strategy.config if eye else self.config
         calibration = self.strategy.calibration if eye else None
         return dict(method=self.strategy.name, calibrated=bool(calibration) if eye else True,
+                    eye_source=self.strategy.eye_source if eye else None,
                     neutral_x=calibration.neutral_x if calibration else None if eye else self.config.neutral_x,
                     neutral_y=calibration.neutral_y if calibration else None if eye else self.config.neutral_y,
                     delta_x=self._eye_smooth_x if eye else self._smooth_x-self.config.neutral_x,
                     delta_y=self._eye_smooth_y if eye else self._smooth_y-self.config.neutral_y,
-                    dead_zone=c.dead_zone, smoothing_alpha=c.smoothing_alpha)
+                    dead_zone=c.dead_zone, smoothing_alpha=c.smoothing_alpha,
+                    block_reason=self._tracking_block, cursor_delta=self._cursor_delta,
+                    prediction=getattr(self, "_absolute_smooth", None),
+                    model_reason=getattr(self.strategy, "reason", ""))
 
     def reset(self):
         self._eye_smooth_x = self._eye_smooth_y = 0.
+        self._absolute_smooth = None
+        self._cursor_delta = (0., 0.)
+        self._tracking_block = "rostro ausente, inválido o vencido"
+        self._eye_recovering = True
+        self._eye_recovery.clear()
         self._smooth_x = self.config.neutral_x
         self._smooth_y = self.config.neutral_y
         self.head_still = True
@@ -356,7 +402,7 @@ class GestureEngine:
         reposo→activación calibrada. Nunca acumula: parte siempre de la
         calibración. Devuelve un dict con `ok` y, si no recentró, `reason`.
         """
-        if self.strategy.name == "eye":
+        if self.strategy.name in ("eye", "eye_absolute"):
             return dict(ok=False, reason="el neutral ocular se ajusta en Calibrar tracking ocular")
         end = before_ms - guard_ms
         candidates = [r for r in self._history if end - search_ms <= r[0] <= end and not r[4]]
@@ -430,7 +476,7 @@ class GestureEngine:
             - Más desviada = más rápido
             - La zona muerta previene deriva por micro-movimientos
         """
-        if self.strategy.name == "eye":
+        if self.strategy.name in ("eye", "eye_absolute"):
             # La puerta de cejas sigue dependiendo de cabeza/nariz, nunca de mirada.
             alpha = self.config.smoothing_alpha
             self._smooth_x = alpha*self._smooth_x+(1-alpha)*fd.nose_x
@@ -477,19 +523,50 @@ class GestureEngine:
         return GestureEvent(type=EV_CURSOR_MOVE, dx=px, dy=py)
 
     def _update_eye_cursor(self, fd):
+        raw = gaze_position(fd, self.strategy.eye_source,getattr(self.strategy,"vertical_reference","eyelids"))
+        if raw is None:
+            self._eye_smooth_x = self._eye_smooth_y = 0.
+            self._absolute_smooth = None
+            self._cursor_delta = (0., 0.)
+            self._tracking_block = "se requieren ambos iris válidos" if self.strategy.eye_source == "both" else "iris seleccionado ausente o inválido"
+            self._eye_recovering = True
+            self._eye_recovery.clear()
+            return None
+        if fd.timestamp_ms < self._eye_hold_until:
+            return None
+        if self._eye_recovering:
+            self._eye_recovery.append((fd.timestamp_ms, *raw))
+            spread = max(max(row[axis] for row in self._eye_recovery)-min(row[axis] for row in self._eye_recovery) for axis in (1,2))
+            if len(self._eye_recovery) < 3 or fd.timestamp_ms-self._eye_recovery[0][0] < 60 or spread > .04:
+                self._tracking_block = "recuperando mirada estable (3 frames, 60 ms, dispersión <= 0,04)"
+                return None
+            self._eye_recovering = False
+            self._eye_recovery.clear()
         position = self.strategy.position(fd)
         if position is None:
             # Cortar inmediatamente: no emitir la cola del EMA sin iris válido.
             self._eye_smooth_x = self._eye_smooth_y = 0.
+            self._absolute_smooth = None
+            self._cursor_delta = (0., 0.)
+            self._tracking_block = getattr(self.strategy, "reason", "falta calibración")
             return None
+        self._tracking_block = ""
+        if self.strategy.name == "eye_absolute":
+            previous = getattr(self, "_absolute_smooth", None)
+            a = self.strategy.config.smoothing_alpha
+            self._absolute_smooth = tuple(a*p+(1-a)*v for p,v in zip(previous,position)) if previous else position
+            return GestureEvent(type="CURSOR_ABSOLUTE", dx=self._absolute_smooth[0], dy=self._absolute_smooth[1])
         c = self.strategy.config
         a = c.smoothing_alpha
         self._eye_smooth_x = a*self._eye_smooth_x+(1-a)*position[0]
         self._eye_smooth_y = a*self._eye_smooth_y+(1-a)*position[1]
-        def delta(value):
-            d = max(0., abs(value)-c.dead_zone)*(1 if value >= 0 else -1)
+        def delta(value,zone):
+            d = max(0., abs(value)-zone)*(1 if value >= 0 else -1)
             return max(-c.max_delta, min(c.max_delta, d*c.sensitivity+d*abs(d)*c.acceleration))
-        dx, dy = delta(self._eye_smooth_x), delta(self._eye_smooth_y)
+        dx=delta(self._eye_smooth_x,c.dead_zone if c.dead_zone_x is None else c.dead_zone_x)
+        dy=delta(self._eye_smooth_y,c.dead_zone if c.dead_zone_y is None else c.dead_zone_y)
+        self._cursor_delta = (dx, dy)
+        self._tracking_block = "zona muerta" if not (dx or dy) else ""
         return GestureEvent(type=EV_CURSOR_MOVE, dx=dx, dy=dy) if dx or dy else None
 
     # ── Gestos binarios ───────────────────────────────────────────────────────

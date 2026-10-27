@@ -62,8 +62,13 @@ class ProfileManager:
         p["settings"] = asdict(config)
         # Un cambio de tiempos de reconocimiento exige volver a validar.
         timing = lambda c: {k: v for k, v in asdict(c.gesture).items() if k.endswith("_ms")}
-        if timing(old) != timing(config) and p.get("validation"):
-            p["validation"]["passed"] = False
+        from config import method_bank
+        if method_bank(old) == method_bank(config) and timing(old) != timing(config):
+            from profiles import gesture_profile, save_gesture_mode
+            active = gesture_profile(p, method_bank(config))
+            if active.get("validation"):
+                active["validation"]["passed"] = False
+                p = save_gesture_mode(p, active, method_bank(config))
         validate_profile(p)
         self.store.save(p)
         return self.store.load(p["user_id"])

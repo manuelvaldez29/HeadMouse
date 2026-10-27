@@ -116,13 +116,30 @@ def main(argv=None):
         if profile.get("status") == "draft":
             raise ValueError("Perfil pendiente de calibración")
         config = load_config(args.config, profile.get("settings", {}))
+        from profiles import gesture_profile
+        from config import method_bank
+        profile = gesture_profile(profile, method_bank(config))
+        if profile.get("status") == "draft":
+            raise ValueError("La modalidad seleccionada necesita calibración de gestos")
+        if config.ui.tracking_method!="nose" and not args.check:
+            approved=profile.get("validation",{}).get("passed") is True
+            measured=profile.get("gesture_mode_origin",{}).get(method_bank(config))=="measured"
+            if not approved or not measured:
+                raise ValueError("Validá los gestos de Ojos antes de usar la CLI. La GUI permite probar sólo movimiento sin clics.")
+        if config.ui.tracking_method == "eye_absolute":
+            raise ValueError("Ojos absolutos requiere la GUI desktop para comprobar pantalla, DPI y confirmación")
         from tracking import create_strategy
-        strategy = create_strategy(config.ui.tracking_method, profile.get("tracking_calibration"), config.eye)
+        from ocular_profiles import calibration_for
+        record = calibration_for(profile, config.ui.tracking_method, config.ui.eye_source)
+        strategy = create_strategy(config.ui.tracking_method, record, config.eye, config.ui.eye_source)
         if config.ui.tracking_method == "eye" and strategy.calibration is None:
             raise ValueError("Calibrá el tracking ocular en la aplicación desktop antes de usar ojos")
         if args.camera is not None:
             config.vision.camera_index = args.camera
             config.vision.__post_init__()
+        camera_context = (record or {}).get("camera_context")
+        if config.ui.tracking_method == "eye" and camera_context and camera_context["camera_index"] != config.vision.camera_index:
+            raise ValueError("La calibración ocular corresponde a otra cámara")
         if args.log_level:
             config.log_level = args.log_level
         logging.getLogger().setLevel(config.log_level)
@@ -145,6 +162,10 @@ def main(argv=None):
             cleanup.callback(vision.stop)
             vision.start()
             vision.wait_ready()
+            if config.ui.tracking_method == "eye" and camera_context:
+                frame = vision.get_frame()
+                if frame is None or tuple(frame.shape[:2]) != (camera_context["frame_height"],camera_context["frame_width"]):
+                    raise ValueError("Cambió la resolución de captura: recalibrá la fuente ocular")
             gesture = GestureEngine(vision, config=config.gesture, calibration=profile, strategy=strategy)
             control = ControlEngine(vision, gesture, config.control, metrics=metrics,
                                     mapping=ActionMapping(config.actions.bindings))

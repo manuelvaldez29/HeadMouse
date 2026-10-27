@@ -1,5 +1,16 @@
 # HEADMOUSE v0.3.1 — arquitectura desktop y motores compartidos
 
+Etapa A de fuentes: `gaze_source.py` selecciona explícitamente ambos/izquierdo/
+derecho para joystick y modelo absoluto; `ocular_profiles.py` conserva bancos
+compatibles por fuente. Consultar [contratos y compatibilidad](EYE_SOURCES_STAGE_A.md).
+
+Actualización experimental del 26/10/2026: consultar
+[arquitectura y cambios vigentes](CONTINUATION_2026-10-26.md).
+Ahora se implementan nariz, joystick ocular y mapeo absoluto local con validación
+independiente, bancos por modalidad y logs persistentes. Las secciones históricas
+que describen solo neutral ocular o acciones compartidas corresponden a la base
+anterior. No hay precisión física demostrada ni causa confirmada del cierre.
+
 ## Extensión experimental de tracking ocular
 
 En `experiment/eye-tracking` se agrega EyeGazeTrackingStrategy, seleccionable

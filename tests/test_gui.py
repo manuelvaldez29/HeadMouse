@@ -31,7 +31,7 @@ class FakeVision:
         self.metrics = metrics
 
     def start(self): self.alive = True; self.ready.set()
-    def wait_ready(self): pass
+    def wait_ready(self, timeout=None): pass
     def stop(self): self.alive = False
     def is_alive(self): return self.alive
     def get_fps(self): return 30
@@ -81,7 +81,8 @@ class GUITests(unittest.TestCase):
         self.window.close()
         self.wait(lambda:not self.bridge.thread.isRunning())
         self.app.processEvents()
-        self.window.deleteLater()
+        from desktop.lifecycle import dispose_window
+        dispose_window(self.window)
         self.app.processEvents()
         self.tmp.cleanup()
 

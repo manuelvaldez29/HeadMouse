@@ -1,5 +1,11 @@
 # Experimento de tracking ocular relativo
 
+Actualización del 26/10/2026: el usuario confirmó movimiento físico del joystick
+ocular en Windows. Esta continuación agrega rangos medidos, fracciones de píxel,
+guarda de guiños, configuraciones independientes y modalidad absoluta. Consultar
+[informe actual](CONTINUATION_2026-10-26.md); lo siguiente conserva la descripción
+histórica de la primera implementación. No se volvió a medir precisión física.
+
 ## Estado y objetivo
 
 Rama local: `experiment/eye-tracking`, creada desde

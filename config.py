@@ -1,7 +1,9 @@
 """Configuración validada; precedencia: defaults < archivo < perfil < CLI."""
+from __future__ import annotations
 import json
 import logging
 import math
+import sys
 from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 from action_mapping import DEFAULT_MAPPING, ActionMapping
@@ -96,13 +98,24 @@ class VisionConfig:
     detection_confidence: float = 0.5
     presence_confidence: float = 0.5
     tracking_confidence: float = 0.5
-    startup_timeout_s: float = 10.0
+    startup_timeout_s: float = 20.0
     capture_failure_limit: int = 30
+    capture_backend: str = "dshow" if sys.platform == "win32" else "auto"
+    frame_width: int = 0  # cero conserva la negociación del dispositivo
+    frame_height: int = 0
+    shutdown_timeout_s: float = 3.0
 
     def __post_init__(self):
         bounded("camera_index", self.camera_index, 0, 100, integer=True)
         bounded("target_fps", self.target_fps, 1, 240, integer=True)
         bounded("startup_timeout_s", self.startup_timeout_s, 0.1, 120)
+        bounded("shutdown_timeout_s", self.shutdown_timeout_s, .05, 30)
+        if self.capture_backend not in ("auto", "dshow", "msmf"):
+            raise ValueError("Backend de cámara inválido: auto, dshow o msmf")
+        for name in ("frame_width", "frame_height"):
+            bounded(name, getattr(self, name), 0, 8192, integer=True)
+        if bool(self.frame_width) != bool(self.frame_height):
+            raise ValueError("Ancho y alto deben indicarse juntos, o ambos en cero")
         bounded("capture_failure_limit", self.capture_failure_limit, 1, 1000, integer=True)
         for name in ("detection_confidence", "presence_confidence", "tracking_confidence"):
             bounded(name, getattr(self, name), 0, 1)
@@ -192,13 +205,20 @@ class EyeTrackingConfig:
     dead_zone: float = .15  # fracción del rango cómodo nominal
     smoothing_alpha: float = .65
     max_delta: float = 20.0
+    vertical_reference: str = "eyelids"
+    dead_zone_x: float | None = None
+    dead_zone_y: float | None = None
 
     def __post_init__(self):
+        from gaze_source import validate_vertical_reference
+        validate_vertical_reference(self.vertical_reference)
         bounded("eye.sensitivity", self.sensitivity, 0, 100)
         bounded("eye.acceleration", self.acceleration, 0, 100)
         bounded("eye.dead_zone", self.dead_zone, 0, .8)
         bounded("eye.smoothing_alpha", self.smoothing_alpha, 0, 1, inclusive_high=False)
         bounded("eye.max_delta", self.max_delta, 1, 60)
+        for key in ("dead_zone_x","dead_zone_y"):
+            if getattr(self,key) is not None:bounded("eye."+key,getattr(self,key),0,.8)
 
 
 @dataclass
@@ -206,12 +226,19 @@ class UIConfig:
     show_overlay: bool = True
     show_landmarks: bool = True
     tracking_method: str = "nose"
+    eye_source: str = "both"
+    ocular_engine: str = "eye_absolute"  # implementación interna; no selector público
+    unified_eyes: bool = False  # migración explícita al banco público Ojos
 
     def __post_init__(self):
+        from gaze_source import validate_source
+        validate_source(self.eye_source)
         if type(self.show_overlay) is not bool or type(self.show_landmarks) is not bool:
             raise ValueError("Overlays y landmarks deben ser booleanos")
-        if self.tracking_method not in ("nose", "eye"):
+        if self.tracking_method not in ("nose", "eye", "eye_absolute"):
             raise ValueError("Método de tracking desconocido")
+        if self.ocular_engine not in ("eye","eye_absolute") or type(self.unified_eyes) is not bool:
+            raise ValueError("Configuración interna de Ojos inválida")
 
 
 @dataclass
@@ -232,18 +259,73 @@ class AppConfig:
     actions: MappingConfig = field(default_factory=MappingConfig)
     voice: VoiceConfig = field(default_factory=VoiceConfig)
     eye: EyeTrackingConfig = field(default_factory=EyeTrackingConfig)
+    absolute: AbsoluteTrackingConfig = field(default_factory=lambda: AbsoluteTrackingConfig())
+    methods: dict = field(default_factory=dict)
     log_level: str = "INFO"
     metrics_enabled: bool = True
 
     def __post_init__(self):
+        if not isinstance(self.methods, dict) or self.methods.keys() - {"nose", "eyes", "eye", "eye_absolute"}:
+            raise ValueError("Configuraciones por modalidad inválidas")
+        for record in self.methods.values():
+            if not isinstance(record, dict) or record.keys() - set(METHOD_SECTIONS):
+                raise ValueError("Secciones por modalidad inválidas")
+            for section, values in record.items():
+                if not isinstance(values, dict):
+                    raise ValueError("Parámetros por modalidad inválidos")
+                try:
+                    SECTIONS[section](**values)
+                except TypeError as exc:
+                    raise ValueError("Parámetros por modalidad desconocidos") from exc
         if self.log_level not in ("DEBUG", "INFO", "WARNING", "ERROR"):
             raise ValueError("log_level inválido")
         if not isinstance(self.metrics_enabled, bool):
             raise ValueError("metrics_enabled debe ser booleano")
 
 
+@dataclass
+class AbsoluteTrackingConfig:
+    smoothing_alpha: float = .65
+    max_step_px: float = 35.
+    jitter_px: float = 3.
+
+    def __post_init__(self):
+        bounded("absolute.smoothing_alpha", self.smoothing_alpha, 0, 1, inclusive_high=False)
+        bounded("absolute.max_step_px", self.max_step_px, 1, 100)
+        bounded("absolute.jitter_px", self.jitter_px, 0, 30)
+
+
 SECTIONS = dict(vision=VisionConfig, gesture=GestureConfig, control=ControlConfig,
-                calibration=CalibrationConfig, ui=UIConfig, actions=MappingConfig, voice=VoiceConfig, eye=EyeTrackingConfig)
+                calibration=CalibrationConfig, ui=UIConfig, actions=MappingConfig, voice=VoiceConfig,
+                eye=EyeTrackingConfig, absolute=AbsoluteTrackingConfig)
+METHOD_SECTIONS = ("gesture", "control", "calibration", "actions", "eye", "absolute")
+
+
+def method_bank(config):
+    return "eyes" if config.ui.unified_eyes and config.ui.tracking_method!="nose" else config.ui.tracking_method
+
+
+def settings_for_save(current, incoming):
+    """Editar el modo vigente y recuperar otro banco al cambiar el selector.
+
+    Los perfiles históricos se copian en memoria en tres bancos independientes.
+    La lectura no migra ni reescribe archivos.
+    """
+    from copy import deepcopy
+    data = deepcopy(incoming)
+    old = asdict(current)
+    banks = deepcopy(old["methods"])
+    for method in ("nose", "eye", "eye_absolute"):
+        banks.setdefault(method, {key: deepcopy(old[key]) for key in METHOD_SECTIONS})
+    banks[method_bank(current)] = {key: deepcopy(data[key]) for key in METHOD_SECTIONS}
+    selected = "eyes" if data["ui"].get("unified_eyes") and data["ui"]["tracking_method"]!="nose" else data["ui"]["tracking_method"]
+    if selected=="eyes" and selected not in banks:
+        banks[selected]=deepcopy(banks[data["ui"]["tracking_method"]])
+    if selected not in banks:
+        raise ValueError("Método de tracking desconocido")
+    data.update(deepcopy(banks[selected]))
+    data["methods"] = banks
+    return load_config(overrides=data)
 
 
 def load_config(path=None, overrides=None):
@@ -262,6 +344,8 @@ def load_config(path=None, overrides=None):
                 if not isinstance(value, dict) or value.keys() - data[name].keys():
                     raise ValueError(f"Parámetros inválidos en {name}")
                 data[name].update(value)
+                if name=="ui" and "ocular_engine" not in value and value.get("tracking_method") in ("eye","eye_absolute"):
+                    data[name]["ocular_engine"]=value["tracking_method"]
             else:
                 data[name] = value
     return AppConfig(**{k: SECTIONS[k](**v) if k in SECTIONS else v

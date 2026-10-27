@@ -1,5 +1,12 @@
 # Roadmap de tesis
 
+Estado al 26/10/2026: se implementaron captura de rangos, tres bancos por modalidad
+y calibración absoluta de nueve puntos con validación independiente. Sigue
+pendiente la evaluación física y la investigación del cierre intermitente.
+Ver [informe actual](CONTINUATION_2026-10-26.md) y
+[protocolo preparado](GAZE_EXPERIMENT_PROTOCOL.md). Los pendientes históricos
+de las secciones siguientes deben interpretarse con esta actualización.
+
 ## Línea experimental eye tracking
 
 La rama `experiment/eye-tracking`, basada en `32caef6`, implementa un primer

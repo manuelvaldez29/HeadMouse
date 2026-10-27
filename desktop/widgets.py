@@ -2,6 +2,7 @@
 from PySide6.QtCore import Qt, QRectF, QPointF, Signal
 from PySide6.QtGui import QPainter, QColor, QPen, QImage
 from PySide6.QtWidgets import QWidget, QLabel, QVBoxLayout, QFrame
+from gaze_source import iris_markers
 
 
 def label(text, name="", wrap=True):
@@ -66,11 +67,13 @@ class CameraPreview(QWidget):
             p.setBrush(QColor("#ffd477"))
             for x,y in face.landmarks:
                 p.drawEllipse(point(x,y),3,3)
-            if face.gaze_available:
+            source=settings["ui"].get("eye_source","both")
+            for side,x,y in iris_markers(face,source):
+                used = source == "both" or side == source
                 p.setBrush(Qt.BrushStyle.NoBrush)
-                p.setPen(QPen(QColor("#cfb3ff"),2))
-                for x,y in face.iris_points:
-                    p.drawEllipse(point(x,y),5,5)
+                p.setPen(QPen(QColor("#6df4e0" if used else "#b1c6df"),2))
+                p.drawEllipse(point(x,y),7 if used else 5,7 if used else 5)
+                p.drawText(point(x,y)+QPointF(9,-9), "I" if side=="left" else "D")
         if settings["ui"]["show_overlay"]:
             profile=s.get("profile") or {}
             diagnostic=s.get("diagnostic") or {}
@@ -217,8 +220,8 @@ class DictationOverlay(QWidget):
     que el usuario eligió, no a HeadMouse. Tampoco recibe clicks."""
     COLORS = {"arming": "#c4d3e8", "listening": "#ff6b81", "transcribing": "#ffd166", "done": "#8ce5cd"}
 
-    def __init__(self):
-        super().__init__(None, Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint |
+    def __init__(self, parent=None):
+        super().__init__(parent, Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint |
                          Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.WindowDoesNotAcceptFocus |
                          Qt.WindowType.WindowTransparentForInput)
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)

@@ -72,7 +72,11 @@ class HomeButtonTests(unittest.TestCase):
         bridge.activate, bridge.stop = Mock(), Mock()
         window = MainWindow(bridge)
         window.refresh()
-        self.addCleanup(window.close)
+        def dispose():
+            from desktop.lifecycle import dispose_window
+            window.close()
+            dispose_window(window)
+        self.addCleanup(dispose)
         return window, bridge
 
     def ready_profile(self):
@@ -91,10 +95,16 @@ class HomeButtonTests(unittest.TestCase):
                 window, _ = self.window(**overrides)
                 self.assertEqual(window.home_action.text(), text)
 
-    def test_start_is_one_click_and_stop_uses_emergency_path(self):
+    def test_start_requires_confirmation_and_stop_uses_emergency_path(self):
+        from unittest.mock import patch
+        from PySide6.QtWidgets import QMessageBox
         window, bridge = self.window(profile=self.ready_profile(), profiles=ENTRY)
-        window.home_action.click()
-        bridge.activate.assert_called_once()  # sin diálogo extra: arranca en pausa
+        with patch.object(QMessageBox, "question", return_value=QMessageBox.StandardButton.No):
+            window.home_action.click()
+        bridge.activate.assert_not_called()
+        with patch.object(QMessageBox, "question", return_value=QMessageBox.StandardButton.Yes):
+            window.home_action.click()
+        bridge.activate.assert_called_once()
         window, bridge = self.window(profile=self.ready_profile(), profiles=ENTRY, control_enabled=True, paused=False)
         self.assertEqual(window.home_state.text(), "ACTIVO")
         window.home_action.click()
