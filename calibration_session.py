@@ -62,6 +62,10 @@ class CalibrationSession:
         self._sample_at=self._invalid_since=None
         self._wait_reason=""
         self._last_debug_at=-math.inf
+        self._diagnostic_timestamp=0
+        self._accepted_samples=0
+        self._rejected_samples=0
+        self._rejection_reasons={}
 
     def _enter(self,stage):
         self.stage=stage
@@ -231,7 +235,20 @@ class CalibrationSession:
 
     def update(self,face):
         before=self._state_key()
+        capturing=self.state=="measuring"
+        validating=self.state=="validation"
         self._update(face)
+        if face.timestamp_ms>self._diagnostic_timestamp:
+            self._diagnostic_timestamp=face.timestamp_ms
+            if capturing or validating:
+                accepted=(face.fresh(self.config.gesture.stale_after_s,self.clock()) if validating
+                          else self._last_timestamp==face.timestamp_ms)
+                if accepted:
+                    self._accepted_samples+=1
+                else:
+                    self._rejected_samples+=1
+                    reason=self._wait_reason or "Rostro ausente, señal facial inválida o frame vencido"
+                    self._rejection_reasons[reason]=self._rejection_reasons.get(reason,0)+1
         after=self._state_key()
         if logger.isEnabledFor(logging.DEBUG) and (before!=after or self.clock()-self._last_debug_at>=1):
             self._last_debug_at=self.clock()
@@ -245,6 +262,27 @@ class CalibrationSession:
                          self._valid_elapsed,self._meter(),model.neutral_statistics if model else {},
                          model.active_statistics if model else {},model.activation_threshold if model else {},
                          model.release_threshold if model else {},self._live_feedback())
+
+    def diagnostic(self):
+        """Mediciones faciales, sin exigir iris ni almacenar imágenes."""
+        key=self._meter_key()
+        model=self.models.get(key)
+        validator=self.validator
+        active=(validator.gesture.last_active if validator else {})
+        meter=self._meter()
+        detected=[k for k,v in active.items() if v]
+        if not validator and key and meter and all(row["value"] is not None and row["activation"] is not None and
+                row["direction"]*(row["value"]-row["activation"])>=0 for row in meter):
+            detected=[key]
+        return dict(requested_gesture=key, detected_gestures=detected,
+            state=self.state, stage=("return_neutral" if validator.neutral else "gesture") if validator else self.stage, signals=meter,
+            signal_source=model.source if model else self.source,
+            accepted_samples=self._accepted_samples, rejected_samples=self._rejected_samples,
+            rejection_reasons=dict(self._rejection_reasons),
+            rejection_reason=self.error or (validator.error if validator else "") or self._wait_reason,
+            recognized=list(validator.recognized) if validator else [],
+            result="validated" if self.state=="validated" else "rejected" if self.state=="error" or (validator and validator.error) else "pending",
+            iris_required=False)
 
     def _update(self,face):
         self.face=face

@@ -174,9 +174,9 @@ class DesktopBridge(QObject):
         self.controller.emergency.clear()  # llamada solo después del diálogo de confirmación
         self.request("activate_control", confirmed=True, screen_context=screen_context)
 
-    def stop(self):
+    def stop(self, reason=None):
         self.controller.emergency_stop()
-        self.request("stop_control")
+        self.request("stop_control", **({"reason": reason} if reason else {}))
 
     def shutdown(self):
         self.controller.emergency_stop()

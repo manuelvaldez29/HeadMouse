@@ -122,7 +122,7 @@ class MainWindow(QMainWindow):
         top.addWidget(self.control_status,1)
         self.activate_button=button("Activar control",self.activate,"Primary")
         top.addWidget(self.activate_button)
-        top.addWidget(button("DETENER CONTROL · F8",self.bridge.stop,"Danger"))
+        top.addWidget(button("DETENER CONTROL · F8",self.stop_immediately,"Danger"))
         content.addLayout(top)
         self.activation_requirements=label("", "Subtitle")
         self.activation_requirements.setWordWrap(True)
@@ -242,7 +242,7 @@ class MainWindow(QMainWindow):
         """Próximo paso según el perfil y el control: (texto, estilo, acción)."""
         p=s.get("profile")
         if s["control_enabled"]:
-            return "■  Detener HeadMouse","HeroStop",self.bridge.stop
+            return "■  Detener HeadMouse","HeroStop",self.stop_immediately
         if s["state"]=="CAMERA_STARTING":
             return "Iniciando cámara…","Hero",None
         if not s.get("profiles") and not p:
@@ -308,9 +308,17 @@ class MainWindow(QMainWindow):
         last=f"   ·   Último gesto: {gesture}" if s["camera"] and s["gesture"]!="—" else ""
         self.live_events.setText(camera+last)
         if s["settings"]["ui"]["tracking_method"]!="nose":
-            self.home_state.setText("Ojos preparado" if s.get("tracking_calibrated") else "Ojos: falta calibrar movimiento")
-            self.home_hint.setText("Calibración → Ojos reúne movimiento, gestos y prueba segura. "+
-                ("Clics disponibles según tu configuración." if s.get("actions_ready") else "Podés probar sólo movimiento; clics pendientes."))
+            if s["control_enabled"]:
+                state="Ojos · EN PAUSA" if s["paused"] else "Ojos · ACTIVO"
+                hint="F8 o Detener control para salir. "
+            elif not s.get("tracking_calibrated"):
+                state,hint="Ojos: movimiento pendiente o incompatible","Calibración → Ojos: revisá el movimiento de la fuente seleccionada. "
+            elif s.get("activation_blockers"):
+                state,hint="Ojos: requisitos pendientes"," · ".join(s["activation_blockers"])+". "
+            else:
+                state,hint="Ojos: listo para confirmar","Pulsá Iniciar HeadMouse o Activar control y confirmá Sí. "
+            self.home_state.setText(state)
+            self.home_hint.setText(hint+("Sólo se ejecutan los gestos habilitados y validados." if s.get("actions_ready") else "Sólo movimiento; clics y acciones faciales deshabilitados."))
 
     def select_public_method(self,method):
         latest=self.bridge.snapshot() or self.snapshot
@@ -893,8 +901,13 @@ class MainWindow(QMainWindow):
 
     def stop_immediately(self):
         self.bridge.stop()
+        self.bridge.request("stop_camera")
+        self._gaze_preview=False
+        self._vertical_preview=False
         if self.gaze_overlay and self.gaze_overlay.isVisible():
+            self.gaze_overlay.blockSignals(True)
             self.gaze_overlay.close()
+            self.gaze_overlay.blockSignals(False)
 
     def prepare_voice_model(self):
         model=self.voice_model.currentData()
@@ -1070,16 +1083,17 @@ class MainWindow(QMainWindow):
             self.control_status.setStyleSheet("color: #8ce5cd;" if enabled else "color: #c4d3e8;")
         p=s["profile"]
         if enabled and s["settings"]["ui"]["tracking_method"] == "eye_absolute":
-            from screen_mapping import same_context
+            from screen_mapping import same_context, capture_host_id
             saved = (p or {}).get("absolute_calibration", {}).get("context", {})
             try:
-                context=self.screen_context()
-                compatible=same_context(saved,dict(context,**{k:saved.get(k) for k in ("camera_index","frame_width","frame_height")}))
+                context=dict(self.screen_context(), capture_host=capture_host_id(), **(s.get("capture_context") or {}))
+                compatible=same_context(saved,context)
             except ValueError:
                 compatible=False
             if not compatible:
-                self.bridge.stop()
-                self.show_error("Cambió la pantalla o DPI: control detenido; recalibrá Ojos")
+                reason="Cambió el equipo, pantalla, DPI o cámara: control detenido; revisá la calibración de Ojos"
+                self.bridge.stop(reason=reason)
+                self.show_error(reason)
         name=p.get("display_name",p["user_id"]) if p else "Sin perfil seleccionado"
         self.home_profile.setText(f"Hola, {name}" if p else "Bienvenido a HeadMouse")
         self._present_home(s)

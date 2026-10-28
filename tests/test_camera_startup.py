@@ -162,9 +162,13 @@ class CameraEngineTests(unittest.TestCase):
     def test_blocked_read_never_released_from_foreign_thread(self):
         gate=self.gate()
         engine=self.engine()
-        self.cap.read.side_effect=lambda:(gate.wait(1),self.frame)
+        entered=threading.Event()
+        def read():
+            entered.set()
+            return gate.wait(1),self.frame
+        self.cap.read.side_effect=read
         engine.start()
-        self.await_stage(engine,"CAMERA_OPEN")
+        self.assertTrue(entered.wait(1),"La captura simulada no entró a read")
         with self.assertRaisesRegex(RuntimeError,"camera_read"):
             engine.stop()
         self.cap.release.assert_not_called()

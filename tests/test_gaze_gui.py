@@ -44,7 +44,7 @@ class GazeGUITests(unittest.TestCase):
         overlay.repeat_button.click()
         self.wait(lambda:self.bridge.snapshot()["gaze_calibration"]["index"]==3)
         QTest.keyClick(overlay,Qt.Key.Key_Escape)
-        self.wait(lambda:self.bridge.snapshot()["state"]=="PREVIEW")
+        self.wait(lambda:self.bridge.snapshot()["state"]=="HOME" and not self.bridge.snapshot()["camera"])
         self.assertNotIn("absolute_calibration",self.controller.profile)
         self.backend_factory.assert_not_called()
 

@@ -55,8 +55,9 @@ podés ejecutar desde este repositorio:
 
 Con el entorno activado, funciona `python app.py`. Creá o seleccioná un perfil,
 elegí Nariz u Ojos, completá su calibración, probá el diagnóstico y confirmá **Activar control**.
-El control real comienza desactivado. **Detener control**, F8 o Escape lo
-detienen; los atajos requieren que HeadMouse reciba el teclado.
+El control real comienza desactivado. **Detener control**, F8 o Escape detienen
+el control y cierran la cámara, también durante la vista previa. Los atajos
+requieren que HeadMouse reciba el teclado.
 
 La [guía visual](docs/GUI.md) explica el flujo completo. Los
 [experimentos](docs/EXPERIMENTS.md) guardan JSONL en `data/experiments/` sin

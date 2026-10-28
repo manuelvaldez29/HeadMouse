@@ -177,6 +177,11 @@ class AdaptiveSessionTests(unittest.TestCase):
             c._flush_calibration_telemetry()
             c._flush_calibration_telemetry()
             records=[json.loads(line) for line in (Path(temp)/"calibration"/("a"*32+".jsonl")).read_text(encoding="utf-8").splitlines()]
+            diagnostics=[r for r in records if r["experiment"]=="gesture_diagnostic"]
+            records=[r for r in records if r["experiment"]=="gesture_calibration"]
+            self.assertEqual(len(diagnostics),1)
+            self.assertEqual(diagnostics[0]["gesture_bank"],"nose")
+            self.assertFalse(diagnostics[0]["iris_required"])
             self.assertEqual(len(records),7)
             self.assertEqual(records[1]["quality_label"],"DÉBIL")
             self.assertEqual(records[2]["retries"],1)

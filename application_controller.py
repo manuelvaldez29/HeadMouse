@@ -53,6 +53,8 @@ class ApplicationController:
         self.screen_context = None
         self._calibration_session_id = None
         self._calibration_logged = 0
+        self._calibration_diagnostic_key = None
+        self._calibration_diagnostic_at = -1e9
         self.jitter_result = None
         self.state = "HOME"
         self.message = "Elegí o creá un perfil para comenzar."
@@ -319,7 +321,7 @@ class ApplicationController:
                 raise RuntimeError(f"{exc}. Limpieza pendiente: {closing}") from exc
             raise
 
-    def stop_control(self):
+    def stop_control(self, reason=None):
         self.emergency_stop()
         try:
             if self.control:
@@ -331,7 +333,9 @@ class ApplicationController:
                 self.dictation = None
         if self.state == "CONTROL":
             self.state = "PREVIEW" if self.vision else "HOME"
-        self.message = "Control del sistema desactivado."
+        self.message = reason or "Control del sistema desactivado."
+        if reason:
+            logging.getLogger(__name__).warning("Control detenido: %s", reason)
 
     def stop_camera(self):
         self.cancel_camera_startup()
@@ -371,6 +375,9 @@ class ApplicationController:
             raise RuntimeError("No se pudieron cerrar todos los recursos: " + "; ".join(str(e) for e in errors))
 
     def activate_control(self, confirmed=False, screen_context=None):
+        logging.getLogger(__name__).info("Activación solicitada: método=%s banco=%s confirmada=%s emergencia=%s cámara=%s acciones_validadas=%s",
+            self.config.ui.tracking_method, method_bank(self.config), confirmed, self.emergency.is_set(),
+            self.camera_status().get("stage"), self._actions_ready())
         self.require_control_profile()
         self._require_tracking_calibration()
         if not confirmed or self.emergency.is_set():
@@ -414,6 +421,7 @@ class ApplicationController:
             self.stop_control()
             return
         self.state, self.message = "CONTROL", "Control del sistema activo. F8 o Detener control para salir." + voice_warning
+        logging.getLogger(__name__).info("Activación completada: método=%s sólo_movimiento=%s", self.config.ui.tracking_method, self.control.movement_only)
 
     def _report_recenter(self, result):
         if not result:
@@ -482,6 +490,8 @@ class ApplicationController:
         self.wizard = CalibrationSession(gesture_profile(self.profile, method_bank(self.config)), self.config, self.clock, enabled, source)
         self._calibration_session_id = uuid.uuid4().hex
         self._calibration_logged = 0
+        self._calibration_diagnostic_key = None
+        self._calibration_diagnostic_at = -1e9
         self.wizard.start()
         self.state = "CALIBRATING"
 
@@ -497,6 +507,10 @@ class ApplicationController:
             self._require_profile(calibrated=True)
             self.wizard = CalibrationSession(gesture_profile(self.profile, method_bank(self.config)), self.config, self.clock)
             self.wizard.candidate = gesture_profile(self.profile, method_bank(self.config))
+            self._calibration_session_id = uuid.uuid4().hex
+            self._calibration_logged = 0
+            self._calibration_diagnostic_key = None
+            self._calibration_diagnostic_at = -1e9
         self.wizard.validate()
         self.state = "CALIBRATING"
 
@@ -519,8 +533,21 @@ class ApplicationController:
             record = self.wizard.telemetry[self._calibration_logged]
             ResultStore(self.data_dir / "calibration").append(self._calibration_session_id,
                 dict(experiment="gesture_calibration", schema_version=1, profile_id=self.profile["user_id"],
+                     public_method="nose" if self.config.ui.tracking_method=="nose" else "eyes",
+                     gesture_bank=method_bank(self.config), parameter_source="profile.settings",
                      recorded_at=time.time(), **record))
             self._calibration_logged += 1
+        diagnostic=self.wizard.diagnostic()
+        key=(diagnostic["state"],diagnostic["stage"],diagnostic["requested_gesture"],
+             diagnostic["rejection_reason"],tuple(diagnostic["recognized"]))
+        if key!=self._calibration_diagnostic_key or self.clock()-self._calibration_diagnostic_at>=1:
+            ResultStore(self.data_dir / "calibration").append(self._calibration_session_id,
+                dict(experiment="gesture_diagnostic", schema_version=1, profile_id=self.profile["user_id"],
+                     public_method="nose" if self.config.ui.tracking_method=="nose" else "eyes",
+                     gesture_bank=method_bank(self.config), parameter_source="profile.settings",
+                     recorded_at=time.time(), **diagnostic))
+            self._calibration_diagnostic_key=key
+            self._calibration_diagnostic_at=self.clock()
 
     def save_calibration(self):
         if self.wizard is None:
@@ -533,12 +560,24 @@ class ApplicationController:
         result = save_gesture_mode(self.profile, result, method_bank(self.config))
         if settings is not None:
             result["settings"] = asdict(settings)
-        self.profiles.store.save(result)
-        self.profile = self.profiles.store.load(result["user_id"])
+        bank=method_bank(self.config)
+        try:
+            self.profiles.store.save(result)
+            loaded=self.profiles.store.load(result["user_id"])
+            if loaded.get("gesture_modes",{}).get(bank)!=result.get("gesture_modes",{}).get(bank):
+                raise ValueError("La lectura posterior no coincide con el banco de gestos guardado")
+        except (OSError, ValueError, RuntimeError) as exc:
+            label="Nariz" if bank=="nose" else "Ojos"
+            self.message=f"No se confirmó el guardado de gestos de {label}: {exc}. El intento se conserva para reintentar."
+            logging.getLogger(__name__).exception("Guardado de gestos fallido: banco=%s",bank)
+            raise RuntimeError(self.message) from exc
+        self.profile = loaded
         self.config = load_config(overrides=self.profile.get("settings", {}))
         self._make_gesture()
         self.state = "PREVIEW"
-        self.message = "Perfil guardado y validado. Ya podés probar HeadMouse."
+        self.message = "Gestos de "+("Nariz" if bank=="nose" else "Ojos")+" guardados, validados y releídos. Ya podés probar HeadMouse."
+        logging.getLogger(__name__).info("Gestos guardados y releídos: banco=%s gestos=%s",bank,
+            [k for k,r in loaded.get("gesture_modes",{}).get(bank,{}).get("gesture_calibrations",{}).items() if r.get("enabled")])
 
     def _require_tracking_calibration(self):
         record = self._tracking_record()
@@ -960,37 +999,46 @@ class ApplicationController:
         if self.config.ui.tracking_method=="eye" and record and record.get("vertical_reference","eyelids")!=self.config.eye.vertical_reference:compatible=False
         if self.config.ui.tracking_method=="eye" and record and self.config.eye.vertical_reference=="canthi" and not record.get("ranges_measured"):compatible=False
         camera_status = self.camera_status()
-        tracking_ready=self.config.ui.tracking_method=="nose" or bool(record and compatible and
-            (record.get("validated") if self.config.ui.tracking_method=="eye_absolute" else True))
-        profile_status=self.profiles.status(profile) if profile else "Sin perfil"
-        if profile and self.config.ui.unified_eyes and self.config.ui.tracking_method!="nose":
-            profile_status="Ojos · Movimiento "+("preparado" if tracking_ready else "pendiente")+" · Gestos "+("validados" if self._actions_ready() else "pendientes")
+        capture_context = self._relative_camera_context()
         conditions = []
+        warnings = []
         if not profile:
             conditions.append("Seleccioná un perfil")
         if not self._actions_ready():
-            conditions.append("Gestos pendientes de validar para este método"+("; sólo movimiento, sin clics" if self.config.ui.tracking_method!="nose" else ""))
+            text="Gestos pendientes de validar para este método"+("; sólo movimiento, sin clics" if self.config.ui.tracking_method!="nose" else "")
+            (warnings if self.config.ui.tracking_method!="nose" else conditions).append(text)
         if self.config.ui.tracking_method != "nose":
             if not record:
                 conditions.append("Sin calibración para el método y fuente seleccionados")
             elif not compatible or (self.config.ui.tracking_method == "eye_absolute" and not record.get("validated")):
                 conditions.append("Calibración incompatible o sin comprobación de precisión")
             context = (record or {}).get("camera_context") or (record or {}).get("context")
-            current = self._relative_camera_context()
+            current = capture_context
             if context and current and any(context[k] != current[k] for k in current):
                 compatible = False
                 conditions.append("Calibración incompatible con la cámara/resolución actual")
+            if record and self.config.ui.tracking_method=="eye_absolute":
+                from screen_mapping import capture_host_id
+                if context.get("capture_host") != capture_host_id():
+                    compatible = False
+                    conditions.append("La calibración no identifica este equipo; recalibrá el movimiento ocular")
             if not fresh or eye_coordinates(face, self.config.ui.eye_source,
                 self.config.eye.vertical_reference if self.config.ui.tracking_method=="eye" else (record or {}).get("vertical_reference","eyelids")) is None:
                 conditions.append("Iris seleccionado no detectado o frame vencido")
         if not camera_status.get("ready"):
             conditions.append("Cámara no iniciada o todavía no lista")
-        if self.state in ("CALIBRATING", "EYE_CALIBRATING", "GAZE_CALIBRATING", "JITTER"):
+        if self.state in ("CALIBRATING", "EYE_CALIBRATING", "GAZE_CALIBRATING", "VERTICAL_DIAGNOSTIC", "JITTER") or (self.experiment and self.experiment.active):
             conditions.append("Terminá o cancelá la medición en curso")
+        blockers = list(conditions)
         if not self.control:
             conditions.append("Falta confirmación explícita de activación")
         elif self.control.paused:
             conditions.append("Control pausado")
+        tracking_ready=self.config.ui.tracking_method=="nose" or bool(record and compatible and
+            (record.get("validated") if self.config.ui.tracking_method=="eye_absolute" else True))
+        profile_status=self.profiles.status(profile) if profile else "Sin perfil"
+        if profile and self.config.ui.unified_eyes and self.config.ui.tracking_method!="nose":
+            profile_status="Ojos · Movimiento "+("calibrado" if tracking_ready else "pendiente o incompatible")+" · Gestos "+("validados" if self._actions_ready() else "pendientes")
         return dict(state=self.state, message=self.message, profile=profile,
                     public_method="nose" if self.config.ui.tracking_method=="nose" else "eyes",
                     ocular_response="posición en pantalla" if self.config.ui.ocular_engine=="eye_absolute" else "dirección conservada del perfil anterior",
@@ -998,7 +1046,9 @@ class ApplicationController:
                     settings=asdict(self.config), camera=self.vision is not None,
                     mediapipe="Listo" if camera_status.get("ready") else camera_status["stage"],
                     camera_status=camera_status,
-                    activation_conditions=conditions,
+                    activation_conditions=conditions+warnings,
+                    activation_blockers=blockers, activation_warnings=warnings,
+                    capture_context=capture_context,
                     actions_ready=self._actions_ready(),
                     face=face, detected=fresh, fps=self.vision.get_fps() if self.vision else 0,
                     processing_ms=face.processing_ms if fresh else 0,
