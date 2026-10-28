@@ -54,3 +54,9 @@ QTabBar::tab:selected { color: #8aefe0; border-bottom: 3px solid #66dfce; }
 QTabBar::tab:hover { color: #eef3fc; }
 QTabBar::tab:focus { border: 2px solid #ffd477; }
 QLabel#SettingsNote { background: #2a2a1c; border: 1px solid #7a6a2c; border-radius: 8px; padding: 10px; color: #ffe7a3; }
+QFrame#ProfileCard { background: #172337; border: 1px solid #30425c; border-radius: 14px; }
+QFrame#ProfileCardActive { background: #17303a; border: 2px solid #57d4c3; border-radius: 14px; }
+QFrame#ProfileCard QLabel, QFrame#ProfileCardActive QLabel { background: transparent; }
+QLabel#ProfileName { font-size: 21px; font-weight: 650; color: #ffffff; }
+QLabel#ProfileInUse { color: #8ce5cd; font-weight: 650; padding: 0 8px; }
+QLabel#ProfileError { color: #ffb4bf; }

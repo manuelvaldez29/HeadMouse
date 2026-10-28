@@ -26,16 +26,25 @@ class ProfileManager:
             return "Calibrado · sin validar"
         return "Listo para comenzar"
 
+    @staticmethod
+    def eyes_status(profile):
+        """Resumen para la lista de perfiles; el detalle por fuente está en Calibración → Ojos."""
+        single = any(profile.get(key) for key in ("tracking_calibration", "absolute_calibration"))
+        banks = any(record for key in ("tracking_calibrations", "absolute_calibrations")
+                    for record in (profile.get(key) or {}).values())  # un banco vacío no cuenta
+        return "Movimiento calibrado" if single or banks else "Sin calibrar"
+
     def list_profiles(self):
         result = []
         for path in sorted(self.store.directory.glob("*.json")):
             try:
                 p = self.store.load(path.stem)
                 result.append(dict(user_id=path.stem, display_name=p.get("display_name", path.stem),
-                                   status=self.status(p), calibrated_at=p.get("calibrated_at", "—"), error=""))
+                                   status=self.status(p), calibrated_at=p.get("calibrated_at", "—"), error="",
+                                   eyes=self.eyes_status(p)))
             except (OSError, ValueError) as exc:
                 result.append(dict(user_id=path.stem, display_name=path.stem, status="Necesita reparación",
-                                   calibrated_at="—", error=str(exc)))
+                                   calibrated_at="—", error=str(exc), eyes="—"))
         return result
 
     def create(self, name):

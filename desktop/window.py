@@ -22,6 +22,18 @@ GESTURE_ROWS = (("Ojos izq/der",("LEFT_WINK","RIGHT_WINK")),("Cejas izq/der",("L
                 ("Ambas cejas",("BOTH_BROWS",)),("Boca",("MOUTH_OPEN",)))
 
 
+def friendly_date(value):
+    """'2026-10-11T23:48:20+00:00' → '11/10/2026 20:48' en la hora local."""
+    from datetime import datetime
+    try:
+        moment=datetime.fromisoformat(str(value))
+    except (TypeError, ValueError):
+        return "pendiente"
+    if moment.tzinfo is not None:
+        moment=moment.astimezone()
+    return moment.strftime("%d/%m/%Y %H:%M")
+
+
 def gesture_threshold_lines(d):
     """Por gesto: la señal que usa el perfil, su valor y los umbrales vigentes.
 
@@ -333,32 +345,86 @@ class MainWindow(QMainWindow):
             self.select_public_method("eyes")
 
     def _profiles(self):
-        layout=self.page("Tus perfiles","Cada persona tiene su propia calibración. Cambiar de perfil detiene el control.")
-        self.profile_combo=QComboBox()
-        self.profile_combo.setAccessibleName("Elegir perfil")
-        self.profile_combo.currentIndexChanged.connect(self.select_profile)
-        layout.addWidget(self.profile_combo)
-        self.profile_detail=label("Todavía no seleccionaste un perfil.","BigInstruction")
-        layout.addWidget(self.profile_detail)
-        row=QHBoxLayout()
-        for title,fn in (("Nuevo perfil",self.new_profile),
-                         ("Renombrar",self.rename_profile),("Eliminar",self.delete_profile)):
-            row.addWidget(button(title,fn))
-        layout.addLayout(row)
-        layout.addWidget(button("Calibrar / recalibrar",self.start_calibration,"Primary"))
-        layout.addWidget(button("Validar calibración existente",lambda:self.command_page("validate_calibration",2)))
-        layout.addWidget(label("Renombrar cambia el nombre visible y conserva la identidad de tus resultados.\nEliminar un perfil no borra las sesiones ni los experimentos históricos.","Subtitle"))
-        layout.addStretch()
+        """Una tarjeta por perfil: nombre, estado de Nariz y Ojos, fecha y sus acciones."""
+        layout=self.page("Perfiles","Cada persona tiene su propia calibración. Cambiar de perfil detiene el control.")
+        top=QHBoxLayout()
+        top.addWidget(label("Elegí quién va a usar HeadMouse en esta computadora.","Subtitle"),1)
+        top.addWidget(button("+  Nuevo perfil",self.new_profile,"Primary"))
+        layout.addLayout(top)
+        scroll=QScrollArea()
+        scroll.setWidgetResizable(True)
+        body=QWidget()
+        self.profile_cards=QVBoxLayout(body)
+        self.profile_cards.setContentsMargins(0,4,12,4)
+        self.profile_cards.setSpacing(12)
+        self.profile_cards.addStretch()
+        scroll.setWidget(body)
+        layout.addWidget(scroll,1)
+        layout.addWidget(label("Renombrar cambia el nombre visible y conserva la identidad de tus resultados. "
+                               "Eliminar un perfil no borra las sesiones ni los experimentos históricos.","Subtitle"))
+
+    def _render_profile_cards(self,s):
+        while self.profile_cards.count()>1:  # el último ítem es el stretch
+            widget=self.profile_cards.takeAt(0).widget()
+            if widget: widget.deleteLater()
+        current=(s.get("profile") or {}).get("user_id")
+        entries=s.get("profiles",[])
+        if not entries:
+            empty=QFrame()
+            empty.setObjectName("ProfileCard")
+            box=QVBoxLayout(empty)
+            box.setContentsMargins(20,18,20,18)
+            box.addWidget(label("Todavía no hay perfiles","ProfileName"))
+            box.addWidget(label("Creá uno con «Nuevo perfil». Después calibrás tus gestos en unos minutos.","Subtitle"))
+            self.profile_cards.insertWidget(0,empty)
+            return
+        for index,entry in enumerate(sorted(entries,key=lambda e:(e["user_id"]!=current,e["display_name"].lower()))):
+            self.profile_cards.insertWidget(index,self._profile_card(entry,entry["user_id"]==current))
+
+    def _profile_card(self,entry,in_use):
+        card=QFrame()
+        card.setObjectName("ProfileCardActive" if in_use else "ProfileCard")
+        row=QHBoxLayout(card)
+        row.setContentsMargins(20,16,20,16)
+        row.setSpacing(16)
+        info=QVBoxLayout()
+        info.setSpacing(4)
+        name=entry["display_name"]
+        info.addWidget(label(("●  " if in_use else "")+name,"ProfileName"))
+        if entry.get("error"):
+            info.addWidget(label("No se pudo leer este perfil: "+entry["error"],"ProfileError"))
+        else:
+            info.addWidget(label(f"Nariz: {entry['status']}   ·   Ojos: {entry.get('eyes','—')}"))
+            info.addWidget(label("Última calibración: "+friendly_date(entry.get("calibrated_at")),"Subtitle"))
+        row.addLayout(info,1)
+        actions=QHBoxLayout()
+        actions.setSpacing(8)
+        if in_use:
+            actions.addWidget(label("En uso","ProfileInUse"))
+            calibrate=button("Calibrar",lambda:self.show_page(2))
+            calibrate.setAccessibleName(f"Calibrar el perfil {name}")
+            actions.addWidget(calibrate)
+            rename=button("Renombrar",self.rename_profile)
+            rename.setAccessibleName(f"Renombrar el perfil {name}")
+            actions.addWidget(rename)
+            delete=button("Eliminar",self.delete_profile)
+            delete.setAccessibleName(f"Eliminar el perfil {name}")
+            actions.addWidget(delete)
+        elif not entry.get("error"):
+            use=button("Usar este perfil",lambda checked=False,user_id=entry["user_id"]:self.use_profile(user_id),"Primary")
+            use.setAccessibleName(f"Usar el perfil {name}")
+            actions.addWidget(use)
+        row.addLayout(actions)
+        return card
+
+    def use_profile(self,user_id):
+        self.bridge.request("select_profile",user_id=user_id)
 
     def new_profile(self):
         name,ok=QInputDialog.getText(self,"Nuevo perfil","¿Cómo querés llamar a este perfil?")
         if ok:
             self.bridge.request("create_profile",name=name)
             self.show_page(1)
-
-    def select_profile(self):
-        user_id=self.profile_combo.currentData()
-        if user_id: self.bridge.request("select_profile",user_id=user_id)
 
     def rename_profile(self):
         p=self.snapshot.get("profile")
@@ -1151,7 +1217,6 @@ class MainWindow(QMainWindow):
         name=p.get("display_name",p["user_id"]) if p else "Sin perfil seleccionado"
         self.home_profile.setText(f"Hola, {name}" if p else "Bienvenido a HeadMouse")
         self._present_home(s)
-        self.profile_detail.setText(name+"\n"+s["profile_status"]+"\nCalibración: "+str(p.get("calibrated_at","Pendiente") if p else "Pendiente"))
         method_key=((p or {}).get("user_id"),s["settings"]["ui"]["tracking_method"]=="nose")
         if method_key!=getattr(self,"_calibration_method_key",None):
             self._calibration_method_key=method_key
@@ -1185,13 +1250,7 @@ class MainWindow(QMainWindow):
         profiles_key=json.dumps([s.get("profiles",[]),(s.get("profile") or {}).get("user_id")],sort_keys=True)
         if profiles_key!=self._profiles_key:
             self._profiles_key=profiles_key
-            self.profile_combo.blockSignals(True)
-            self.profile_combo.clear()
-            self.profile_combo.addItem("Elegí un perfil…",None)
-            for entry in s.get("profiles",[]):
-                self.profile_combo.addItem(entry["display_name"]+" · "+entry["status"],entry["user_id"])
-            if p: self.profile_combo.setCurrentIndex(self.profile_combo.findData(p["user_id"]))
-            self.profile_combo.blockSignals(False)
+            self._render_profile_cards(s)
             self.home_profile_combo.blockSignals(True)
             self.home_profile_combo.clear()
             if not p: self.home_profile_combo.addItem("Elegí un perfil…",None)
