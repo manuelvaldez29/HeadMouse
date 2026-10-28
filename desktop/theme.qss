@@ -46,3 +46,11 @@ QPushButton#HeroStop { background: #803847; border-color: #ff8796; color: #fffff
                        min-height: 62px; border-radius: 14px; }
 QPushButton#HeroStop:hover { background: #a44355; }
 QLabel#HomeState { font-size: 19px; font-weight: 600; color: #8ce5cd; }
+QLabel#SettingsSection { font-size: 17px; font-weight: 650; color: #8ce5cd; padding-top: 10px; }
+QTabWidget::pane { border: none; }
+QTabBar::tab { background: transparent; color: #b2c1d7; padding: 10px 18px; margin-right: 4px;
+               border: none; border-bottom: 3px solid transparent; font-weight: 600; }
+QTabBar::tab:selected { color: #8aefe0; border-bottom: 3px solid #66dfce; }
+QTabBar::tab:hover { color: #eef3fc; }
+QTabBar::tab:focus { border: 2px solid #ffd477; }
+QLabel#SettingsNote { background: #2a2a1c; border: 1px solid #7a6a2c; border-radius: 8px; padding: 10px; color: #ffe7a3; }

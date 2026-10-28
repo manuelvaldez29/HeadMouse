@@ -685,57 +685,61 @@ class MainWindow(QMainWindow):
         layout.addWidget(advanced_scroll)
 
     def _settings(self):
-        layout=self.page("Configuración","Los cambios se guardan en el perfil seleccionado. Aplicar detiene el control y la cámara.")
-        scroll=QScrollArea()
-        self.settings_scroll=scroll
-        scroll.setWidgetResizable(True)
-        container=QWidget()
-        form=QFormLayout(container)
-        form.setVerticalSpacing(14)
+        """Pestañas: lo que un usuario cambia en Básico; lo técnico separado por tema.
+
+        Antes era una sola lista de ~40 controles (cámara técnica, ojos, tiempos,
+        voz, modelos). Los nombres internos de los campos no cambian.
+        """
+        layout=self.page("Configuración","Los cambios se guardan en el perfil seleccionado. Guardar detiene el control y la cámara.")
+        self.settings_tabs=QTabWidget()
+        self.settings_tabs.setDocumentMode(True)
+        self.settings_tabs.tabBar().setDrawBase(False)
+        layout.addWidget(self.settings_tabs,1)
         self.fields={}
-        specs=[("vision.camera_index","Cámara",0,100,0),
-               ("vision.frame_width","Cámara: ancho solicitado · 0 automático",0,8192,0),
-               ("vision.frame_height","Cámara: alto solicitado · 0 automático",0,8192,0),
-               ("vision.target_fps","Cámara: FPS solicitados",1,240,0),
-               ("vision.startup_timeout_s","Cámara/MediaPipe: espera inicial máxima · s",.1,120,1),
-               ("vision.shutdown_timeout_s","Cámara: espera de cierre por intento · s",.05,30,2),
-               ("gesture.sensitivity_x","Sensibilidad horizontal",0,1000,1),
-               ("gesture.sensitivity_y","Sensibilidad vertical",0,1000,1),
-               ("gesture.smoothing_alpha","Suavizado (0: directo; 0,95: suave)",0,.95,2),
-               ("gesture.dead_zone","Zona muerta",0,.49,3),
-               ("control.face_timeout_s","Timeout de rostro · segundos",.1,60,1),
-               ("control.scroll_lines","Scroll: muescas de rueda por evento",1,100,0),
-               ("gesture.brow_repeat_delay_ms","Scroll continuo: esperar antes de repetir · ms",0,5000,0),
-               ("gesture.brow_repeat_ms","Scroll continuo: repetir cada · ms (0 = apagado)",0,5000,0),
-               ("gesture.brow_decision_ms","Ventana de decisión de cejas · ms",0,1000,0)]
-        specs += [("eye.sensitivity","Ojos: sensibilidad",0,100,1),
-                  ("eye.acceleration","Ojos: aceleración",0,100,1),
-                  ("eye.dead_zone","Ojos: zona muerta (fracción de rango)",0,.8,3),
-                  ("eye.smoothing_alpha","Ojos: suavizado",0,.95,2),
-                  ("eye.max_delta","Ojos: delta máximo por detección · px",1,60,1)]
-        specs += [("absolute.smoothing_alpha", "Posición ocular: suavizado", 0, .95, 2),
-                  ("absolute.max_step_px", "Posición ocular: paso máximo · px", 1, 100, 1),
-                  ("absolute.jitter_px", "Posición ocular: tolerancia de vibración · px", 0, 30, 1)]
-        for group,title in (("blink","Guiños"),("brow","Cejas"),("both_brows","Ambas cejas"),("mouth","Boca")):
-            specs += [(f"gesture.{group}_hold_ms",f"{title}: sostener · ms",0,5000,0),
-                      (f"gesture.{group}_cooldown_ms",f"{title}: espera · ms",0,10000,0)]
-        for key,title,lo,hi,decimals in specs:
+        self.settings_tab_index={}
+
+        def tab(title,intro):
+            scroll=QScrollArea()
+            scroll.setWidgetResizable(True)
+            body=QWidget()
+            form=QFormLayout(body)
+            form.setVerticalSpacing(14)
+            form.setContentsMargins(4,14,12,8)
+            form.addRow(label(intro,"Subtitle"))
+            scroll.setWidget(body)
+            self.settings_tab_index[title]=self.settings_tabs.addTab(scroll,title)
+            return form,scroll
+
+        def number(form,key,title,lo,hi,decimals,hint=None):
             field=QSpinBox() if decimals==0 else QDoubleSpinBox()
             field.setRange(lo,hi)
             if decimals: field.setDecimals(decimals); field.setSingleStep(.01 if hi<=1 else 1)
             field.setAccessibleName(title)
+            if hint: field.setToolTip(hint)
             form.addRow(title,field)
             self.fields[key]=field
-        self.capture_backend_combo=QComboBox()
-        for title,value in (("DirectShow · Webcams USB en Windows","dshow"),
-                            ("Automático · OpenCV", "auto"),("Media Foundation · Windows", "msmf")):
-            self.capture_backend_combo.addItem(title,value)
-        self.capture_backend_combo.setAccessibleName("Backend de captura de cámara")
-        form.addRow("Backend de cámara",self.capture_backend_combo)
-        form.addRow(button("Preparar captura USB · DirectShow · 640 × 480 · 15 FPS",self.usb_camera_preset))
-        form.addRow(label("El preset se aplica al guardar y detiene la cámara. No cambia de backend durante la sesión. "
-                          "Una resolución nueva puede exigir recalibrar el tracking ocular.","Subtitle"))
-        self.voice_check=QCheckBox("Dictado por voz: al hacer click en un campo de texto, escuchar y escribir")
+
+        def section(form,title):
+            form.addRow(label(title,"SettingsSection"))
+
+        # ── Básico ──
+        form,_=tab("Básico","Lo que vas a querer ajustar. Lo demás está en las otras pestañas.")
+        section(form,"Control")
+        self.tracking_combo=QComboBox()
+        self.tracking_combo.addItem("Nariz","nose")
+        self.tracking_combo.addItem("Ojos","eyes")
+        self.tracking_combo.setAccessibleName("Método de tracking")
+        form.addRow("Mover el cursor con",self.tracking_combo)
+        self.tracking_combo.activated.connect(lambda _index:self.select_public_method(self.tracking_combo.currentData()))
+        number(form,"vision.camera_index","Cámara (0 = la integrada)",0,100,0)
+        section(form,"Cursor con la nariz")
+        number(form,"gesture.sensitivity_x","Velocidad horizontal",0,1000,1,"Más alto: el cursor se mueve más rápido hacia los costados")
+        number(form,"gesture.sensitivity_y","Velocidad vertical",0,1000,1,"Más alto: el cursor se mueve más rápido hacia arriba y abajo")
+        number(form,"gesture.dead_zone","Zona quieta alrededor del centro",0,.49,3,
+               "Cuánto podés mover la cabeza sin que se mueva el cursor")
+        number(form,"gesture.smoothing_alpha","Suavizado (0 directo · 0,95 muy suave)",0,.95,2)
+        section(form,"Dictado por voz")
+        self.voice_check=QCheckBox("Al hacer click en un campo de texto, escuchar y escribir")
         self.voice_check.setAccessibleName("Dictado por voz")
         form.addRow(self.voice_check)
         self.voice_model=QComboBox()
@@ -749,27 +753,37 @@ class MainWindow(QMainWindow):
         self.voice_send.addItems(["","enviar"])
         self.voice_send.setAccessibleName("Palabra final que presiona Enter")
         form.addRow("Palabra final que presiona Enter (vacío: ninguna)",self.voice_send)
-        form.addRow(label("Comandos de voz: «borrar», «borrar N palabras», «borrar N letras», «borrar todo», «deshacer». "
+        form.addRow(label("Comandos: «borrar», «borrar N palabras», «borrar N letras», «borrar todo», «deshacer». "
                           "Decí solo el comando. La lista completa está en Gestos y acciones.","Subtitle"))
-        self.overlay_check=QCheckBox("Mostrar punto de tracking, neutral, zona muerta y dirección")
-        self.landmarks_check=QCheckBox("Mostrar landmarks relevantes")
+        section(form,"Vista de cámara")
+        self.overlay_check=QCheckBox("Mostrar punto de tracking, centro, zona quieta y dirección")
+        self.landmarks_check=QCheckBox("Mostrar puntos de la cara")
         form.addRow(self.overlay_check)
         form.addRow(self.landmarks_check)
-        self.tracking_combo=QComboBox()
-        self.tracking_combo.addItem("Nariz","nose")
-        self.tracking_combo.addItem("Ojos","eyes")
-        self.tracking_combo.setAccessibleName("Método de tracking")
-        form.addRow("Método de tracking",self.tracking_combo)
-        self.tracking_combo.activated.connect(lambda _index:self.select_public_method(self.tracking_combo.currentData()))
-        form.addRow(label("Opciones avanzadas de Ojos","Subtitle"))
-        self.eye_axis_zones=QCheckBox("Definir zona muerta horizontal y vertical de Ojos")
-        self.eye_dead_zone_x=QDoubleSpinBox();self.eye_dead_zone_y=QDoubleSpinBox()
-        for widget in (self.eye_dead_zone_x,self.eye_dead_zone_y):widget.setRange(0,.8);widget.setDecimals(3);widget.setSingleStep(.01)
-        self.eye_axis_zones.toggled.connect(lambda value:[w.setEnabled(value) for w in (self.eye_dead_zone_x,self.eye_dead_zone_y)])
-        form.addRow(self.eye_axis_zones)
-        form.addRow("Zona muerta horizontal",self.eye_dead_zone_x)
-        form.addRow("Zona muerta vertical",self.eye_dead_zone_y)
-        self.eye_source_label=label("Fuente ocular")
+
+        # ── Gestos y scroll ──
+        form,_=tab("Gestos y scroll","Cuánto hay que sostener cada gesto y cuánto esperar antes de repetirlo. "
+                                     "Cambiarlos invalida la prueba de gestos del método editado.")
+        section(form,"Tiempos de los gestos")
+        for group,title in (("blink","Guiños"),("brow","Cejas"),("both_brows","Ambas cejas"),("mouth","Boca")):
+            number(form,f"gesture.{group}_hold_ms",f"{title}: sostener · ms",0,5000,0)
+            number(form,f"gesture.{group}_cooldown_ms",f"{title}: espera · ms",0,10000,0)
+        number(form,"gesture.brow_decision_ms","Cejas: tiempo para distinguir una de ambas · ms",0,1000,0)
+        section(form,"Scroll")
+        number(form,"control.scroll_lines","Muescas de rueda por gesto",1,100,0)
+        number(form,"gesture.brow_repeat_delay_ms","Ceja sostenida: esperar antes de repetir · ms",0,5000,0)
+        number(form,"gesture.brow_repeat_ms","Ceja sostenida: repetir cada · ms (0 = apagado)",0,5000,0)
+        section(form,"Seguridad")
+        number(form,"control.face_timeout_s","Pausar si no se ve la cara durante · s",.1,60,1)
+
+        # ── Ojos ──
+        form,eyes_scroll=tab("Ojos","Opciones del control con los ojos (experimental). La calibración y los gestos "
+                                    "están en Calibración → Ojos.")
+        self.settings_scroll=eyes_scroll
+        self.eye_unused_note=label("Ahora el cursor se mueve con la nariz: estas opciones se usan cuando elegís "
+                                   "«Ojos» en la pestaña Básico.","SettingsNote")
+        form.addRow(self.eye_unused_note)
+        self.eye_source_label=label("Ojo que se sigue")
         self.eye_source_combo=QComboBox()
         for source,title in EYE_SOURCE_LABELS.items():
             self.eye_source_combo.addItem(title,source)
@@ -778,30 +792,65 @@ class MainWindow(QMainWindow):
         self.eye_source_hint=label("Podés mantener ambos ojos abiertos. Izquierdo y derecho son tus lados. "
                                    "Las marcas I/D del preview permiten verificarlos. Guardá antes de calibrar.","Subtitle")
         form.addRow(self.eye_source_hint)
+        self.eye_warning=label("La respuesta guardada se mantiene; no se cambia automáticamente de algoritmo.","Subtitle")
+        form.addRow(self.eye_warning)
+        section(form,"Movimiento por dirección (joystick)")
+        number(form,"eye.sensitivity","Sensibilidad",0,100,1)
+        number(form,"eye.acceleration","Aceleración",0,100,1)
+        number(form,"eye.dead_zone","Zona quieta (fracción del rango)",0,.8,3)
+        number(form,"eye.smoothing_alpha","Suavizado",0,.95,2)
+        number(form,"eye.max_delta","Movimiento máximo por detección · px",1,60,1)
+        self.eye_axis_zones=QCheckBox("Definir zona quieta horizontal y vertical por separado")
+        self.eye_dead_zone_x=QDoubleSpinBox();self.eye_dead_zone_y=QDoubleSpinBox()
+        for widget in (self.eye_dead_zone_x,self.eye_dead_zone_y):widget.setRange(0,.8);widget.setDecimals(3);widget.setSingleStep(.01)
+        self.eye_axis_zones.toggled.connect(lambda value:[w.setEnabled(value) for w in (self.eye_dead_zone_x,self.eye_dead_zone_y)])
+        form.addRow(self.eye_axis_zones)
+        form.addRow("Zona quieta horizontal",self.eye_dead_zone_x)
+        form.addRow("Zona quieta vertical",self.eye_dead_zone_y)
         self.eye_vertical_reference=QComboBox()
         self.eye_vertical_reference.addItem("Párpados · referencia original","eyelids")
         self.eye_vertical_reference.addItem("Comisuras · prueba vertical; requiere calibrar rangos","canthi")
         self.eye_vertical_reference.setAccessibleName("Referencia vertical del joystick ocular")
-        form.addRow("Referencia vertical de seguimiento",self.eye_vertical_reference)
-        self.eye_warning=label("La calibración y los gestos están en Calibración → Ojos. "
-                               "La respuesta guardada se mantiene; no se cambia automáticamente de algoritmo.","Subtitle")
-        form.addRow(self.eye_warning)
+        form.addRow("Referencia vertical",self.eye_vertical_reference)
+        section(form,"Movimiento por posición en pantalla")
+        number(form,"absolute.smoothing_alpha","Suavizado",0,.95,2)
+        number(form,"absolute.max_step_px","Paso máximo · px",1,100,1)
+        number(form,"absolute.jitter_px","Tolerancia de vibración · px",0,30,1)
         self.ocular_upgrade=button("Preparar seguimiento por zonas de pantalla",self.confirm_ocular_upgrade)
         form.addRow(self.ocular_upgrade)
+        form.addRow(label("Usa sólo la pantalla principal, aunque haya otros monitores. Cambiar pantalla, DPI o cámara "
+                          "requiere recalibrar. Las acciones pertenecen a la modalidad guardada.","Subtitle"))
         self.tracking_combo.currentIndexChanged.connect(self._show_eye_source)
+
+        # ── Cámara ──
+        form,_=tab("Cámara","Ajustes técnicos de captura. Cambialos sólo si la cámara no arranca o va lenta.")
+        self.capture_backend_combo=QComboBox()
+        for title,value in (("DirectShow · Webcams USB en Windows","dshow"),
+                            ("Automático · OpenCV", "auto"),("Media Foundation · Windows", "msmf")):
+            self.capture_backend_combo.addItem(title,value)
+        self.capture_backend_combo.setAccessibleName("Backend de captura de cámara")
+        form.addRow("Backend de cámara",self.capture_backend_combo)
+        number(form,"vision.frame_width","Ancho solicitado · 0 automático",0,8192,0)
+        number(form,"vision.frame_height","Alto solicitado · 0 automático",0,8192,0)
+        number(form,"vision.target_fps","FPS solicitados",1,240,0)
+        number(form,"vision.startup_timeout_s","Espera inicial máxima · s",.1,120,1)
+        number(form,"vision.shutdown_timeout_s","Espera de cierre por intento · s",.05,30,2)
+        form.addRow(button("Preparar captura USB · DirectShow · 640 × 480 · 15 FPS",self.usb_camera_preset))
+        form.addRow(label("El preset se aplica al guardar y detiene la cámara. Una resolución nueva puede exigir "
+                          "recalibrar el tracking ocular.","Subtitle"))
+
+        # ── Modelos ──
+        form,_=tab("Modelos","Archivos que se descargan una sola vez. Después HeadMouse funciona sin Internet.")
+        self.prepare_model_button=button("Preparar modelo facial (requiere Internet una vez)",self.prepare_model)
+        self.prepare_voice_button=button("Preparar modelo de voz (requiere Internet una vez)",self.prepare_voice_model)
+        form.addRow(self.prepare_model_button)
+        form.addRow(self.prepare_voice_button)
+
         self._show_eye_source()
-        form.addRow(label("La calibración usa sólo la pantalla primaria, aunque haya otros monitores conectados. "
-                          "Cambiar pantalla, DPI o cámara requiere recalibrar. Las acciones pertenecen a la modalidad guardada.", "Subtitle"))
-        scroll.setWidget(container)
-        layout.addWidget(scroll,1)
         row=QHBoxLayout()
         row.addWidget(button("Restaurar valores predeterminados",self.restore_defaults))
         row.addWidget(button("Guardar configuración",self.save_settings,"Primary"))
         layout.addLayout(row)
-        self.prepare_model_button=button("Preparar modelo facial (requiere Internet una vez)",self.prepare_model)
-        self.prepare_voice_button=button("Preparar modelo de voz (requiere Internet una vez)",self.prepare_voice_model)
-        layout.addWidget(self.prepare_model_button)
-        layout.addWidget(self.prepare_voice_button)
 
     def start_eye_tracking_calibration(self):
         self.open_eye_calibration()
@@ -836,6 +885,11 @@ class MainWindow(QMainWindow):
         visible=self.tracking_combo.currentData()!="nose"
         for widget in (self.eye_source_label,self.eye_source_combo,self.eye_source_hint,self.eye_warning):
             widget.setVisible(visible)
+        if hasattr(self,"settings_tabs"):
+            index=self.settings_tab_index["Ojos"]
+            self.settings_tabs.setTabText(index,"Ojos" if visible else "Ojos · sin usar")
+            self.settings_tabs.setTabToolTip(index,"" if visible else "Elegí «Ojos» en Básico para activar estas opciones")
+            self.eye_unused_note.setVisible(not visible)
         engine=self.snapshot.get("settings",{}).get("ui",{}).get("tracking_method")
         for key,widget in self.fields.items():
             if key.startswith("eye."):widget.setEnabled(visible and engine=="eye")
