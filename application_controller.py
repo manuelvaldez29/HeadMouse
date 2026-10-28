@@ -386,7 +386,7 @@ class ApplicationController:
                 raise ValueError("Cambió la cámara o resolución: recalibrá el tracking ocular de esta fuente")
         if self.config.ui.tracking_method != "nose":
             face = self.vision.get_face_data()
-            ref=self.config.eye.vertical_reference if self.config.ui.tracking_method=="eye" else "eyelids"
+            ref=self.config.eye.vertical_reference if self.config.ui.tracking_method=="eye" else (self._tracking_record() or {}).get("vertical_reference","eyelids")
             if not face.fresh(self.config.gesture.stale_after_s, self.clock()) or eye_coordinates(face, self.config.ui.eye_source,ref) is None:
                 raise ValueError("Iris seleccionado no detectado o frame vencido. Verificá el diagnóstico seguro antes de activar.")
         if self.emergency.is_set():
@@ -672,7 +672,8 @@ class ApplicationController:
         frame = self.vision.get_frame()
         if frame is None:
             raise ValueError("Esperá un frame de cámara antes de calibrar")
-        context=dict(width=screen_context["width"], height=screen_context["height"],
+        from screen_mapping import capture_host_id
+        context=dict(capture_host=capture_host_id(), width=screen_context["width"], height=screen_context["height"],
                     dpr=screen_context["dpr"], screen=screen_context["screen"],
                     camera_index=self.config.vision.camera_index,
                     frame_width=frame.shape[1], frame_height=frame.shape[0])
@@ -684,7 +685,7 @@ class ApplicationController:
         context = self._camera_context(screen_context)
         from screen_mapping import same_context
         if not same_context(self._tracking_record()["context"],context):
-            raise ValueError("Cambió pantalla, DPI, cámara o resolución de captura. Recalibrá ojos absolutos")
+            raise ValueError("El entorno guardado no coincide o no identifica este equipo (pantalla, DPI, cámara o resolución). Recalibrá ojos absolutos")
 
     def start_gaze_calibration(self, screen_context, relative=False):
         from gaze_mapping import GazeCalibrationSession
@@ -710,6 +711,28 @@ class ApplicationController:
         if self.gaze_calibration is None or self.state != "GAZE_CALIBRATING":
             raise ValueError("Iniciá la calibración multipunto primero")
         self.gaze_calibration.repeat(index)
+
+    def record_gaze_viewport(self, phase, index, logical_rect, dpr, target_local_logical=None):
+        session = self.gaze_calibration
+        if session and session.phase == phase and session.index == index:
+            # Telemetría de la ventana real; no se cambian las coordenadas del modelo.
+            local = target_local_logical or [session.snapshot()["target"][0]*(logical_rect[2]-1),session.snapshot()["target"][1]*(logical_rect[3]-1)]
+            session.viewport = dict(phase=phase, point_index=index, logical_rect=list(logical_rect), dpr=dpr,
+                expected_physical_size=[session.context["width"],session.context["height"]],
+                drawn_target_local_physical=[local[0]*dpr,local[1]*dpr],
+                drawn_target_global_logical=[logical_rect[0]+local[0],logical_rect[1]+local[1]])
+
+    def export_gaze_attempt(self):
+        if self.gaze_calibration is None or self.state != "GAZE_CALIBRATING":
+            raise ValueError("No hay intento ocular para exportar")
+        path = ResultStore(self.data_dir / "calibration").append(uuid.uuid4().hex,
+            dict(recorded_at=time.time(), **self.gaze_calibration.diagnostic_record()))
+        self.gaze_calibration.message = "Diagnóstico guardado en "+str(path)+". No aprueba calibración ni habilita el control."
+
+    def review_gaze_training(self):
+        if self.gaze_calibration is None or self.state != "GAZE_CALIBRATING":
+            raise ValueError("Iniciá la calibración multipunto primero")
+        self.gaze_calibration.review_training()
 
     def save_gaze_calibration(self):
         if self.gaze_calibration is None or self.state != "GAZE_CALIBRATING":
@@ -851,13 +874,17 @@ class ApplicationController:
         elif self.state == "GAZE_CALIBRATING" and self.gaze_calibration:
             self.gaze_calibration.update(face)
             session = self.gaze_calibration
-            key = (session.revision, session.state)
-            if session.state in ("ready", "invalid", "error") and key != self._gaze_logged:
+            key = (session.revision, session.state if session.state in ("ready", "invalid", "error") else "progress",
+                   session.phase, session.index, len(session.points), len(session.validation_points))
+            if (session.points or session.validation_points or session.state in ("invalid", "error")) and key != self._gaze_logged:
                 ResultStore(self.data_dir / "calibration").append(uuid.uuid4().hex,
                     dict(experiment="relative_ranges" if session.relative else "absolute_calibration", schema_version=1,
                          profile_id=self.profile["user_id"], recorded_at=time.time(), context=session.context,
                          eye_source=session.eye_source,
-                         state=session.state, message=session.message,
+                         state=session.state, outcome=session.outcome, message=session.message,
+                         training_report=session.model.record.get("training_report") if session.model else None,
+                         model=session.model.record if session.model else None,
+                         validation_points=list(session.validation_points.values()),
                          points=[{k:v for k,v in point.items() if k!="features"} for point in session.points.values()],
                          rejected_points={i:{k:v for k,v in point.items() if k!="features"} for i,point in session.rejected_points.items()},
                          direction_check=session.last_check,
@@ -953,7 +980,8 @@ class ApplicationController:
             if context and current and any(context[k] != current[k] for k in current):
                 compatible = False
                 conditions.append("Calibración incompatible con la cámara/resolución actual")
-            if not fresh or eye_coordinates(face, self.config.ui.eye_source) is None:
+            if not fresh or eye_coordinates(face, self.config.ui.eye_source,
+                self.config.eye.vertical_reference if self.config.ui.tracking_method=="eye" else (record or {}).get("vertical_reference","eyelids")) is None:
                 conditions.append("Iris seleccionado no detectado o frame vencido")
         if not camera_status.get("ready"):
             conditions.append("Cámara no iniciada o todavía no lista")
@@ -989,7 +1017,8 @@ class ApplicationController:
                     eye_source_label=SOURCE_LABELS[self.config.ui.eye_source],
                     eye_availability={side: bool(fresh and eye_coordinates(face, side) is not None) for side in ("left", "right")},
                     used_gaze=gaze_position(face, self.config.ui.eye_source,
-                        self.config.eye.vertical_reference if self.config.ui.tracking_method=="eye" else "eyelids") if fresh else None,
+                        self.config.eye.vertical_reference if self.config.ui.tracking_method=="eye" else
+                        (self.gaze_calibration.vertical_reference if self.gaze_calibration else (record or {}).get("vertical_reference","eyelids"))) if fresh else None,
                     tracking_calibrated=tracking_ready,
                     experiment=self.experiment.snapshot() if self.experiment else None,
                     jitter=self.jitter_result, jitter_remaining=max(0, self.jitter.duration_s-(self.clock()-self.jitter.started)) if self.jitter else None,

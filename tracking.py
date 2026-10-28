@@ -61,6 +61,7 @@ class AbsoluteGazeTrackingStrategy:
         from gaze_mapping import GazeModel
         self.config = config or AbsoluteTrackingConfig()
         self.model = GazeModel(calibration) if calibration else None
+        self.vertical_reference = self.model.vertical_reference if self.model else "eyelids"
         self.eye_source = validate_source(eye_source)
         self.reason = "falta calibración absoluta validada"
 

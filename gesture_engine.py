@@ -333,7 +333,7 @@ class GestureEngine:
 
     def tracking_diagnostic(self):
         if self.strategy.name == "eye_absolute":
-            return dict(method="eye_absolute", calibrated=self.strategy.model is not None,
+            return dict(method="eye_absolute", vertical_reference=self.strategy.vertical_reference, calibrated=self.strategy.model is not None,
                         eye_source=self.strategy.eye_source,
                         prediction=getattr(self, "_absolute_smooth", None),
                         block_reason=self._tracking_block, model_reason=self.strategy.reason,

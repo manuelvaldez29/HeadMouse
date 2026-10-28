@@ -170,13 +170,15 @@ class CaptureRegressionTests(unittest.TestCase):
             with self.assertRaises(ValueError): TrackingCalibration.from_record(absolute)
             with self.assertRaises(ValueError): GazeModel(relative)
 
-    def test_absolute_captures_center_first_and_checks_direction_before_fit(self):
+    def test_absolute_captures_center_first_and_defers_direction_to_fit(self):
         session = self.session(relative=False)
         self.assertEqual(session.snapshot()["target"], (.5,.5))
         self.capture(session, .5, .5)
         self.capture(session, .7, .7)  # objetivo arriba/izquierda
-        self.assertEqual(session.state, "invalid")
+        self.assertEqual(session.state, "countdown")
+        self.assertIn(0, session.points)
         self.assertIsNone(session.model)
+        self.assertFalse(session.snapshot()["can_save"])
 
     def test_absolute_validation_has_no_relative_range_minimum(self):
         session = self.session(relative=False)

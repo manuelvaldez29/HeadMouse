@@ -7,7 +7,7 @@ from application_controller import ApplicationController
 COMMANDS = {"create_profile", "select_profile", "rename_profile", "delete_profile", "save_settings",
             "select_control_method", "select_eye_source", "save_public_settings", "upgrade_ocular_response",
             "start_vertical_diagnostic", "repeat_vertical_point", "cancel_vertical_diagnostic",
-            "start_gaze_calibration", "repeat_gaze_point", "save_gaze_calibration", "cancel_gaze_calibration",
+            "start_gaze_calibration", "review_gaze_training", "export_gaze_attempt", "record_gaze_viewport", "repeat_gaze_point", "save_gaze_calibration", "cancel_gaze_calibration",
             "start_eye_calibration", "save_eye_calibration", "cancel_eye_calibration",
             "restore_defaults", "start_camera", "stop_camera", "activate_control", "stop_control",
             "start_diagnostic", "start_calibration", "validate_calibration", "repeat_calibration",

@@ -16,7 +16,7 @@ CONTEXT_KEYS = ("width", "height", "dpr", "screen", "camera_index", "frame_width
 
 
 def validate_context(context):
-    if not isinstance(context, dict) or not set(CONTEXT_KEYS) <= set(context) or set(context)-set(CONTEXT_KEYS)-{"display"}:
+    if not isinstance(context, dict) or not set(CONTEXT_KEYS) <= set(context) or set(context)-set(CONTEXT_KEYS)-{"display", "capture_host"}:
         raise ValueError("Faltan condiciones de pantalla/cámara")
     for key in ("width", "height", "frame_width", "frame_height"):
         bounded(key, context[key], 2, 100000, integer=True)
@@ -24,6 +24,8 @@ def validate_context(context):
     bounded("camera_index", context["camera_index"], 0, 100, integer=True)
     if not isinstance(context["screen"], str) or not context["screen"]:
         raise ValueError("Falta identificar la pantalla")
+    if "capture_host" in context and (not isinstance(context["capture_host"], str) or len(context["capture_host"]) != 64):
+        raise ValueError("Identidad de entorno de captura inválida")
     if "display" in context:
         from screen_mapping import screen_display
         screen_display(context)
@@ -48,16 +50,45 @@ def design(values, degree):
     return np.stack(columns, axis=-1)
 
 
+def position_errors(predicted, target, context):
+    """Predicciones normalizadas → píxeles físicos; sin volver a aplicar DPR."""
+    pixels = np.array([context["width"]-1, context["height"]-1])
+    predicted = np.asarray(predicted, dtype=float)*pixels
+    target_px = np.asarray(target)*pixels
+    delta = predicted-target_px
+    radial = np.linalg.norm(delta, axis=1)
+    return dict(target_px=target_px.tolist(), predicted_mean_px=predicted.mean(axis=0).tolist(),
+                predicted_median_px=np.median(predicted,axis=0).tolist(),
+                signed_bias_px=delta.mean(axis=0).tolist(),
+                error_x_px=float(np.mean(np.abs(delta[:,0]))),
+                error_y_px=float(np.mean(np.abs(delta[:,1]))),
+                error_mean_px=float(np.mean(radial)), error_p95_px=float(np.percentile(radial,95)))
+
+
+def precision_summary(points, context):
+    diagonal = math.hypot(context["width"], context["height"])
+    mean = float(np.mean([p["error_mean_px"] for p in points]))
+    worst = max(p["error_mean_px"] for p in points)
+    return dict(error_mean_px=mean, worst_error_px=worst, mean_limit_px=.10*diagonal,
+                zone_limit_px=.18*diagonal, passed=bool(mean<=.10*diagonal and worst<=.18*diagonal))
+
+
 class GazeModel:
     def __init__(self, record):
         try:
             self.record = deepcopy(record)
-            if type(record["schema_version"]) is not int or record["schema_version"] not in (1, 2) or record["method"] != "eye_absolute":
+            if type(record["schema_version"]) is not int or record["schema_version"] not in (1, 2, 3) or record["method"] != "eye_absolute":
                 raise ValueError("Modelo ocular desconocido")
+            from gaze_source import validate_vertical_reference
+            self.vertical_reference = validate_vertical_reference(record.get("vertical_reference", "eyelids"))
+            if record["schema_version"] < 3 and self.vertical_reference != "eyelids":
+                raise ValueError("La referencia por comisuras requiere un modelo v3")
+            if record["schema_version"] == 3 and "vertical_reference" not in record:
+                raise ValueError("Falta referencia geométrica del modelo v3")
             self.eye_source = validate_source(record.get("eye_source", "both"))
             if record["schema_version"] == 1 and self.eye_source != "both":
                 raise ValueError("Un modelo histórico es exclusivamente binocular")
-            if record["schema_version"] == 2 and "eye_source" not in record:
+            if record["schema_version"] >= 2 and "eye_source" not in record:
                 raise ValueError("Falta fuente ocular del modelo")
             self.feature_count = 10 if self.eye_source == "both" else 8
             validate_context(record["context"])
@@ -72,7 +103,7 @@ class GazeModel:
             if (self.center.shape != (2,) or self.scale.shape != (2,) or
                 self.coefficients.shape != (3 if self.degree == 1 else 6, 2) or
                 self.lower.shape != (self.feature_count,) or self.upper.shape != (self.feature_count,) or
-                np.any(self.scale < .01) or np.any(self.lower > self.upper) or
+                np.any(self.scale < (1e-6 if self.vertical_reference == "canthi" else .01)) or np.any(self.lower > self.upper) or
                 not all(np.isfinite(a).all() for a in
                         (self.center, self.scale, self.coefficients, self.lower, self.upper))):
                 raise ValueError("Coeficientes/dominio inválidos")
@@ -94,9 +125,11 @@ class GazeModel:
             raise ValueError("Modelo ocular incompleto") from exc
 
     @classmethod
-    def fit(cls, point_features, targets, context, eye_source="both"):
+    def fit(cls, point_features, targets, context, eye_source="both", point_spreads=None, vertical_reference="eyelids"):
         validate_context(context)
         validate_source(eye_source)
+        from gaze_source import validate_vertical_reference
+        validate_vertical_reference(vertical_reference)
         ocular_count = 4 if eye_source == "both" else 2
         rows, targets = np.asarray(point_features, dtype=float), np.asarray(targets, dtype=float)
         if rows.shape != (9, ocular_count+6) or targets.shape != (9, 2) or not np.isfinite(rows).all() or not np.isfinite(targets).all():
@@ -105,23 +138,36 @@ class GazeModel:
             raise ValueError("Objetivos de ajuste incompatibles")
         gaze = feature_gaze(rows, eye_source)
         center, scale = np.mean(gaze, axis=0), np.ptp(gaze, axis=0)/2
-        if np.any(scale < .025):
+        if vertical_reference == "canthi" and point_spreads is None:
+            raise ValueError("Comisuras requiere dispersión medida por objetivo")
+        # Las comisuras normalizan por ancho ocular: el piso de párpados no comparte escala.
+        if np.any(scale < (1e-6 if vertical_reference == "canthi" else .025)):
             raise ValueError("Rango ocular insuficiente: repetí la calibración")
+        if point_spreads is not None:
+            noise = np.asarray(point_spreads, dtype=float)
+            if noise.shape != (9, 2) or not np.isfinite(noise).all() or np.any(noise < 0):
+                raise ValueError("Dispersión ocular inválida")
+            # La cobertura completa debe superar el ruido intrafijación por eje.
+            if np.any(2*scale <= np.max(noise, axis=0)):
+                raise ValueError("Variación espacial insuficiente respecto del ruido ocular")
         z = (gaze-center)/scale
         candidates = []
         # Elegir complejidad por leave-one-target-out; no por error de entrenamiento.
         for degree in (1, 2):
             matrix = design(z, degree)
-            if np.linalg.matrix_rank(matrix) < matrix.shape[1]:
+            if np.linalg.matrix_rank(matrix) < matrix.shape[1] or np.linalg.cond(matrix) > 1000:
                 continue
             penalty = np.eye(matrix.shape[1])*.01
             penalty[0, 0] = 0
             errors = []
             for i in range(9):
                 mask = np.arange(9) != i
-                a, b = matrix[mask], targets[mask]
+                fold_center = gaze[mask].mean(axis=0)
+                fold_scale = np.maximum(np.ptp(gaze[mask],axis=0)/2,1e-8)
+                a, b = design((gaze[mask]-fold_center)/fold_scale,degree), targets[mask]
+                held_out = design((gaze[i]-fold_center)/fold_scale,degree)
                 coeff = np.linalg.solve(a.T@a+penalty, a.T@b)
-                errors.append(float(np.sum((matrix[i]@coeff-targets[i])**2)))
+                errors.append(float(np.sum((held_out@coeff-targets[i])**2)))
             candidates.append((float(np.mean(errors)), degree, matrix, penalty))
         if not candidates:
             raise ValueError("Fijaciones degeneradas: repetí posiciones")
@@ -132,13 +178,19 @@ class GazeModel:
             best = linear
         score, degree, matrix, penalty = best
         coeff = np.linalg.solve(matrix.T@matrix+penalty, matrix.T@targets)
+        training = [dict(point_index=i, target=list(targets[i]),
+                    **position_errors([matrix[i]@coeff],targets[i],context)) for i in range(9)]
         # Márgenes de abstención, no coeficientes de compensación inventados.
         margin = np.array([.06]*ocular_count+[.06, .06, max(.02, float(np.median(rows[:, ocular_count+2]))*.25), 10., 10., 10.])
-        record = dict(schema_version=2, method="eye_absolute", degree=degree, eye_source=eye_source,
+        record = dict(schema_version=3 if vertical_reference == "canthi" else 2, vertical_reference=vertical_reference, method="eye_absolute", degree=degree, eye_source=eye_source,
                       center=center.tolist(), scale=scale.tolist(), coefficients=coeff.tolist(),
                       lower=(rows.min(axis=0)-margin).tolist(), upper=(rows.max(axis=0)+margin).tolist(),
                       context=deepcopy(context), validated=False, validation=None,
-                      cross_validation_rmse_normalized=math.sqrt(score), ridge=.01)
+                      cross_validation_rmse_normalized=math.sqrt(score), ridge=.01,
+                      training_report=dict(points=training, **precision_summary(training,context)),
+                      fit_diagnostics=dict(gaze_range=(2*scale).tolist(),
+                          max_fixation_spread=np.max(noise,axis=0).tolist() if point_spreads is not None else None,
+                          design_condition=float(np.linalg.cond(matrix)), condition_limit=1000.))
         return cls(record)
 
     def predict_features(self, row):
@@ -152,7 +204,7 @@ class GazeModel:
         return tuple(float(v) for v in np.clip(prediction, 0, 1))
 
     def predict(self, face):
-        row = features(face, self.eye_source)
+        row = features(face, self.eye_source,self.vertical_reference)
         return self.predict_features(row) if row is not None else None
 
 
@@ -181,6 +233,9 @@ class GazeCalibrationSession:
         self.last_check = None
         self.head_stable=None
         self.revision = 0
+        self.capture_sequence = 0
+        self.viewport = None
+        self.outcome = "capturing"
         self.accept_after = 0
         self.state, self.message = "countdown", "Mirá el objetivo. Control real desactivado."
         self.started = clock()
@@ -191,9 +246,13 @@ class GazeCalibrationSession:
         if type(index) is not int or not 0 <= index < len(targets):
             raise ValueError("Punto inválido")
         self.index = index
+        self.outcome = "capturing"
+        self.viewport = None
         self.revision += 1
         (self.points if self.phase == "training" else self.validation_points).pop(index, None)
         if self.phase == "training":
+            if not self.relative:
+                self.vertical_reference = "eyelids"
             self.model = None
             self.validation_points.clear()
         elif self.model:
@@ -204,23 +263,78 @@ class GazeCalibrationSession:
         self.started = self.clock()
         self.state, self.message = "countdown", "Repetí la fijación en el objetivo."
 
+    def _reference_features(self, point, reference):
+        row = np.array(point["features"],dtype=float)
+        if reference == "canthi":
+            sides = ("left", "right") if self.eye_source == "both" else (self.eye_source,)
+            for i,side in enumerate(sides):
+                row[2*i+1] = point["reference_comparison"][side+"_canthi"]["median"]
+        return row
+
+    def _fit_references(self):
+        candidates, comparison = [], []
+        for reference in ("eyelids", "canthi"):
+            try:
+                rows = [self._reference_features(self.points[i],reference) for i in range(9)]
+                spreads = [[self.points[i]["gaze_spread"][0],
+                    self.points[i]["gaze_spread"][1] if reference == "eyelids" else
+                    self.points[i]["reference_comparison"][self.eye_source+"_canthi"]["spread"]] for i in range(9)]
+                model = GazeModel.fit(rows,self.targets,self.context,self.eye_source,spreads,reference)
+                candidates.append(model)
+                comparison.append(dict(reference=reference, cv_rmse=model.record["cross_validation_rmse_normalized"],
+                    training_error_px=model.record["training_report"]["error_mean_px"]))
+            except (ValueError, KeyError) as exc:
+                comparison.append(dict(reference=reference,rejected=str(exc)))
+        if not candidates:
+            raise ValueError("No hay referencia ocular con cobertura y ruido suficientes: "+str(comparison))
+        baseline = next((m for m in candidates if m.vertical_reference == "eyelids"), None)
+        best = min(candidates,key=lambda m:m.record["cross_validation_rmse_normalized"])
+        # Conservar párpados salvo mejora de al menos 10% en objetivos dejados fuera.
+        if baseline and best.record["cross_validation_rmse_normalized"] >= .9*baseline.record["cross_validation_rmse_normalized"]:
+            best = baseline
+        best.record["reference_comparison"] = comparison
+        self.vertical_reference = best.vertical_reference
+        return best
+
+    def review_training(self):
+        """Volver al peor objetivo de aprendizaje sin tocar el perfil en disco."""
+        if self.relative or not self.points:
+            raise ValueError("No hay aprendizaje absoluto para revisar")
+        report = self.model.record.get("training_report", {}) if self.model else {}
+        worst = max(report.get("points", []), key=lambda p:p["error_mean_px"], default={})
+        index = worst.get("point_index", self.center_index)
+        self.phase = "training"
+        self.rejected_points.clear()
+        self.repeat(index)
+        self.message = "Repetí este objetivo de aprendizaje. Los otros puntos se conservan; se medirán cinco validaciones nuevas."
+
     def _point_problem(self, index, point, validation=False):
         """Convención de pantalla: +X derecha, +Y abajo; nunca corregir con abs()."""
         center = point if not validation and index == self.center_index else self.points.get(self.center_index)
         if center is None:
             return "Falta el neutral: repetí primero el punto central."
         row = np.asarray(point["features"], dtype=float)
-        base = np.asarray(center["features"], dtype=float)
+        base = self._reference_features(center,self.vertical_reference) if not self.relative else np.asarray(center["features"], dtype=float)
         gaze, neutral = feature_gaze(row, self.eye_source), feature_gaze(base, self.eye_source)
         delta = gaze-neutral
         expected = np.sign(np.asarray(point["target"])-.5)
         # El mínimo .02 pertenece exclusivamente a TrackingCalibration.
         # En absoluto la excursión global se comprueba en GazeModel.fit (.025
-        # de semirrango); cada fijación debe superar su propia dispersión.
+        # de semirrango). Este mínimo se registra como diagnóstico histórico,
+        # pero sólo se aplica al joystick relativo.
+        center_spread = center["spread"]
+        if not self.relative and self.vertical_reference == "canthi":
+            center_spread = max(center["gaze_spread"][0],center["reference_comparison"][self.eye_source+"_canthi"]["spread"])
         minimum = max(.02 if self.relative else np.finfo(float).eps,
-                      point["spread"], center["spread"])
+                      point["spread"], center_spread)
         point["direction_check"] = dict(gaze=gaze.tolist(), neutral=neutral.tolist(),
             delta=delta.tolist(), expected=expected.tolist(), minimum=minimum,
+            threshold_formula="max(relative_floor, point_spread, center_spread)",
+            threshold_components=dict(relative_floor=.02 if self.relative else float(np.finfo(float).eps),
+                                      point_spread=point["spread"], center_spread=center_spread),
+            threshold_applied=self.relative, vertical_reference=self.vertical_reference,
+            neutral_origin="current_session_center", saved_neutral=None, center_timestamp_ms=center.get("last_timestamp_ms"),
+            units="dimensionless_eye_coordinates",
             target=point["target"], point_index=index, phase="validation" if validation else "training",
             selected_coordinates=row[:self.ocular_count].tolist(),
             selected_delta=(row[:self.ocular_count]-base[:self.ocular_count]).tolist())
@@ -234,6 +348,11 @@ class GazeCalibrationSession:
         if np.any(np.abs(head) > limits):
             self.head_stable=False
             return "La cabeza cambió respecto del neutral. Repetí este punto manteniendo la cabeza estable."
+        # El regresor absoluto aprende orientación y acoplamiento entre ejes.
+        # El signo y la amplitud individual no son requisitos del ajuste 9+5.
+        # Se conservan estabilidad, postura, cobertura global y validación externa.
+        if not self.relative:
+            return None
         for axis, names in enumerate((("izquierda", "derecha"), ("arriba", "abajo"))):
             sign = expected[axis]
             if not sign:
@@ -258,6 +377,8 @@ class GazeCalibrationSession:
             camera_context={key:self.context[key] for key in ("camera_index", "frame_width", "frame_height")}).record()
 
     def _reject_point(self, index, point, message):
+        point.pop("acceptance_reason", None)
+        self.outcome = "point_rejected"
         self.rejected_points[index] = deepcopy(point) | dict(reason=message)
         self.index, self.state, self.message = index, "invalid", message
 
@@ -296,7 +417,14 @@ class GazeCalibrationSession:
             return
         if face.timestamp_ms < self.accept_after:
             return
-        self.rows.append((face.timestamp_ms, row, face.processing_ms))
+        from gaze_source import gaze_position
+        references = {}
+        for source in ("left", "right", "both"):
+            for reference in ("eyelids", "canthi"):
+                value = gaze_position(face,source,reference)
+                if value is not None:
+                    references[source+"_"+reference] = value[1]
+        self.rows.append((face.timestamp_ms, row, face.processing_ms, references))
         while len(self.rows) > self.min_samples and self.rows[1][0] < face.timestamp_ms-self.duration_s*1000:
             self.rows.pop(0)
         if len(self.rows)>=5:
@@ -317,7 +445,21 @@ class GazeCalibrationSession:
             self.message = "Cabeza inestable durante la fijación: mantenela quieta o repetí este punto."
             return
         target = (self.targets if self.phase == "training" else VALIDATION_TARGETS)[self.index]
-        point = dict(target=list(target), features=np.median(rows, axis=0).tolist(),
+        gaze_rows = feature_gaze(rows, self.eye_source)
+        reference_rows = [r[3] for r in self.rows]
+        common = set.intersection(*(set(r) for r in reference_rows))
+        reference_comparison = {key:dict(median=float(np.median([r[key] for r in reference_rows])),
+            spread=float(np.percentile([r[key] for r in reference_rows],90)-np.percentile([r[key] for r in reference_rows],10))) for key in common}
+        self.capture_sequence += 1
+        point = dict(target=list(target), reference_comparison=reference_comparison,
+                     viewport=deepcopy(self.viewport), point_index=self.index, phase=self.phase,
+                     capture_sequence=self.capture_sequence,
+                     ocular_median=np.median(rows[:,:self.ocular_count],axis=0).tolist(),
+                     head_median=np.median(rows[:,self.ocular_count:],axis=0).tolist(),
+                     gaze_spread=(np.percentile(gaze_rows,90,axis=0)-np.percentile(gaze_rows,10,axis=0)).tolist(),
+                     coordinate_spread=(np.percentile(rows[:,:self.ocular_count],90,axis=0)-np.percentile(rows[:,:self.ocular_count],10,axis=0)).tolist(),
+                     gaze_mad=np.median(np.abs(gaze_rows-np.median(gaze_rows,axis=0)),axis=0).tolist(),
+                     features=np.median(rows, axis=0).tolist(),
                      samples=len(rows), spread=spread, quality=max(0., 1-spread/.10), rejected=self.rejected,
                      first_timestamp_ms=self.rows[0][0], last_timestamp_ms=self.rows[-1][0])
         if self.phase == "training":
@@ -325,6 +467,8 @@ class GazeCalibrationSession:
             if problem:
                 self._reject_point(self.index, point, problem)
                 return
+            self.outcome = "point_accepted"
+            point["acceptance_reason"] = "stable_fixation_current_session"
             self.points[self.index] = point
             self.rejected_points.pop(self.index, None)
             if self.index == self.center_index:
@@ -342,20 +486,21 @@ class GazeCalibrationSession:
                 return
             predicted = [self.model.predict_features(row) for row in rows]
             if any(p is None for p in predicted):
-                self.state, self.message = "error", "Validación fuera del dominio calibrado. Repetí o recalibrá."
+                self._reject_point(self.index, point, "Validación fuera del dominio calibrado. Repetí este objetivo o volvé al aprendizaje.")
                 return
+            errors = position_errors(predicted,target,self.context)
             pixels = np.array([self.context["width"]-1, self.context["height"]-1])
             predicted = np.array(predicted)*pixels
-            delta = predicted-np.array(target)*pixels
-            radial = np.linalg.norm(delta, axis=1)
             n = max(1, len(rows)//4)
-            point.update(error_x_px=float(np.mean(np.abs(delta[:, 0]))),
-                         error_y_px=float(np.mean(np.abs(delta[:, 1]))), error_mean_px=float(np.mean(radial)),
-                         error_p95_px=float(np.percentile(radial, 95)),
+            point.update(
                          jitter_rms_px=float(np.sqrt(np.mean(np.sum((predicted-predicted.mean(axis=0))**2, axis=1)))),
                          drift_px=float(np.linalg.norm(predicted[-n:].mean(axis=0)-predicted[:n].mean(axis=0))),
                          latency_ms=float(np.mean([r[2] for r in self.rows])))
+            point.update(errors)
             point.pop("features")
+            point["acceptance_reason"] = "stable_fixation_evaluated_by_independent_prediction"
+            point["precision_passed"] = point["error_mean_px"] <= .18*math.hypot(self.context["width"],self.context["height"])
+            self.outcome = "point_accepted" if point["precision_passed"] else "point_rejected"
             self.validation_points[self.index] = point
         self._advance()
 
@@ -376,18 +521,31 @@ class GazeCalibrationSession:
             return
         elif self.phase == "training":
             try:
-                self.model = GazeModel.fit([self.points[i]["features"] for i in range(9)], self.targets, self.context, self.eye_source)
+                self.model = self._fit_references()
             except ValueError as exc:
-                self.state, self.message = "error", str(exc)
+                self.outcome = "recalibration_needed"
+                self.state, self.message = "error", str(exc)+". Repetí un objetivo de aprendizaje o medí centro/arriba/abajo."
                 return
+            training = self.model.record["training_report"]
+            if not training["passed"]:
+                self.outcome, self.state = "training_rejected", "invalid"
+                self.index = max(training["points"],key=lambda p:p["error_mean_px"])["point_index"]
+                self.message = (f"Aprendizaje sin precisión suficiente: media {training['error_mean_px']:.1f} px, "
+                    f"peor objetivo {self.index+1}. Repetí ese punto o revisá el aprendizaje; "
+                    "una fijación estable no garantiza posiciones distinguibles. Guardado bloqueado.")
+                return
+            self.rejected_points.clear()
             self.phase, self.index = "validation", 0
         else:
             points = [self.validation_points[i] for i in range(len(VALIDATION_TARGETS))]
-            diagonal = math.hypot(self.context["width"], self.context["height"])
-            passed = np.mean([p["error_mean_px"] for p in points]) <= .10*diagonal and max(p["error_mean_px"] for p in points) <= .18*diagonal
-            self.model.record.update(validated=bool(passed), validation=dict(passed=bool(passed), points=points))
+            summary = precision_summary(points,self.context)
+            passed = summary["passed"]
+            self.model.record.update(validated=bool(passed), validation=dict(points=points, **summary))
+            self.outcome = "validation_passed" if passed else "validation_rejected"
             self.state = "ready" if passed else "invalid"
-            self.message = "Validación aprobada. Guardá y probá la predicción sin mover el mouse." if passed else "Precisión insuficiente. Repetí los objetivos o la calibración; el control permanece deshabilitado."
+            self.message = "Validación aprobada. Guardá y probá la predicción sin mover el mouse." if passed else (f"Precisión insuficiente: validación completa 5/5. Media {summary['error_mean_px']:.1f} / {summary['mean_limit_px']:.1f} px; "
+                f"peor zona {summary['worst_error_px']:.1f} / {summary['zone_limit_px']:.1f} px. "
+                "Repetí un objetivo si hubo distracción. Si el error persiste en varias zonas, volvé al aprendizaje. Control y guardado bloqueados.")
             return
         self.rows, self.rejected = [], 0
         self.head_stable=None
@@ -398,7 +556,14 @@ class GazeCalibrationSession:
 
     def snapshot(self):
         targets = self.targets if self.phase == "training" else VALIDATION_TARGETS
-        return dict(state=self.state, phase=self.phase, index=self.index, total=len(targets),
+        return dict(state=self.state, revision=self.revision, outcome=self.outcome, phase=self.phase, index=self.index, total=len(targets),
+                    validation_complete=len(self.validation_points)==5,
+                    can_review_training=not self.relative and bool(self.points),
+                    training_report=deepcopy(self.model.record.get("training_report")) if self.model else None,
+                    last_point=deepcopy(max(self.validation_points.values(),key=lambda p:p.get("capture_sequence",0))) if self.validation_points else None,
+                    capture_number=(len(self.points)+1 if self.index not in self.points else len(self.points)) if self.phase == "training" else self.index+1,
+                    vertical_reference=self.vertical_reference,
+                    context=deepcopy(self.context),
                     eye_source=self.eye_source, source_label=SOURCE_LABELS[self.eye_source],
                     head_stable=self.head_stable,
                     method="eye" if self.relative else "eye_absolute",
@@ -410,6 +575,19 @@ class GazeCalibrationSession:
                     countdown=max(0., self.countdown_s-(self.clock()-self.started)),
                     can_save=self.state == "ready", points=deepcopy(self.points if self.phase == "training" else self.validation_points),
                     report=deepcopy(self.model.record["validation"]) if self.model else None)
+
+    def diagnostic_record(self):
+        """Intento exportable: nunca es un perfil ni una autorización de control."""
+        clean = lambda p:{k:deepcopy(v) for k,v in p.items() if k != "features"}
+        return dict(experiment="ocular_attempt_diagnostic", approved_calibration=False,
+            authorizes_control=False, context=deepcopy(self.context), eye_source=self.eye_source,
+            vertical_reference=self.vertical_reference, state=self.state, outcome=self.outcome,
+            training_points=[clean(p) for p in self.points.values()],
+            validation_points=[clean(p) for p in self.validation_points.values()],
+            rejected_points={i:clean(p) for i,p in self.rejected_points.items()},
+            training_report=deepcopy(self.model.record.get("training_report")) if self.model else None,
+            reference_comparison=deepcopy(self.model.record.get("reference_comparison")) if self.model else None,
+            validation_report=deepcopy(self.model.record.get("validation")) if self.model else None)
 
     def result(self):
         if self.state != "ready":

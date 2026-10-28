@@ -88,6 +88,81 @@ class GazeGUITests(unittest.TestCase):
         self.assertTrue(overlay.save_button.isEnabled())
         self.backend_factory.assert_not_called()
 
+    def test_visual_error_review_uses_selected_objective_and_exports_only_diagnostic(self):
+        from desktop.gaze_overlay import GazeOverlay
+        overlay=GazeOverlay(self.window)
+        session=completed_session(wrong_validation=True)
+        overlay.present(session.snapshot(),None)
+        overlay.points.setCurrentIndex(3)
+        reviewed=overlay._review_point()
+        self.assertEqual(reviewed["point_index"],3)
+        self.assertEqual(reviewed["target"],[.7,.7])
+        self.assertIn("predicted_mean_px",reviewed)
+        action=Mock();overlay.export_attempt.connect(action)
+        overlay.export_button.click();action.assert_called_once()
+        self.assertFalse(overlay.save_button.isEnabled())
+        overlay.resize(1280,800);overlay.show();self.app.processEvents()
+        self.assertFalse(overlay.grab().isNull())
+        self.backend_factory.assert_not_called()
+
+    def test_failed_validation_displays_global_completion_and_review_action(self):
+        from desktop.gaze_overlay import GazeOverlay
+        overlay=GazeOverlay(self.window)
+        session=completed_session(wrong_validation=True)
+        overlay.present(session.snapshot(),None)
+        self.assertIn("completa 5/5",overlay.info.text())
+        self.assertIn("Estabilidad de captura y precisión",overlay.info.text())
+        self.assertIn("error",overlay.points.itemText(3))
+        self.assertFalse(overlay.save_button.isEnabled())
+        action=Mock()
+        overlay.review_training.connect(action)
+        overlay.review_button.click()
+        action.assert_called_once()
+        session.review_training()
+        overlay.present(session.snapshot(),None)
+        self.assertEqual(overlay.points.count(),9)
+        self.assertFalse(overlay.save_button.isEnabled())
+        self.backend_factory.assert_not_called()
+
+    def test_information_panel_avoids_target_with_offset_fullscreen_viewport(self):
+        from desktop.gaze_overlay import GazeOverlay
+        from gaze_mapping import GazeCalibrationSession,VALIDATION_TARGETS
+        from test_gaze_mapping import CONTEXT
+        from PySide6.QtCore import QPoint
+        overlay=GazeOverlay(self.window)
+        overlay.setGeometry(0,37,1470,919);overlay.show()
+        session=GazeCalibrationSession(CONTEXT|dict(width=1470,height=956,dpr=1.))
+        session.phase="validation"
+        for index,target in enumerate(VALIDATION_TARGETS):
+            session.index=index
+            overlay.present(session.snapshot(),None);self.app.processEvents()
+            local=QPoint(*[round(v) for v in overlay._target_position(target)])
+            self.assertFalse(overlay.info_area.geometry().adjusted(-28,-28,28,28).contains(local))
+        overlay.close()
+        self.backend_factory.assert_not_called()
+
+    def test_information_panel_avoids_all_training_and_validation_targets(self):
+        from desktop.gaze_overlay import GazeOverlay
+        from gaze_mapping import GazeCalibrationSession, TRAIN_TARGETS, VALIDATION_TARGETS
+        from test_gaze_mapping import CONTEXT
+        from PySide6.QtCore import QPoint
+        overlay=GazeOverlay(self.window)
+        session=GazeCalibrationSession(CONTEXT)
+        for width,height in ((1280,800),(800,600)):
+            overlay.resize(width,height)
+            overlay.show()
+            for phase,targets in (("training",TRAIN_TARGETS),("validation",VALIDATION_TARGETS)):
+                session.phase=phase
+                for index,(x,y) in enumerate(targets):
+                    session.index=index
+                    overlay.present(session.snapshot(),None)
+                    self.app.processEvents()
+                    target=QPoint(*[round(v) for v in overlay._target_position((x,y))])
+                    self.assertFalse(overlay.info_area.geometry().adjusted(-28,-28,28,28).contains(target))
+                    self.assertFalse(overlay.info_area.horizontalScrollBar().isVisible())
+        overlay.close()
+        self.backend_factory.assert_not_called()
+
     def test_activation_requirements_are_visible_on_main_window(self):
         from unittest.mock import patch
         self.select_calibrated()

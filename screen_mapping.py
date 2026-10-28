@@ -7,6 +7,13 @@ import math
 import os
 
 
+def capture_host_id():
+    """Huella local de entorno, sin persistir el nombre del equipo en claro."""
+    import hashlib
+    import platform
+    return hashlib.sha256((platform.system()+":"+platform.node()).encode("utf-8")).hexdigest()
+
+
 @contextmanager
 def physical_coordinates():
     if os.name != "nt":
@@ -103,10 +110,20 @@ def screen_display(context):
 
 
 def same_context(saved, current):
-    keys=("width","height","dpr","screen","camera_index","frame_width","frame_height")
+    keys=("width","height","dpr","screen","camera_index","frame_width","frame_height", "capture_host")
     if any(saved.get(k)!=current.get(k) for k in keys):
         return False
     # Los modelos antiguos se capturaron obligatoriamente en origen cero.
     if "display" not in saved:
         return screen_display(current)["physical_rect"][:2] == [0,0]
     return saved["display"] == screen_display(current)
+
+
+def target_in_viewport(target, context, origin, dpr):
+    """Destino físico del modelo → posición local del overlay Qt, incluido su origen."""
+    display = screen_display(context)
+    logical = display["logical_rect"]
+    if not math.isclose(dpr,context["dpr"],rel_tol=0,abs_tol=.001):
+        raise ValueError("Cambió el DPI del overlay: reiniciá la calibración")
+    return (logical[0]+target[0]*(context["width"]-1)/dpr-origin[0],
+            logical[1]+target[1]*(context["height"]-1)/dpr-origin[1])

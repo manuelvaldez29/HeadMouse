@@ -23,7 +23,9 @@ from tracking_calibration import TrackingCalibration
 from test_core import calibration
 from test_eye_tracking import eye_face
 
-CONTEXT = dict(width=1920, height=1080, dpr=1., screen="synthetic", camera_index=0, frame_width=640, frame_height=480)
+from screen_mapping import capture_host_id
+
+CONTEXT = dict(capture_host=capture_host_id(), width=1920, height=1080, dpr=1., screen="synthetic", camera_index=0, frame_width=640, frame_height=480)
 SCREEN = {k:CONTEXT[k] for k in ("width", "height", "dpr", "screen")} | dict(monitor_count=1, origin=[0,0])
 
 
@@ -279,6 +281,20 @@ class AbsoluteControllerTests(unittest.TestCase):
         c.step()
         self.assertTrue(c.snapshot()["detected"])
         self.assertIsNone(c.gesture)
+        self.factory.assert_not_called()
+
+    def test_failed_attempt_export_preserves_profile_and_never_creates_backend(self):
+        c=self.controller
+        before=deepcopy(c.profile)
+        c.start_gaze_calibration(SCREEN)
+        c.gaze_calibration=completed_session(wrong_validation=True)
+        c.export_gaze_attempt()
+        files=list((self.root/"calibration").glob("*.jsonl"))
+        self.assertEqual(len(files),1)
+        record=json.loads(files[0].read_text())
+        self.assertFalse(record["approved_calibration"])
+        self.assertFalse(record["authorizes_control"])
+        self.assertEqual(before,c.profile)
         self.factory.assert_not_called()
 
     def test_conventional_mouse_experiment_needs_no_camera_or_control(self):

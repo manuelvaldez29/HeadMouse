@@ -208,7 +208,8 @@ class CameraEngineTests(unittest.TestCase):
         for backend,api in (("dshow",self.cv.CAP_DSHOW),("msmf",self.cv.CAP_MSMF),("auto",self.cv.CAP_ANY)):
             engine=self.engine(capture_backend=backend)
             self.cv.VideoCapture.reset_mock()
-            cap=engine._open_capture()
+            with patch.object(self.module.sys, "platform", "win32"):
+                cap=engine._open_capture()
             self.cv.VideoCapture.assert_called_once_with(0,api)
             self.assertIs(cap,self.cap)
         with self.assertRaises(ValueError):load_config(overrides={"vision":{"capture_backend":"guess"}})

@@ -12,6 +12,8 @@ def main(argv=None):
     configure_logging(args.log_level)
     from runtime_diagnostics import install
     install(ROOT / "data" / "logs")
+    from desktop.qt_runtime import prepare_qt_platform_plugins
+    prepare_qt_platform_plugins()
     from PySide6.QtWidgets import QApplication
     from PySide6.QtCore import QTimer
     from desktop.bridge import DesktopBridge
