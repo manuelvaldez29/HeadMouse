@@ -108,6 +108,7 @@ class ControlEngine:
         self.dictation = dictation  # opcional: dictation.Dictation
         self.last_recenter = None   # resultado del último recentrado, para la GUI
         self._pinned_since = None   # cursor apretado contra un borde (centro mal ubicado)
+        self._paused_at_ms = None   # cuándo se pausó con ambas cejas: el recentrado mira desde ahí
         self._pinned_retry = 0.
         self._last_cursor = None
         self._fraction = [0., 0.]
@@ -266,11 +267,23 @@ class ControlEngine:
         if toggle is not None and fresh and self.output_allowed.is_set():
             resuming = self._paused
             self.toggle_pause()
-            if resuming and getattr(self.gesture.config, "auto_recenter", False) and hasattr(self.gesture, "recenter"):
+            if not resuming:
+                self._paused_at_ms = toggle.source_timestamp_ms
+            elif getattr(self.gesture.config, "auto_recenter", False) and hasattr(self.gesture, "recenter"):
                 # Excluir el propio gesto: decisión de cejas + hold de ambas cejas + margen.
+                # Después de una pausa, el centro es la postura en la que te acomodaste
+                # durante la pausa: con medio segundo quieto alcanza.
                 c = self.gesture.config
-                guard = c.brow_decision_ms + c.both_brows_hold_ms + 250
-                self.last_recenter = self.gesture.recenter(toggle.source_timestamp_ms, guard_ms=guard)
+                since = self._paused_at_ms
+                if since is None:  # primera reanudación: arranca en pausa, sin pausa previa
+                    self.last_recenter = self.gesture.recenter(
+                        toggle.source_timestamp_ms, guard_ms=c.brow_decision_ms + c.both_brows_hold_ms + 250,
+                        since_ms=None)
+                else:
+                    # Los cuadros con las cejas arriba ya se excluyen; el margen cubre la subida.
+                    self.last_recenter = self.gesture.recenter(
+                        toggle.source_timestamp_ms, guard_ms=c.both_brows_hold_ms + 250, since_ms=since,
+                        window_ms=600, search_ms=10000, min_samples=8)
                 logger.info("[ControlEngine] Recentrado: %s", self.last_recenter)
             self._log_event(EV_BOTH_BROWS)
             if self.metrics:

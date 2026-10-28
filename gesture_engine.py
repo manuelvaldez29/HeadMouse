@@ -387,7 +387,8 @@ class GestureEngine:
                 pending.append(key)
         return pending
 
-    def recenter(self, before_ms, window_ms=1000, search_ms=4000, guard_ms=300, max_spread=.012, max_shift=.4, warn_shift=.2):
+    def recenter(self, before_ms, window_ms=1000, search_ms=4000, guard_ms=300, max_spread=.012, max_shift=.4, warn_shift=.2,
+                 since_ms=None, min_samples=10):
         """Toma como neutral el tramo quieto más reciente previo a `before_ms`.
 
         Se llama al reanudar con ambas cejas. Se buscan, en los `search_ms`
@@ -404,21 +405,30 @@ class GestureEngine:
         """
         if self.strategy.name in ("eye", "eye_absolute"):
             return dict(ok=False, reason="el neutral ocular se ajusta en Calibrar tracking ocular")
+        # `since_ms`: sólo lo ocurrido después de pausar. Sin ese límite, si la postura
+        # cómoda duraba menos que la ventana, ganaba el momento previo a la pausa (en la
+        # zona quieta) y el centro casi no se movía (log del 2026-10-28: dy 0,03 frente a
+        # una postura real de 0,17-0,21).
         end = before_ms - guard_ms
-        candidates = [r for r in self._history if end - search_ms <= r[0] <= end and not r[4]]
+        start = end - search_ms if since_ms is None else max(end - search_ms, since_ms)
+        candidates = [r for r in self._history if start <= r[0] <= end and not r[4]]
 
         def spread(window):
             xs, ys = [r[1] for r in window], [r[2] for r in window]
             # Rango p10–p90 (no MAD: un vaivén regular puede dejar la mediana de las desviaciones en cero).
             return max(percentile(xs, 90) - percentile(xs, 10), percentile(ys, 90) - percentile(ys, 10))
 
-        rows, enough = None, False
+        rows = None
+        enough = len(candidates) >= min_samples
         for i in range(len(candidates) - 1, -1, -1):  # del más reciente al más viejo
-            window = [r for r in candidates[:i + 1] if r[0] > candidates[i][0] - window_ms]
-            if len(window) < 10 or window[-1][0] - window[0][0] < .6 * window_ms:
-                continue
-            enough = True
-            if spread(window) <= max_spread:
+            # El tramo crece hacia atrás sólo mientras la cabeza siga quieta: una ventana
+            # fija mezclaba la postura cómoda con el movimiento para acomodarse.
+            window = [candidates[i]]
+            for row in reversed(candidates[:i]):
+                if candidates[i][0] - row[0] > window_ms or spread([row] + window) > max_spread:
+                    break
+                window.insert(0, row)
+            if len(window) >= min_samples and window[-1][0] - window[0][0] >= .6 * window_ms:
                 rows = window
                 break
         if rows is None:

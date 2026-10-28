@@ -155,6 +155,15 @@ QApplication sigue viva. Se usa DeferredDelete según la [documentación de Qt](
 El mismo experimento terminó con cero top-level widgets. `dispose_window` se
 niega a destruir una ventana cuyo worker siga activo; hay test específico.
 
+Actualización 2026-10-28: el aviso de dictado y la mini cámara volvieron a ser
+ventanas sin dueño, porque Windows esconde las ventanas con dueño al minimizar la
+principal y estas tienen que verse sobre otras aplicaciones. La corrección de ciclo
+de vida se mantiene por otra vía: la ventana los registra en `owned_overlays` y
+`release_overlays` los cierra y destruye en `_closed` y en `dispose_window`. Repetido
+el experimento (crear y destruir 1, 3 y 10 ventanas), no queda ningún MainWindow,
+DictationOverlay ni MiniCameraWindow. Tests: `test_mini_camera.py` y
+`test_eye_source_gui.py`.
+
 Esta es una corrección acotada de ciclo de vida, no una sustitución de MediaPipe
 ni una supuesta solución definitiva del cierre original. Los logs/faulthandler y
 la conservación/reintento de recursos nativos del trabajo anterior permanecen.

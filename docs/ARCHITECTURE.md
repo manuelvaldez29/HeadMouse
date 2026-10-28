@@ -179,6 +179,12 @@ experimental futura. No están implementadas.
   hold, aunque el consumidor no haya podido ejecutar durante ese intervalo.
 - Se suprimen ambos clicks cuando ambos ojos están cerrados para reducir
   parpadeos bilaterales. No constituye una garantía de ausencia de falsos positivos.
+- Reanudar después de una pausa (2026-10-28): el centro se busca sólo en lo que pasó
+  después de pausar (`since_ms`), con un tramo quieto de 0,6 s que crece hacia atrás
+  mientras la cabeza siga quieta. El log mostró que, al pausar en la zona quieta y
+  reanudar enseguida desde la postura cómoda, el recentrado elegía el segundo previo a
+  la pausa: el centro se movía 0,03-0,05 cuando la postura real estaba a 0,17-0,21.
+  La primera reanudación (el control arranca en pausa) mantiene la búsqueda de 4 s.
 - Recentrado automático (`auto_recenter`): al reanudar con ambas cejas, el
   neutral de la nariz pasa a ser la mediana del segundo quieto más reciente de
   los 4 s previos. Se excluyen el propio gesto (decisión de cejas + hold +

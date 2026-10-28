@@ -157,7 +157,9 @@ class ControlResumeTests(unittest.TestCase):
         control._tick()  # pausado → activo
         self.assertFalse(control.paused)
         c = gesture.config
-        gesture.recenter.assert_called_once_with(5000, guard_ms=c.brow_decision_ms + c.both_brows_hold_ms + 250)
+        # Primera reanudación (arranca en pausa): sin pausa previa registrada.
+        gesture.recenter.assert_called_once_with(5000, guard_ms=c.brow_decision_ms + c.both_brows_hold_ms + 250,
+                                                 since_ms=None)
         self.assertTrue(control.last_recenter["ok"])
         control._tick()  # activo → pausado: no recentra
         self.assertTrue(control.paused)
@@ -278,6 +280,22 @@ class UnreachableCenterTests(unittest.TestCase):
         self.run_control(control, 4, nose_y=.70)                     # el usuario mueve el cursor a propósito
         self.assertIsNone(control.last_recenter)
         self.assertEqual(engine.config.neutral_y, .5)
+
+    def test_resume_uses_posture_taken_during_the_pause(self):
+        """Log del 2026-10-28: pausaba en la zona quieta, se acomodaba y reanudaba en ~1 s;
+        el recentrado elegía el segundo previo a la pausa y el centro casi no se movía."""
+        engine = GestureEngine(None, calibration=calibration(), clock=self.clock)
+        control, _ = self.control(engine, lambda: (960, 540))
+        control._paused = False
+        self.run_control(control, 2.0)                                           # activo, en la zona quieta
+        self.run_control(control, 0.6, brow_left_lift=.4, brow_right_lift=.5)  # pausa con ambas cejas
+        self.assertTrue(control.paused)
+        self.run_control(control, 0.4, nose_y=.6)                              # se acomoda
+        self.run_control(control, 0.7, nose_y=.68)                             # postura cómoda, < 1 s quieto
+        self.run_control(control, 0.6, nose_y=.68, brow_left_lift=.4, brow_right_lift=.5)  # reanuda
+        self.assertFalse(control.paused)
+        self.assertTrue(control.last_recenter["ok"], control.last_recenter)
+        self.assertAlmostEqual(engine.config.neutral_y, .68, places=3)
 
     def test_controller_reports_pinned_recenter(self):
         import tempfile

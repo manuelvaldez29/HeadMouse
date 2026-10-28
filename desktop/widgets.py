@@ -518,3 +518,64 @@ class GestureMeters(QWidget):
             status = "no disponible" if not available else "● activo" if active else "—" if value is None else ""
             p.drawText(QRectF(track.right() + 10, y, 70, 20), Qt.AlignmentFlag.AlignVCenter, status)
 
+
+def zoom_snapshot(snapshot, zoom):
+    """Recorta el cuadro alrededor del centro vigente y lleva nariz, centro y zona quieta
+    a las coordenadas del recorte, para que la mini cámara los muestre más grandes."""
+    from dataclasses import replace
+    s = dict(snapshot)
+    settings = s["settings"]
+    s["settings"] = dict(settings, ui=dict(settings["ui"], show_overlay=True, show_landmarks=False))
+    frame, face = s.get("frame"), s.get("face")
+    if frame is None or face is None or zoom <= 1:
+        return s
+    profile, diagnostic = s.get("profile") or {}, dict(s.get("diagnostic") or {})
+    nx = diagnostic.get("neutral_x", profile.get("neutral_nose_x", .5))
+    ny = diagnostic.get("neutral_y", profile.get("neutral_nose_y", .5))
+    span = 1 / zoom
+    x0 = min(max(nx - span / 2, 0), 1 - span)
+    y0 = min(max(ny - span / 2, 0), 1 - span)
+    h, w = frame.shape[:2]
+    s["frame"] = frame[int(y0 * h):int((y0 + span) * h), int(x0 * w):int((x0 + span) * w)].copy()
+    to_x, to_y = (lambda x: (x - x0) * zoom), (lambda y: (y - y0) * zoom)
+    s["face"] = replace(face, nose_x=to_x(face.nose_x), nose_y=to_y(face.nose_y), landmarks=())
+    diagnostic.update(neutral_x=to_x(nx), neutral_y=to_y(ny))
+    s["diagnostic"] = diagnostic
+    s["settings"]["gesture"] = dict(settings["gesture"], dead_zone=settings["gesture"]["dead_zone"] * zoom)
+    return s
+
+
+class MiniCameraWindow(QWidget):
+    """Mini cámara siempre visible mientras se controla con la nariz: muestra la nariz,
+    el centro y la zona quieta para no perderlos de vista.
+
+    No toma el foco ni recibe clicks: un guiño hace click en lo que está debajo, como
+    si la ventana no existiera. Se ubica abajo a la derecha, lejos del aviso de dictado.
+    """
+    SIZE = (300, 225)
+
+    def __init__(self, parent=None):
+        super().__init__(parent, Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint |
+                         Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.WindowDoesNotAcceptFocus |
+                         Qt.WindowType.WindowTransparentForInput)
+        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
+        self.setWindowTitle("HeadMouse · mini cámara")
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(2, 2, 2, 2)
+        self.preview = CameraPreview("Esperando la cámara…")
+        self.preview.setMinimumSize(1, 1)
+        layout.addWidget(self.preview)
+        self.setStyleSheet("MiniCameraWindow { background: #57d4c3; }")
+        self.resize(*self.SIZE)
+
+    ZOOM = 2.0  # recorte de medio cuadro alrededor del centro: zona quieta y nariz al doble
+
+    def present(self, snapshot, screen=None):
+        # Siempre con la guía de centro y zona quieta, aunque esté apagada en la vista normal.
+        self.preview.present(zoom_snapshot(snapshot, self.ZOOM))
+        if not self.isVisible():
+            if screen is not None:
+                area = screen.availableGeometry()
+                self.move(area.right() - self.width() - 16, area.bottom() - self.height() - 16)
+            self.show()
+

@@ -1,6 +1,7 @@
 """Ventana desktop: presentación, formularios y comandos; sin inferencia ni acciones SO."""
 import json
 import time
+from desktop.lifecycle import release_overlays
 from copy import deepcopy
 from PySide6.QtCore import Qt, QTimer, Slot
 from PySide6.QtGui import QShortcut, QKeySequence, QCursor
@@ -10,7 +11,7 @@ from PySide6.QtWidgets import (QMainWindow, QWidget, QFrame, QVBoxLayout, QHBoxL
     QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView, QApplication, QLineEdit, QTabWidget)
 from action_mapping import ACTIONS, DEFAULT_MAPPING
 from gaze_source import SOURCE_LABELS as EYE_SOURCE_LABELS, eye_coordinates
-from desktop.widgets import (CameraPreview, ExperimentCanvas, CalibrationMeter, DictationOverlay, LineChart,
+from desktop.widgets import (CameraPreview, ExperimentCanvas, CalibrationMeter, DictationOverlay, LineChart, MiniCameraWindow,
     GestureMeters, gesture_progress, CHART_SERIES, CHART_NEUTRAL, label, card)
 
 GESTURE_LABELS = dict(LEFT_WINK="Guiño izquierdo", RIGHT_WINK="Guiño derecho", LEFT_BROW="Ceja izquierda",
@@ -63,6 +64,22 @@ def status_message(s,event=None):
     if not s.get("profile"):
         return "Elegí un perfil en Perfiles para empezar.",False
     return "Listo para empezar: tocá «Iniciar HeadMouse» en Inicio.",False
+
+
+class UIPreferences:
+    """Preferencias de presentación de esta computadora (no del perfil): cambiarlas no
+    reinicia el control. Se guardan con QSettings (en Windows, el registro del usuario)."""
+
+    def __init__(self):
+        from PySide6.QtCore import QSettings
+        self._settings=QSettings("UNSTA","HeadMouse")
+
+    def get(self,key,default):
+        value=self._settings.value(key,default)
+        return value.lower()=="true" if isinstance(value,str) else bool(value)
+
+    def set(self,key,value):
+        self._settings.setValue(key,bool(value))
 
 
 def friendly_date(value):
@@ -209,7 +226,19 @@ class MainWindow(QMainWindow):
         signal=getattr(self.bridge,"snapshot_ready",None)
         if signal is not None:signal.connect(self.update_live_preview)
         self.bridge.closed.connect(self._closed)
-        self.dictation_overlay=DictationOverlay(self)
+        # Ventanas independientes, sin dueña: Windows esconde las ventanas con dueña
+        # cuando se minimiza la principal, y estas tienen que verse sobre otras apps
+        # (dictar en el navegador, guiarse con la zona quieta). Se cierran en _closed.
+        self.dictation_overlay=DictationOverlay()
+        self.mini_camera=MiniCameraWindow()
+        # Sin dueño Qt no se destruyen solas: la ventana las lleva registradas y las
+        # libera al cerrarse (y dispose_window), como pedía la corrección de ciclo de vida.
+        self.owned_overlays=(self.dictation_overlay,self.mini_camera)
+        self.ui_prefs=UIPreferences()
+        mini=self.ui_prefs.get("mini_camera",True)  # predeterminado: visible
+        for check in (self.mini_camera_check,self.mini_camera_settings_check):
+            check.setChecked(mini)
+            check.toggled.connect(self.set_mini_camera)
         self._dictation_message=("",0.)
         self._last_dictation_state="idle"
         self.timer=QTimer(self)
@@ -282,6 +311,10 @@ class MainWindow(QMainWindow):
         side.addWidget(self.home_state)
         self.home_hint=label("","Subtitle")
         side.addWidget(self.home_hint)
+        self.mini_camera_check=QCheckBox("Mostrar mini cámara mientras controlo con la nariz")
+        self.mini_camera_check.setToolTip("Una ventana chica abajo a la derecha con tu nariz, el centro y la zona quieta. "
+                                          "No recibe clicks: los guiños hacen click en lo que está debajo.")
+        side.addWidget(self.mini_camera_check)
         self.live_events=label("","Subtitle")
         side.addWidget(self.live_events)
         side.addStretch()
@@ -825,6 +858,23 @@ class MainWindow(QMainWindow):
         layout.addWidget(details)
         layout.addStretch()
 
+    def set_mini_camera(self,visible):
+        """Una sola preferencia, dos casillas (Inicio y Configuración) sincronizadas."""
+        self.ui_prefs.set("mini_camera",visible)
+        for check in (self.mini_camera_check,self.mini_camera_settings_check):
+            check.blockSignals(True)
+            check.setChecked(visible)
+            check.blockSignals(False)
+        if self.snapshot: self._present_mini_camera(self.snapshot)
+
+    def _present_mini_camera(self,s):
+        wanted=(s.get("control_enabled") and s["settings"]["ui"]["tracking_method"]=="nose"
+                and self.mini_camera_check.isChecked())
+        if wanted:
+            self.mini_camera.present(s,self.screen())
+        elif self.mini_camera.isVisible():
+            self.mini_camera.hide()
+
     def _present_diagnostic(self,s):
         """Estado en lenguaje simple: rostro, hacia dónde iría el cursor y cada gesto."""
         from gesture_signals import GESTURE_SIGNALS
@@ -947,6 +997,8 @@ class MainWindow(QMainWindow):
         self.landmarks_check=QCheckBox("Mostrar puntos de la cara")
         form.addRow(self.overlay_check)
         form.addRow(self.landmarks_check)
+        self.mini_camera_settings_check=QCheckBox("Mini cámara al controlar con la nariz (se aplica al instante)")
+        form.addRow(self.mini_camera_settings_check)
 
         # ── Gestos y scroll ──
         form,_=tab("Gestos y scroll","Cuánto hay que sostener cada gesto y cuánto esperar antes de repetirlo. "
@@ -1645,6 +1697,7 @@ class MainWindow(QMainWindow):
                 self.experiment_input(*self.canvas.logical(self.canvas.mapFromGlobal(QCursor.pos())),False,True)
         self._present_metrics(s)
         self._present_diagnostic(s)
+        self._present_mini_camera(s)
 
     def _present_models(self,models):
         """Los botones de descarga solo hacen falta si el modelo todavía no está."""
@@ -1689,6 +1742,6 @@ class MainWindow(QMainWindow):
         if self.gaze_overlay:
             self.gaze_overlay.blockSignals(True)
             self.gaze_overlay.close()
-        self.dictation_overlay.close()
+        release_overlays(self)
         self._allow_close=True
         self.close()

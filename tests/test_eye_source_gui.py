@@ -22,7 +22,11 @@ class SourceGUITests(unittest.TestCase):
     select_calibrated=test_gui.GUITests.select_calibrated
 
     def test_overlays_have_the_main_window_as_native_owner(self):
-        self.assertIs(self.window.dictation_overlay.parent(),self.window)
+        # Dictado y mini cámara no tienen dueño nativo: Windows los escondía al minimizar
+        # (2026-10-28). Su ciclo de vida lo maneja la ventana (owned_overlays/release_overlays).
+        self.assertIsNone(self.window.dictation_overlay.parent())
+        self.assertIn(self.window.dictation_overlay,self.window.owned_overlays)
+        self.assertIn(self.window.mini_camera,self.window.owned_overlays)
         self.window._open_gaze_overlay()
         self.assertIs(self.window.gaze_overlay.parent(),self.window)
         self.window.gaze_overlay.close()
