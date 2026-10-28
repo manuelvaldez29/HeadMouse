@@ -456,3 +456,65 @@ class LineChart(QWidget):
                 p.drawEllipse(QPointF(box.left() + 16, yy + 9), 4, 4)
                 p.setPen(ink["secondary"])
                 p.drawText(QPointF(box.left() + 26, yy + 13), text)
+
+
+def gesture_progress(signal, record, gate, directions):
+    """Cuánto falta para activar: 0 = reposo, 1 = umbral de activación (puede pasar de 1).
+
+    Se mide desde el reposo calibrado de ese gesto hasta su activación vigente, canal
+    por canal; un gesto de dos canales (ambas cejas) avanza lo que avance el más atrasado.
+    """
+    if not signal or not gate:
+        return None
+    neutral = (record or {}).get("neutral_statistics", {})
+    fractions = []
+    for value, (channel, activation), d in zip(signal, gate["activation"].items(), directions):
+        rest = neutral.get(channel, {}).get("median")
+        if rest is None or d * (activation - rest) <= 0:
+            return None
+        fractions.append(max(0., d * (value - rest) / (d * (activation - rest))))
+    return min(fractions) if fractions else None
+
+
+class GestureMeters(QWidget):
+    """Una barra por gesto: el relleno avanza hacia la marca de activación."""
+    ROW = 30
+
+    def __init__(self):
+        super().__init__()
+        self.rows = []
+        self.setMinimumHeight(self.ROW * 6 + 4)
+
+    def present(self, rows):
+        """rows: [(etiqueta, progreso 0..1+ o None, activo, disponible)]."""
+        if rows != self.rows:
+            self.rows = rows
+            self.setAccessibleDescription("; ".join(
+                f"{label}: {'no disponible' if not available else 'activo' if active else 'sin datos' if value is None else f'{min(value, 1):.0%} del umbral'}"
+                for label, value, active, available in rows))
+            self.update()
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        label_w = 132
+        track_w = max(40, self.width() - label_w - 74)
+        for i, (label, value, active, available) in enumerate(self.rows):
+            y = i * self.ROW + 4
+            p.setPen(QColor("#eef3fc" if available else "#8192aa"))
+            p.drawText(QRectF(0, y, label_w, 20), Qt.AlignmentFlag.AlignVCenter, label)
+            track = QRectF(label_w, y + 6, track_w, 8)
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QColor("#26364d"))
+            p.drawRoundedRect(track, 4, 4)
+            if available and value is not None:
+                fill = track.adjusted(0, 0, -track.width() * (1 - min(value, 1.25) / 1.25), 0)
+                p.setBrush(QColor("#57d4c3" if active else "#3f7f86"))
+                p.drawRoundedRect(fill, 4, 4)
+            mark = track.left() + track.width() / 1.25  # la activación queda al 80 % del ancho
+            p.setPen(QPen(QColor("#ffd166"), 2))
+            p.drawLine(QPointF(mark, y + 2), QPointF(mark, y + 18))
+            p.setPen(QColor("#8ce5cd" if active else "#8192aa"))
+            status = "no disponible" if not available else "● activo" if active else "—" if value is None else ""
+            p.drawText(QRectF(track.right() + 10, y, 70, 20), Qt.AlignmentFlag.AlignVCenter, status)
+

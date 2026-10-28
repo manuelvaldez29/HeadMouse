@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (QMainWindow, QWidget, QFrame, QVBoxLayout, QHBoxL
 from action_mapping import ACTIONS, DEFAULT_MAPPING
 from gaze_source import SOURCE_LABELS as EYE_SOURCE_LABELS, eye_coordinates
 from desktop.widgets import (CameraPreview, ExperimentCanvas, CalibrationMeter, DictationOverlay, LineChart,
-    CHART_SERIES, CHART_NEUTRAL, label, card)
+    GestureMeters, gesture_progress, CHART_SERIES, CHART_NEUTRAL, label, card)
 
 GESTURE_LABELS = dict(LEFT_WINK="Guiño izquierdo", RIGHT_WINK="Guiño derecho", LEFT_BROW="Ceja izquierda",
                       RIGHT_BROW="Ceja derecha", BOTH_BROWS="Ambas cejas", MOUTH_OPEN="Boca abierta")
@@ -21,6 +21,48 @@ EVENT_GESTURE = dict(LEFT_CLICK="LEFT_WINK",RIGHT_CLICK="RIGHT_WINK",SCROLL_UP="
 SOURCE_LABELS = dict(GEOMETRIC="Geométrica",BLENDSHAPE="Blendshapes",HYBRID="Híbrida",GEOMETRIC_3D="Geométrica 3D")
 GESTURE_ROWS = (("Ojos izq/der",("LEFT_WINK","RIGHT_WINK")),("Cejas izq/der",("LEFT_BROW","RIGHT_BROW")),
                 ("Ambas cejas",("BOTH_BROWS",)),("Boca",("MOUTH_OPEN",)))
+
+
+# Condiciones internas (ApplicationController.snapshot) → próximo paso en lenguaje simple.
+# None = no es un bloqueo para el usuario (la cámara se enciende al iniciar; "falta
+# confirmación" sólo significa que no está activado; la pausa la muestra el indicador).
+CONDITION_STEPS = (
+    ("Seleccioná un perfil", "Elegí un perfil en Perfiles para empezar."),
+    ("Gestos pendientes de validar para este método; sólo movimiento", "Ojos: sólo movimiento hasta que valides los gestos en Calibración → Ojos."),
+    ("Gestos pendientes de validar", "Falta calibrar y probar tus gestos: andá a Calibración."),
+    ("Sin calibración para el método", "Ojos: falta calibrar el movimiento en Calibración → Ojos."),
+    ("Calibración incompatible con la cámara", "La calibración de Ojos es de otra cámara o resolución: volvé a calibrar."),
+    ("La calibración no identifica este equipo", "La calibración de Ojos es de otra computadora: volvé a calibrar."),
+    ("Calibración incompatible o sin comprobación", "Ojos: hay que volver a calibrar y comprobar el movimiento."),
+    ("Iris seleccionado no detectado", "No se ven tus ojos: acomodate frente a la cámara."),
+    ("Terminá o cancelá la medición en curso", "Terminá o cancelá la medición en curso antes de activar."),
+    ("Cámara no iniciada", None),
+    ("Falta confirmación explícita", None),
+    ("Control pausado", None),
+)
+
+
+def status_message(s,event=None):
+    """(texto, es_error) para la línea de estado: error > aviso reciente > próximo paso."""
+    if s.get("state")=="ERROR":
+        return s.get("message",""),True
+    if event:
+        return event[0],event[2]
+    if s.get("control_enabled"):
+        return (("Levantá ambas cejas para empezar a mover el cursor." if s.get("paused") else
+                 "Ambas cejas: pausar · F8 o el botón rojo: detener."),False)
+    for condition in s.get("activation_conditions",[]):
+        if condition.startswith("Iris") and not s.get("camera"):
+            continue  # con la cámara apagada no se puede saber
+        for prefix,text in CONDITION_STEPS:
+            if condition.startswith(prefix):
+                if text: return text,False
+                break
+        else:
+            return condition,False  # una condición nueva se muestra tal cual
+    if not s.get("profile"):
+        return "Elegí un perfil en Perfiles para empezar.",False
+    return "Listo para empezar: tocá «Iniciar HeadMouse» en Inicio.",False
 
 
 def friendly_date(value):
@@ -96,7 +138,6 @@ class MainWindow(QMainWindow):
         self._gaze_preview = False
         self._vertical_preview=False
         self._history_key=None
-        self._status_style=None
         self._closing=False
         self._allow_close=False
         self.setWindowTitle("HeadMouse v0.3.1 — Robust Adaptive Facial Calibration")
@@ -131,18 +172,24 @@ class MainWindow(QMainWindow):
         content=QVBoxLayout()
         content.setContentsMargins(26,20,26,18)
         top=QHBoxLayout()
-        self.control_status=label("CONTROL DEL SISTEMA\nDESACTIVADO","Subtitle")
-        top.addWidget(self.control_status,1)
+        top.setSpacing(14)
+        self.control_status=label("●  DESACTIVADO","StatusOff",wrap=False)
+        self.control_status.setAccessibleName("Estado del control")
+        top.addWidget(self.control_status)
+        # Un único mensaje: error > aviso reciente (8 s) > próximo paso. Ver status_message().
+        self.banner=label("Preparando HeadMouse…","StatusMessage")
+        self.banner.setAccessibleName("Mensaje de estado")
+        top.addWidget(self.banner,1)
         self.activate_button=button("Activar control",self.activate,"Primary")
         top.addWidget(self.activate_button)
         top.addWidget(button("DETENER CONTROL · F8",self.stop_immediately,"Danger"))
         content.addLayout(top)
+        content.addSpacing(8)
+        # Lista completa de condiciones: tooltip de Activar control (no se muestra como renglón).
         self.activation_requirements=label("", "Subtitle")
-        self.activation_requirements.setWordWrap(True)
-        content.addWidget(self.activation_requirements)
-        self.banner=label("Preparando HeadMouse…","Subtitle")
-        self.banner.setMinimumHeight(42)
-        content.addWidget(self.banner)
+        self.activation_requirements.hide()
+        self._status_event=None   # (texto, vence, es_error)
+        self._status_seen=None
         content.addWidget(self.stack,1)
         outer.addLayout(content,1)
         self._home()
@@ -719,37 +766,110 @@ class MainWindow(QMainWindow):
             self.bridge.request("set_calibration_gesture",gesture_id=gesture_id,enabled=enabled)
 
     def _diagnostic(self):
-        page=self.page("Diagnóstico seguro","Observá el comportamiento esperado sin mover el cursor del sistema.")
+        """Arriba lo que el usuario necesita saber; los números técnicos, plegados."""
+        page=self.page("Diagnóstico","Probá la cámara y tus gestos sin mover el mouse de la computadora.")
         scroll=QScrollArea()
         scroll.setWidgetResizable(True)
         body=QWidget()
         layout=QVBoxLayout(body)
         layout.setContentsMargins(0,0,12,0)
+        layout.setSpacing(12)
         scroll.setWidget(body)
         page.addWidget(scroll,1)
         row=QHBoxLayout()
-        row.addWidget(button("Iniciar diagnóstico",lambda:self.bridge.request("start_diagnostic"),"Primary"))
-        row.addWidget(button("Diagnóstico vertical · centro / arriba / abajo",self.start_vertical_diagnostic))
-        row.addWidget(button("Medir estabilidad · 10 s",lambda:self.bridge.request("start_jitter")))
+        row.addWidget(button("Iniciar diagnóstico",lambda:self.bridge.request("start_diagnostic"),"Primary"),2)
+        row.addWidget(button("Medir estabilidad · 10 s",lambda:self.bridge.request("start_jitter")),1)
+        self.vertical_diagnostic_button=button("Diagnóstico vertical de Ojos",self.start_vertical_diagnostic)
+        row.addWidget(self.vertical_diagnostic_button,1)
         layout.addLayout(row)
-        self.diagnostic_preview=CameraPreview()
-        layout.addWidget(self.diagnostic_preview,1)
-        self.diagnostic_values=label("Abrí el diagnóstico para consultar las mediciones.","Subtitle")
-        layout.addWidget(self.diagnostic_values)
-        self.eye_diagnostic=label("","Subtitle")
-        layout.addWidget(self.eye_diagnostic)
+        live=QHBoxLayout()
+        live.setSpacing(14)
+        self.diagnostic_preview=CameraPreview("Cámara apagada\n\nTocá «Iniciar diagnóstico»")
+        self.diagnostic_preview.setMinimumHeight(330)
+        live.addWidget(self.diagnostic_preview,3)
+        side=QFrame()
+        side.setObjectName("Card")
+        side.setMinimumWidth(420)
+        panel=QVBoxLayout(side)
+        panel.setContentsMargins(18,14,18,14)
+        panel.setSpacing(8)
+        self.diag_face=label("Cámara apagada","DiagState")
+        panel.addWidget(self.diag_face)
+        self.diag_cursor=label("","Subtitle")
+        panel.addWidget(self.diag_cursor)
+        panel.addWidget(label("Gestos · la marca amarilla es donde se activa","ChartTitle"))
+        self.gesture_meters=GestureMeters()
+        panel.addWidget(self.gesture_meters)
+        self.diag_last=label("Último gesto: —","Subtitle")
+        panel.addWidget(self.diag_last)
         self.jitter_summary=label("Estabilidad: sin medición","Subtitle")
-        layout.addWidget(self.jitter_summary)
-        advanced=QCheckBox("Mostrar calibración avanzada por gesto")
+        panel.addWidget(self.jitter_summary)
+        panel.addStretch()
+        live.addWidget(side,2)
+        layout.addLayout(live)
+        # ── Detalles técnicos (plegados): el texto completo de siempre ──
+        self.diagnostic_details_toggle=QCheckBox("Mostrar detalles técnicos (coordenadas, umbrales, cámara y ojos)")
+        layout.addWidget(self.diagnostic_details_toggle)
+        details=QWidget()
+        inner=QVBoxLayout(details)
+        inner.setContentsMargins(0,0,0,0)
+        self.diagnostic_values=label("Abrí el diagnóstico para consultar las mediciones.","Subtitle")
+        inner.addWidget(self.diagnostic_values)
+        self.eye_diagnostic=label("","Subtitle")
+        inner.addWidget(self.eye_diagnostic)
+        inner.addWidget(label("Calibración avanzada por gesto","ChartTitle"))
         self.advanced_diagnostic=label("Sin calibración adaptativa disponible.","Subtitle")
-        advanced_scroll=QScrollArea()
-        advanced_scroll.setWidgetResizable(True)
-        advanced_scroll.setWidget(self.advanced_diagnostic)
-        advanced_scroll.setMaximumHeight(190)
-        advanced_scroll.hide()
-        advanced.toggled.connect(advanced_scroll.setVisible)
-        layout.addWidget(advanced)
-        layout.addWidget(advanced_scroll)
+        inner.addWidget(self.advanced_diagnostic)
+        details.hide()
+        self.diagnostic_details_toggle.toggled.connect(details.setVisible)
+        layout.addWidget(details)
+        layout.addStretch()
+
+    def _present_diagnostic(self,s):
+        """Estado en lenguaje simple: rostro, hacia dónde iría el cursor y cada gesto."""
+        from gesture_signals import GESTURE_SIGNALS
+        d=s.get("diagnostic") or {}
+        method=s["settings"]["ui"]["tracking_method"]
+        self.vertical_diagnostic_button.setVisible(method!="nose")
+        if not s.get("camera"):
+            face,face_style="Cámara apagada","DiagState"
+        elif s.get("detected"):
+            face,face_style=f"✓  Te veo la cara  ·  {s['fps']:.0f} FPS","DiagStateOk"
+        else:
+            face,face_style="✗  No te veo la cara: acomodate frente a la cámara o mejorá la luz","DiagStateBad"
+        self.diag_face.setText(face)
+        if self.diag_face.objectName()!=face_style:
+            self.diag_face.setObjectName(face_style)
+            self.diag_face.style().unpolish(self.diag_face)
+            self.diag_face.style().polish(self.diag_face)
+        if not d or not s.get("detected"):
+            cursor=""
+        elif method!="nose":
+            cursor="Cursor con los ojos: el detalle está en «Mostrar detalles técnicos»."
+        else:
+            dz=s["settings"]["gesture"]["dead_zone"]
+            dx,dy=d.get("normalized_dx",0),d.get("normalized_dy",0)
+            parts=[("→ derecha" if dx>0 else "← izquierda") if abs(dx)>dz else "",
+                   ("↓ abajo" if dy>0 else "↑ arriba") if abs(dy)>dz else ""]
+            moving=" y ".join(x for x in parts if x)
+            cursor=(f"Cursor: se movería {moving}" if moving else
+                    "Cursor: quieto, tu nariz está dentro de la zona quieta")
+            if not d.get("head_still",True) and moving:
+                cursor+="  ·  cejas en pausa mientras se mueve"
+        self.diag_cursor.setText(cursor)
+        rows=[]
+        calibrations,gates=d.get("gesture_calibrations",{}),d.get("gates",{})
+        for key in CALIBRATION_ORDER:
+            gate=gates.get(key)
+            available=bool(gate and gate.get("enabled",True))
+            value=gesture_progress(d.get("signals",{}).get(key),calibrations.get(key),gate,
+                                   GESTURE_SIGNALS[key].directions) if available else None
+            rows.append((GESTURE_LABELS[key],value,bool(d.get("active",{}).get(key)),available or not d))
+        self.gesture_meters.present(rows)
+        gesture,action=s.get("gesture","—"),s.get("action","—")
+        self.diag_last.setText("Último gesto: —" if gesture in (None,"—") else
+                               f"Último gesto: {GESTURE_LABELS.get(gesture,gesture)}  →  "
+                               f"{ACTION_LABELS.get(action,action)} (sin ejecutar)")
 
     def _settings(self):
         """Pestañas: lo que un usuario cambia en Básico; lo técnico separado por tema.
@@ -1264,24 +1384,43 @@ class MainWindow(QMainWindow):
             self.bridge.activate(screen_context=self.screen_context())
 
     def show_error(self,message):
-        self.banner.setText(str(message))
-        # Mensaje inline persistente: evita diálogos repetidos durante errores de captura.
-        self.banner.setStyleSheet("color: #ffb4bf;")
+        # Mensaje en la línea de estado (sin diálogos repetidos durante errores de captura).
+        self._status_event=(str(message),time.monotonic()+8,True)
+        self._set_status_message(str(message),True)
+
+    def _set_status_message(self,text,error):
+        self.banner.setText(text)
+        name="StatusError" if error else "StatusMessage"
+        if self.banner.objectName()!=name:
+            self.banner.setObjectName(name)
+            self.banner.style().unpolish(self.banner)
+            self.banner.style().polish(self.banner)
+
+    def _present_status(self,s):
+        enabled=s["control_enabled"]
+        state,name=(("EN PAUSA","StatusPaused") if s["paused"] else ("ACTIVO","StatusOn")) if enabled else ("DESACTIVADO","StatusOff")
+        self.control_status.setText("●  "+state)
+        if self.control_status.objectName()!=name:
+            self.control_status.setObjectName(name)
+            self.control_status.style().unpolish(self.control_status)
+            self.control_status.style().polish(self.control_status)
+        now=time.monotonic()
+        if s["message"]!=self._status_seen:
+            if self._status_seen is not None:  # el mensaje inicial no es una novedad
+                self._status_event=(s["message"],now+8,s["state"]=="ERROR")
+            self._status_seen=s["message"]
+        event=self._status_event if self._status_event and now<self._status_event[1] else None
+        text,error=status_message(s,event)
+        self._set_status_message(text,error)
 
     def refresh(self):
         s=self.bridge.snapshot()
         if not s: return
         self.snapshot=s
-        self.banner.setText(s["message"])
+        self._present_status(s)
         self._present_dictation(s.get("dictation"))
         self._present_models(s.get("models") or {})
         enabled=s["control_enabled"]
-        self.control_status.setText("CONTROL DEL SISTEMA\n"+("PAUSADO" if s["paused"] else "ACTIVO") if enabled else "CONTROL DEL SISTEMA\nDESACTIVADO")
-        style=(s["state"]=="ERROR",enabled)
-        if style!=self._status_style:
-            self._status_style=style
-            self.banner.setStyleSheet("color: #ffb4bf;" if style[0] else "")
-            self.control_status.setStyleSheet("color: #8ce5cd;" if enabled else "color: #c4d3e8;")
         p=s["profile"]
         if enabled and s["settings"]["ui"]["tracking_method"] == "eye_absolute":
             from screen_mapping import same_context, capture_host_id
@@ -1492,7 +1631,12 @@ class MainWindow(QMainWindow):
             self.jitter_summary.setText(f"Mantené neutral · {s['jitter_remaining']:.1f} s restantes")
         elif s["jitter"]:
             j=s["jitter"]
-            self.jitter_summary.setText((f"Desviación media: {j['mean_deviation']:.5f} · DE: {j['std_deviation']:.5f} · Rango X/Y: {j['range_x']:.5f}/{j['range_y']:.5f}\nJitter RMS: {j['jitter_rms']:.5f} · Salidas de zona muerta: {j['dead_zone_exits']} · Unidades normalizadas" if j["valid"] else j["reason"])+"\nGuardado localmente.")
+            if j["valid"]:
+                self.jitter_summary.setText(f"Estabilidad: temblor {j['jitter_rms']:.4f} · {j['dead_zone_exits']} salidas de la zona quieta en 10 s".replace(".",","))
+                self.jitter_summary.setToolTip(f"Jitter RMS {j['jitter_rms']:.5f} · desviación media {j['mean_deviation']:.5f} · DE {j['std_deviation']:.5f} · "
+                                               f"rango X/Y {j['range_x']:.5f}/{j['range_y']:.5f} (unidades normalizadas). Guardado localmente.")
+            else:
+                self.jitter_summary.setText("Estabilidad: "+j["reason"])
         e=s["experiment"]
         self.canvas.present(e)
         if e:
@@ -1500,6 +1644,7 @@ class MainWindow(QMainWindow):
             if e["active"] and e["mode"]=="real" and self.stack.currentIndex()==6:
                 self.experiment_input(*self.canvas.logical(self.canvas.mapFromGlobal(QCursor.pos())),False,True)
         self._present_metrics(s)
+        self._present_diagnostic(s)
 
     def _present_models(self,models):
         """Los botones de descarga solo hacen falta si el modelo todavía no está."""

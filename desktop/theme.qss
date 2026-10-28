@@ -61,3 +61,11 @@ QLabel#ProfileName { font-size: 21px; font-weight: 650; color: #ffffff; }
 QLabel#ProfileInUse { color: #8ce5cd; font-weight: 650; padding: 0 8px; }
 QLabel#ProfileError { color: #ffb4bf; }
 QLabel#ChartTitle { font-size: 17px; font-weight: 650; color: #eef3fc; }
+QLabel#DiagState { font-size: 18px; font-weight: 650; color: #c4d3e8; }
+QLabel#DiagStateOk { font-size: 18px; font-weight: 650; color: #8ce5cd; }
+QLabel#DiagStateBad { font-size: 18px; font-weight: 650; color: #ffb4bf; }
+QLabel#StatusOff { font-weight: 650; color: #c4d3e8; background: #1b2638; border: 1px solid #2b3a50; border-radius: 15px; padding: 6px 14px; }
+QLabel#StatusPaused { font-weight: 650; color: #ffd166; background: #2a2a1c; border: 1px solid #7a6a2c; border-radius: 15px; padding: 6px 14px; }
+QLabel#StatusOn { font-weight: 650; color: #8ce5cd; background: #17303a; border: 1px solid #57d4c3; border-radius: 15px; padding: 6px 14px; }
+QLabel#StatusMessage { color: #c4d3e8; font-size: 15px; }
+QLabel#StatusError { color: #ffb4bf; font-size: 15px; font-weight: 600; }
