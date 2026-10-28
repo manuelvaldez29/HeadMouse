@@ -175,7 +175,7 @@ class DesktopBridge(QObject):
         self.request("activate_control", confirmed=True, screen_context=screen_context)
 
     def stop(self, reason=None):
-        self.controller.emergency_stop()
+        self.controller.emergency_stop(reason)
         self.request("stop_control", **({"reason": reason} if reason else {}))
 
     def shutdown(self):

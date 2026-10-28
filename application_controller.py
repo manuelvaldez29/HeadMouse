@@ -36,6 +36,7 @@ class ApplicationController:
         self.data_dir = Path(data_dir) if data_dir else ROOT / "data"
         self.clock = clock
         self.emergency = threading.Event()
+        self._pending_stop_reason = None  # motivo de una parada pedida desde otro hilo
         self.emergency.set()
         self.profile = None
         self.config = load_config()
@@ -97,8 +98,15 @@ class ApplicationController:
         except Exception:
             self.profile = None
 
-    def emergency_stop(self):
-        """Única operación permitida desde otro hilo: revoca salida inmediatamente."""
+    def emergency_stop(self, reason=None):
+        """Única operación permitida desde otro hilo: revoca salida inmediatamente.
+
+        `reason` se guarda ANTES de revocar: si el ciclo del worker detiene el
+        control antes de procesar el comando encolado, igual informa el motivo
+        (antes mostraba "Control del sistema desactivado." y el motivo llegaba después).
+        """
+        if reason:
+            self._pending_stop_reason = reason
         self.emergency.set()
         self.cancel_camera_startup()
         control = self.control
@@ -333,6 +341,8 @@ class ApplicationController:
                 self.dictation = None
         if self.state == "CONTROL":
             self.state = "PREVIEW" if self.vision else "HOME"
+        reason = reason or self._pending_stop_reason
+        self._pending_stop_reason = None
         self.message = reason or "Control del sistema desactivado."
         if reason:
             logging.getLogger(__name__).warning("Control detenido: %s", reason)
@@ -886,7 +896,7 @@ class ApplicationController:
         if self.state == "ERROR":
             return  # conservar el diagnóstico original; nunca procesar acciones tras fallar
         if self.emergency.is_set() and self.control:
-            self.stop_control()
+            self.stop_control(self._pending_stop_reason)
         if self.experiment:
             self.experiment.tick()
         if self.vision is None:
