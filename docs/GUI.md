@@ -32,7 +32,7 @@ El estado superior distingue control desactivado, activo y pausado. La pausa por
 | Configuración | Cinco pestañas. **Básico**: método, cámara, velocidad del cursor, zona quieta, suavizado, dictado y vista de cámara. **Gestos y scroll**: tiempos de sostener y esperar, scroll y pausa sin cara. **Ojos** (experimental; avisa cuando el método es Nariz): fuente ocular, joystick, posición en pantalla. **Cámara**: backend, resolución, FPS, tiempos y preset USB. **Modelos**: descarga de los modelos facial y de voz. Guardar y Restaurar quedan siempre visibles. |
 | Gestos y acciones | Seleccionar la acción de cada gesto y guardar en el perfil. |
 | Experimentos | Adquisición de objetivos con cursor interno, práctica con teclado o control real explícitamente activado. |
-| Métricas | Indicadores de la sesión y resúmenes históricos locales. |
+| Métricas | Sesiones con control activo de este perfil o de todos: cuatro indicadores (sesiones, tiempo de uso, clicks y pausas por minuto, ponderados por duración), acciones por minuto por sesión en tres franjas con la misma escala (clicks, scrolls, pausas), pérdidas de rostro por minuto y tabla con la sesión más reciente arriba. Al pasar el mouse por un gráfico se ven los valores de esa sesión. |
 
 Los cambios se guardan en el mismo perfil JSON utilizado por los motores. La interfaz no exige editar JSON. Cambiar los tiempos de reconocimiento requiere validar nuevamente el perfil. Restaurar valores predeterminados pide confirmación.
 

@@ -10,7 +10,8 @@ from PySide6.QtWidgets import (QMainWindow, QWidget, QFrame, QVBoxLayout, QHBoxL
     QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView, QApplication, QLineEdit, QTabWidget)
 from action_mapping import ACTIONS, DEFAULT_MAPPING
 from gaze_source import SOURCE_LABELS as EYE_SOURCE_LABELS, eye_coordinates
-from desktop.widgets import CameraPreview, ExperimentCanvas, CalibrationMeter, DictationOverlay, label, card
+from desktop.widgets import (CameraPreview, ExperimentCanvas, CalibrationMeter, DictationOverlay, LineChart,
+    CHART_SERIES, CHART_NEUTRAL, label, card)
 
 GESTURE_LABELS = dict(LEFT_WINK="Guiño izquierdo", RIGHT_WINK="Guiño derecho", LEFT_BROW="Ceja izquierda",
                       RIGHT_BROW="Ceja derecha", BOTH_BROWS="Ambas cejas", MOUTH_OPEN="Boca abierta")
@@ -1159,22 +1160,102 @@ class MainWindow(QMainWindow):
         self.bridge.request("experiment_input",x=x,y=y,click=click,absolute=absolute)
 
     def _metrics(self):
-        layout=self.page("Métricas y sesiones","Resultados locales. La latencia mostrada corresponde al procesamiento, no al tiempo físico de pantalla.")
+        """Tasas por minuto por sesión: comparables aunque las sesiones duren distinto."""
+        page=self.page("Métricas","Cómo se usó HeadMouse en cada sesión con control activo. Todo queda en esta computadora.")
+        filters=QHBoxLayout()
+        self.metrics_scope=QComboBox()
+        self.metrics_scope.addItem("Sesiones de este perfil","profile")
+        self.metrics_scope.addItem("Sesiones de todos los perfiles","all")
+        self.metrics_scope.setAccessibleName("Qué sesiones mostrar")
+        self.metrics_scope.currentIndexChanged.connect(lambda _index:self._present_metrics(self.snapshot,force=True))
+        filters.addWidget(self.metrics_scope)
+        filters.addStretch()
+        filters.addWidget(button("Actualizar",lambda:self.bridge.request("refresh_metrics")))
+        page.addLayout(filters)
+        scroll=QScrollArea()
+        scroll.setWidgetResizable(True)
+        body=QWidget()
+        layout=QVBoxLayout(body)
+        layout.setContentsMargins(0,4,12,4)
+        layout.setSpacing(14)
+        scroll.setWidget(body)
+        page.addWidget(scroll,1)
         grid=QGridLayout()
         self.metric_labels={}
-        for i,title in enumerate(("FPS actual","FPS promedio","Latencia promedio","Sesiones","Eventos","Pérdidas de tracking","Clicks","Scrolls")):
+        for i,title in enumerate(("Sesiones con control","Tiempo de uso","Clicks por minuto","Pausas por minuto")):
             box,value=card(title)
-            grid.addWidget(box,i//4,i%4)
+            grid.addWidget(box,0,i)
             self.metric_labels[title]=value
         layout.addLayout(grid)
-        self.sessions=QTableWidget(0,5)
-        self.sessions.setHorizontalHeaderLabels(["Perfil","Inicio","Duración (s)","FPS","Clicks"])
+        charts=QHBoxLayout()
+        charts.setSpacing(14)
+        self.actions_chart,box=self._chart_card("Acciones por minuto en cada sesión",
+                                               "Clicks, scrolls y pausas, divididos por la duración de la sesión · misma escala",
+                                               facets=True)
+        charts.addWidget(box,3)
+        self.losses_chart,box=self._chart_card("Pérdidas de rostro por minuto",
+                                              "Veces que la cámara dejó de ver la cara; menos es mejor")
+        charts.addWidget(box,2)
+        layout.addLayout(charts)
+        self.metrics_note=label("","Subtitle")
+        layout.addWidget(self.metrics_note)
+        self.sessions=QTableWidget(0,8)
+        self.sessions.setHorizontalHeaderLabels(["Fecha","Duración","Clicks","Scrolls","Pausas","Pérdidas de rostro","FPS","Dictados"])
         self.sessions.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.sessions.verticalHeader().hide()
         self.sessions.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.sessions.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self.sessions.setAccessibleName("Historial de sesiones")
-        layout.addWidget(self.sessions,1)
-        layout.addWidget(button("Actualizar sesiones",lambda:self.bridge.request("refresh_metrics")))
+        self.sessions.setAccessibleName("Historial de sesiones con control")
+        self.sessions.setMinimumHeight(240)
+        layout.addWidget(self.sessions)
+
+    def _chart_card(self,title,subtitle,facets=False):
+        box=QFrame()
+        box.setObjectName("Card")
+        inner=QVBoxLayout(box)
+        inner.setContentsMargins(16,12,16,12)
+        inner.addWidget(label(title,"ChartTitle"))
+        inner.addWidget(label(subtitle,"Subtitle"))
+        chart=LineChart(unit="/min",empty="Todavía no hay sesiones con control activo",facets=facets)
+        chart.setAccessibleName(title)
+        inner.addWidget(chart,1)
+        return chart,box
+
+    def _present_metrics(self,s,force=False):
+        from metrics_summary import control_sessions, totals, duration_text, MIN_DURATION_S
+        if not s: return
+        scope=self.metrics_scope.currentData()
+        profile=(s.get("profile") or {}).get("user_id") if scope=="profile" else None
+        key=json.dumps([s.get("history",[]),profile],sort_keys=True,default=str)
+        if key==self._history_key and not force: return
+        self._history_key=key
+        sessions=control_sessions(s.get("history",[]),profile)
+        summary=totals(sessions)
+        rate=lambda value:"—" if value is None else f"{value:.1f}".replace(".",",")
+        for title,value in (("Sesiones con control",str(summary["sessions"])),
+                            ("Tiempo de uso",duration_text(summary["minutes"]) if sessions else "—"),
+                            ("Clicks por minuto",rate(summary["clicks_per_min"])),
+                            ("Pausas por minuto",rate(summary["pauses_per_min"]))):
+            self.metric_labels[title].setText(value)
+        labels=[x["started"].strftime("%d/%m %H:%M") for x in sessions]
+        self.actions_chart.set_data(labels,[
+            dict(name="Clicks",color=CHART_SERIES[0],values=[x["clicks_per_min"] for x in sessions]),
+            dict(name="Scrolls",color=CHART_SERIES[1],values=[x["scrolls_per_min"] for x in sessions]),
+            dict(name="Pausas",color=CHART_SERIES[2],values=[x["pauses_per_min"] for x in sessions])] if sessions else [])
+        self.losses_chart.set_data(labels,[dict(name="Pérdidas de rostro",color=CHART_NEUTRAL,
+                                                values=[x["losses_per_min"] for x in sessions])] if sessions else [])
+        skipped=len([r for r in s.get("history",[]) if not profile or r.get("profile_id")==profile])-len(sessions)
+        self.metrics_note.setText(f"Se muestran las sesiones con control activo de al menos {MIN_DURATION_S} s. "
+                                  f"{skipped} sesiones de vista previa, diagnóstico, calibración o muy cortas no entran en las tasas."
+                                  if skipped else f"Se muestran las sesiones con control activo de al menos {MIN_DURATION_S} s.")
+        self.sessions.setRowCount(len(sessions))
+        for row,x in enumerate(reversed(sessions)):  # la más reciente arriba
+            values=(x["started"].strftime("%d/%m/%Y %H:%M"),duration_text(x["minutes"]),x["clicks"],x["scrolls"],
+                    x["pauses"],x["losses"],f"{x['fps']:.0f}",x["dictations"])
+            for col,value in enumerate(values):
+                item=QTableWidgetItem(str(value))
+                if col: item.setTextAlignment(Qt.AlignmentFlag.AlignRight|Qt.AlignmentFlag.AlignVCenter)
+                self.sessions.setItem(row,col,item)
 
     def activate(self):
         if QMessageBox.question(self,"Activar control","HeadMouse comenzará a controlar el puntero del sistema.",
@@ -1418,21 +1499,7 @@ class MainWindow(QMainWindow):
             self.experiment_status.setText(f"Objetivo {e['index']}/{e['total']} · Completados: {e['completed']} · {'En curso' if e['active'] else 'Finalizado'}\n"+(f"Resultados: {e['path']}" if e["path"] else "Resultados guardados al finalizar cada objetivo"))
             if e["active"] and e["mode"]=="real" and self.stack.currentIndex()==6:
                 self.experiment_input(*self.canvas.logical(self.canvas.mapFromGlobal(QCursor.pos())),False,True)
-        m=s["metrics"]
-        history=s["history"]
-        totals={key:sum(row.get(key,0) or 0 for row in history)+(m.get(key,0) or 0) for key in ("events_total","tracking_losses","clicks","scrolls")}
-        frames=sum(row.get("frames_processed",0) for row in history)+m.get("frames_processed",0)
-        duration=sum(row.get("duration_s",0) for row in history)+m.get("duration_s",0)
-        processing=sum(row.get("processing_ms_mean",0)*row.get("frames_processed",0) for row in history)+m.get("processing_ms_mean",0)*m.get("frames_processed",0)
-        values=[f"{s['fps']:.0f}",f"{frames/duration if duration else 0:.1f}",f"{processing/frames if frames else 0:.1f} ms",str(len(history)),str(totals['events_total']),str(totals['tracking_losses']),str(totals['clicks']),str(totals['scrolls'])]
-        for out,value in zip(self.metric_labels.values(),values): out.setText(value)
-        key=json.dumps(history,sort_keys=True)
-        if key!=self._history_key:
-            self._history_key=key
-            self.sessions.setRowCount(len(history))
-            for row,h in enumerate(history):
-                for col,value in enumerate((h.get("profile_id","—"),h.get("started_at","—"),f"{h.get('duration_s',0):.1f}",f"{h.get('fps_mean',0):.1f}",h.get("clicks",0))):
-                    self.sessions.setItem(row,col,QTableWidgetItem(str(value)))
+        self._present_metrics(s)
 
     def _present_models(self,models):
         """Los botones de descarga solo hacen falta si el modelo todavía no está."""

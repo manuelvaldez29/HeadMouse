@@ -49,3 +49,27 @@ cuestionarios de esfuerzo/usabilidad. Estos resultados requieren
 ground truth y protocolo consentido, no pueden inferirse de los contadores actuales.
 Percentiles de latencia, exportación CSV y persistencia periódica son extensiones
 pendientes, no métricas implementadas.
+
+## Pantalla Métricas (2026-10-28)
+
+`metrics_summary.py` lee los resúmenes de `data/metrics/` sin modificarlos. Una
+sesión entra en las tasas si ejecutó alguna acción (control activo, aunque haya
+estado en pausa) y duró al menos 30 s. Las de vista previa, diagnóstico o
+calibración no ejecutan acciones y se informan aparte. Para cada sesión se calculan
+clicks, scrolls, pausas (acción `PAUSE`) y pérdidas de rostro por minuto, dividiendo
+por su duración. Los indicadores agregados dividen el total de eventos por el total
+de minutos, para que una sesión corta no pese igual que una larga.
+
+Las pausas por minuto cuentan todas las pausas ejecutadas, intencionales o no: no
+hay ground truth para distinguirlas. Sirven para comparar la misma persona antes y
+después de un cambio (por ejemplo, `brow_motion_gate`), no como tasa de falsos
+positivos.
+
+Gráficos: tres franjas con la misma escala, una por serie, en lugar de tres líneas
+superpuestas, porque con decenas de sesiones esas líneas se cruzan. Colores
+validados con la guía de visualización sobre el fondo de tarjeta `#172337`: azul,
+naranja y verde azulado pasan separación para daltonismo (ΔE 9,4) y contraste. La
+serie única de pérdidas de rostro va en gris neutro, porque con cuatro colores
+ninguna combinación pasa entre todos los pares. La tabla de sesiones es la vista
+accesible de los mismos datos.
+

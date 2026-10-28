@@ -60,3 +60,4 @@ QFrame#ProfileCard QLabel, QFrame#ProfileCardActive QLabel { background: transpa
 QLabel#ProfileName { font-size: 21px; font-weight: 650; color: #ffffff; }
 QLabel#ProfileInUse { color: #8ce5cd; font-weight: 650; padding: 0 8px; }
 QLabel#ProfileError { color: #ffb4bf; }
+QLabel#ChartTitle { font-size: 17px; font-weight: 650; color: #eef3fc; }
