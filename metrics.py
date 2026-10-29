@@ -1,4 +1,5 @@
 """Agregados acotados por sesión. Nunca recibe ni guarda imágenes/landmarks."""
+from app_paths import data_root, face_model_path
 import json
 import threading
 import time
@@ -10,7 +11,7 @@ from config import ROOT
 class SessionMetrics:
     def __init__(self, profile_id, directory=None, enabled=True, clock=time.monotonic):
         self.profile_id = profile_id
-        self.directory = ROOT / "data" / "metrics" if directory is None else directory
+        self.directory = data_root() / "metrics" if directory is None else directory
         self.enabled = enabled
         self.clock = clock
         self.started = clock()

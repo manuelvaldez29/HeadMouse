@@ -1,4 +1,5 @@
 """Adquisición de objetivos y jitter reproducibles, sin Qt/hardware."""
+from app_paths import data_root, face_model_path
 import json
 import math
 import time
@@ -12,7 +13,7 @@ from config import ROOT
 
 class ResultStore:
     def __init__(self, directory=None):
-        self.directory = Path(directory) if directory is not None else ROOT / "data" / "experiments"
+        self.directory = Path(directory) if directory is not None else data_root() / "experiments"
 
     def append(self, session_id, record):
         # IDs los genera el motor; no aceptar rutas en la API de persistencia.

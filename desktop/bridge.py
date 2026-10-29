@@ -4,7 +4,7 @@ import threading
 from PySide6.QtCore import QObject, QThread, QTimer, Signal, Slot, Qt
 from application_controller import ApplicationController
 
-COMMANDS = {"create_profile", "select_profile", "rename_profile", "delete_profile", "save_settings",
+COMMANDS = {"create_profile", "select_profile", "rename_profile", "delete_profile", "save_settings", "pause_control", "resume_control", "activate_startup_control",
             "select_control_method", "select_eye_source", "save_public_settings", "upgrade_ocular_response",
             "start_vertical_diagnostic", "repeat_vertical_point", "cancel_vertical_diagnostic",
             "start_gaze_calibration", "review_gaze_training", "export_gaze_attempt", "record_gaze_viewport", "repeat_gaze_point", "save_gaze_calibration", "cancel_gaze_calibration",

@@ -20,6 +20,7 @@ Uso desde otro módulo:
 
     engine.stop()
 """
+from app_paths import data_root, face_model_path
 
 import os
 import sys
@@ -54,7 +55,7 @@ MODEL_URL = (
     "https://storage.googleapis.com/mediapipe-models/"
     "face_landmarker/face_landmarker/float16/1/face_landmarker.task"
 )
-MODEL_PATH = str(ROOT / "models" / "face_landmarker.task")
+MODEL_PATH = str(face_model_path())
 
 # Índices de landmarks clave del Face Mesh de MediaPipe (478 puntos total)
 # Referencia: https://developers.google.com/mediapipe/solutions/vision/face_landmarker
@@ -116,7 +117,7 @@ class VisionEngine(threading.Thread):
         self._stop_requested = threading.Event()
         self.model_path = Path(self.config.model_path)
         if not self.model_path.is_absolute():
-            self.model_path = ROOT / self.model_path
+            self.model_path = face_model_path(self.model_path)
 
         # ── Estado compartido ─────────────────────────────────────────────────
         self._lock      = threading.Lock()

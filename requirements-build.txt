@@ -1,0 +1,4 @@
+# Herramientas de compilación, independientes de las dependencias de ejecución.
+pyinstaller==6.22.3
+pyinstaller-hooks-contrib==2026.9
+pillow>=10

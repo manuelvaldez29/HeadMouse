@@ -3,6 +3,21 @@
 Control local de PC con movimiento de cabeza y gestos faciales.
 Tesis UNSTA 2026 — Bloj · Domfrocht · Petrelli · Valdez.
 
+## Aplicación instalable para Windows
+
+La distribución de tesis **0.4.0** se construye en la rama integrada `tesis-v0.2`.
+El instalador `HeadMouse-Setup-0.4.0-win64.exe` incluye el entorno de ejecución;
+el usuario final no necesita Python ni una terminal. Los perfiles se conservan en
+`%LOCALAPPDATA%\HeadMouse`, fuera del programa. Inicio con Windows y activación
+automática son opciones independientes y desactivadas inicialmente; la segunda
+exige calibración, autorización y comprobaciones de seguimiento/sesión.
+
+Ver [manual de Windows](docs/WINDOWS_USER_MANUAL.md),
+[guía rápida](docs/WINDOWS_QUICK_START.md),
+[compilación y arquitectura de distribución](docs/WINDOWS_DISTRIBUTION_TECHNICAL.md)
+y [pruebas y limitaciones](docs/WINDOWS_DISTRIBUTION_TEST_REPORT.md).
+Las instrucciones de desarrollo y CLI siguientes se conservan.
+
 La interfaz presenta **Nariz** y **Ojos**, dentro de un perfil por persona.
 Inicio permite elegirlos y Calibración tiene esas mismas dos pestañas. Los
 parámetros, gestos y acciones de cada configuración son independientes.

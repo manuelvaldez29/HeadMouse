@@ -17,6 +17,7 @@ Controles:
 """
 
 from __future__ import annotations
+from app_paths import data_root, face_model_path
 
 import argparse
 import time
@@ -286,7 +287,7 @@ def run(user_id: str, config=None, disabled=None):
     from dataclasses import asdict
     session = CalibrationSession(gesture_profile(profile, method_bank(config)), config,
                                  enabled={key:False for key in (disabled or [])})
-    telemetry = ResultStore(ROOT / "data" / "calibration")
+    telemetry = ResultStore(data_root() / "calibration")
     session_id, logged = uuid.uuid4().hex, 0
     logger.info("Calibración adaptativa de %s; salida: %s", user_id, store.path(user_id))
     with ExitStack() as cleanup:
@@ -408,7 +409,7 @@ def main(argv=None):
         logging.getLogger().setLevel(args.log_level or config.log_level)
         if args.check:
             from vision_engine import VisionEngine
-            VisionEngine._ensure_model(ROOT / config.vision.model_path)
+            VisionEngine._ensure_model(face_model_path(config.vision.model_path))
             logger.info("Dependencias/config/modelo verificados; webcam no probada")
             return 0
         run(args.user, config, args.disable)

@@ -1,4 +1,5 @@
 """Perfiles locales versionados y compatibilidad explícita con calibration.json."""
+from app_paths import data_root, face_model_path
 import json
 import logging
 import os
@@ -144,7 +145,7 @@ def replace_with_retry(source, target, attempts=10, delay_s=.05):
 
 class ProfileStore:
     def __init__(self, directory=None):
-        self.directory = Path(directory) if directory is not None else ROOT / "data" / "profiles"
+        self.directory = Path(directory) if directory is not None else data_root() / "profiles"
 
     def path(self, user_id):
         return self.directory / f"{validate_user_id(user_id)}.json"

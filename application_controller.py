@@ -1,4 +1,5 @@
 """Coordinación desktop sin dependencia de Qt. Un único worker posee el estado."""
+from app_paths import data_root, face_model_path
 import json
 import logging
 import threading
@@ -33,7 +34,7 @@ class ApplicationController:
         self.dictation = None
         self._voice_download = None
         self._models, self._models_checked = {}, -1e9
-        self.data_dir = Path(data_dir) if data_dir else ROOT / "data"
+        self.data_dir = Path(data_dir) if data_dir else data_root()
         self.clock = clock
         self.emergency = threading.Event()
         self._pending_stop_reason = None  # motivo de una parada pedida desde otro hilo
@@ -64,6 +65,8 @@ class ApplicationController:
         self._last_face = 0
         self.cursor = (400., 250.)
         self.closed = False
+        self.session_guard = None
+        self._saved_calibrations = 0
         self.history = []
         self.refresh_metrics()
         self._restore_last_profile()
@@ -385,6 +388,8 @@ class ApplicationController:
             raise RuntimeError("No se pudieron cerrar todos los recursos: " + "; ".join(str(e) for e in errors))
 
     def activate_control(self, confirmed=False, screen_context=None):
+        if self.session_guard is not None and not self.session_guard():
+            raise ValueError("La sesión de Windows está bloqueada o no permite controlar el escritorio")
         logging.getLogger(__name__).info("Activación solicitada: método=%s banco=%s confirmada=%s emergencia=%s cámara=%s acciones_validadas=%s",
             self.config.ui.tracking_method, method_bank(self.config), confirmed, self.emergency.is_set(),
             self.camera_status().get("stage"), self._actions_ready())
@@ -432,6 +437,22 @@ class ApplicationController:
             return
         self.state, self.message = "CONTROL", "Control del sistema activo. F8 o Detener control para salir." + voice_warning
         logging.getLogger(__name__).info("Activación completada: método=%s sólo_movimiento=%s", self.config.ui.tracking_method, self.control.movement_only)
+
+    def pause_control(self):
+        if self.control and not self.control.paused:self.control.toggle_pause()
+
+    def activate_startup_control(self, screen_context=None):
+        from startup_preferences import StartupPreferences
+        store=StartupPreferences(self.data_dir/"startup.json")
+        if not self.profile or not store.authorized(store.load(),self.profile):
+            raise ValueError("No existe autorización automática vigente para el perfil actual")
+        if self.session_guard is None or not self.session_guard():
+            raise ValueError("No se pudo verificar la sesión desbloqueada de Windows")
+        self.activate_control(confirmed=True,screen_context=screen_context)
+
+    def resume_control(self, confirmed=False, screen_context=None):
+        self.activate_control(confirmed,screen_context)
+        if self.control and self.control._paused:self.control.toggle_pause()
 
     def _report_recenter(self, result):
         if not result:
@@ -582,6 +603,7 @@ class ApplicationController:
             logging.getLogger(__name__).exception("Guardado de gestos fallido: banco=%s",bank)
             raise RuntimeError(self.message) from exc
         self.profile = loaded
+        self._saved_calibrations += 1
         self.config = load_config(overrides=self.profile.get("settings", {}))
         self._make_gesture()
         self.state = "PREVIEW"
@@ -706,6 +728,7 @@ class ApplicationController:
             session.message = self.message = f"{status}: {exc}. La sesión se conserva; repetí el punto indicado o reintentá el guardado."
             return False
         self.profile = loaded
+        self._saved_calibrations += 1
         return True
 
     def cancel_eye_calibration(self):
@@ -877,7 +900,7 @@ class ApplicationController:
 
     def prepare_model(self):
         from vision_engine import VisionEngine
-        VisionEngine.download_model(ROOT / self.config.vision.model_path)
+        VisionEngine.download_model(face_model_path(self.config.vision.model_path))
         self.message = "Modelo local preparado. Ya podés abrir la cámara."
 
     def refresh_metrics(self):
@@ -891,6 +914,8 @@ class ApplicationController:
                 continue
 
     def step(self):
+        if self.control and self.session_guard is not None and not self.session_guard():
+            self.emergency_stop("Sesión bloqueada: control detenido")
         if self._camera_starting:
             return
         if self.state == "ERROR":
@@ -1050,6 +1075,7 @@ class ApplicationController:
         if profile and self.config.ui.unified_eyes and self.config.ui.tracking_method!="nose":
             profile_status="Ojos · Movimiento "+("calibrado" if tracking_ready else "pendiente o incompatible")+" · Gestos "+("validados" if self._actions_ready() else "pendientes")
         return dict(state=self.state, message=self.message, profile=profile,
+                    calibration_saved_revision=self._saved_calibrations,
                     public_method="nose" if self.config.ui.tracking_method=="nose" else "eyes",
                     ocular_response="posición en pantalla" if self.config.ui.ocular_engine=="eye_absolute" else "dirección conservada del perfil anterior",
                     profile_status=profile_status,
@@ -1093,7 +1119,7 @@ class ApplicationController:
             from config import WHISPER_MODELS
             from dictation import MODEL_DIR
             face = Path(self.config.vision.model_path)
-            face = face if face.is_absolute() else ROOT / face
+            face = face if face.is_absolute() else face_model_path(face)
             self._models = dict(face=face.is_file() and face.stat().st_size > 0,
                                 voice={m: (MODEL_DIR / m / "model.bin").is_file() for m in WHISPER_MODELS})
             self._models_checked = now

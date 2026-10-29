@@ -16,6 +16,7 @@ Controles:
     Cursor a esquina sup-izq  → detener (failsafe de pyautogui)
     Ctrl+C en terminal        → detener
 """
+from app_paths import data_root, face_model_path
 
 import argparse
 import time
@@ -107,7 +108,7 @@ def main(argv=None):
         config = load_config(args.config)
         if args.download_model:
             from vision_engine import VisionEngine
-            path = ROOT / config.vision.model_path
+            path = face_model_path(config.vision.model_path)
             VisionEngine.download_model(path)
             return 0
         # Solo el usuario default puede buscar el archivo global automáticamente.
@@ -151,7 +152,7 @@ def main(argv=None):
         import cv2
         import pyautogui  # verificar dependencia antes de abrir cámara
         if args.check:
-            VisionEngine._ensure_model(ROOT / config.vision.model_path)
+            VisionEngine._ensure_model(face_model_path(config.vision.model_path))
             logger.info("Imports, configuración, perfil y modelo local verificados; hardware no probado")
             return 0
         metrics = SessionMetrics(args.user, enabled=config.metrics_enabled)

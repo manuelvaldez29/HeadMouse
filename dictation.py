@@ -16,6 +16,7 @@ ni texto. La transcripción es local; el modelo se descarga una sola vez:
 Las partes puras (Endpointer, Dictation) no dependen de Windows ni de audio y
 se prueban con dobles; los adaptadores reales se cargan solo al usarlos.
 """
+from app_paths import data_root, face_model_path
 import argparse
 import importlib.util
 import logging
@@ -33,7 +34,7 @@ from config import ROOT, VoiceConfig, configure_logging
 logger = logging.getLogger(__name__)
 
 SAMPLE_RATE = 16000
-MODEL_DIR = ROOT / "models" / "whisper"
+MODEL_DIR = data_root() / "models" / "whisper"
 
 
 # ══════════════════════════════════════════════════════════════════════════════

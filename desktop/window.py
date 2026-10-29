@@ -157,7 +157,8 @@ class MainWindow(QMainWindow):
         self._history_key=None
         self._closing=False
         self._allow_close=False
-        self.setWindowTitle("HeadMouse v0.3.1 — Robust Adaptive Facial Calibration")
+        from app_paths import VERSION
+        self.setWindowTitle(f"HeadMouse v{VERSION} — Tesis V0.2")
         self.resize(1240,850)
         self.setMinimumSize(980,700)
         shell=QWidget()
@@ -183,8 +184,8 @@ class MainWindow(QMainWindow):
             self.nav.append(b)
         nav.addStretch()
         nav.addWidget(label("LOCAL Y PRIVADO\nSin guardar imágenes","Subtitle"))
-        nav.addWidget(button("Salir",self.close))
-        nav.addWidget(label("v0.3.1 · UNSTA 2026","Subtitle"))
+        nav.addWidget(button("Salir",self.exit_application))
+        nav.addWidget(label(f"v{VERSION} · UNSTA 2026","Subtitle"))
         outer.addWidget(sidebar)
         content=QVBoxLayout()
         content.setContentsMargins(26,20,26,18)
@@ -961,6 +962,7 @@ class MainWindow(QMainWindow):
 
         # ── Básico ──
         form,_=tab("Básico","Lo que vas a querer ajustar. Lo demás está en las otras pestañas.")
+        self.startup_settings_layout=form
         section(form,"Control")
         self.tracking_combo=QComboBox()
         self.tracking_combo.addItem("Nariz","nose")
@@ -1193,6 +1195,8 @@ class MainWindow(QMainWindow):
         self._gaze_preview = False
 
     def stop_immediately(self):
+        resident=getattr(self,"resident",None)
+        if resident:resident.disarm()
         self.bridge.stop()
         self.bridge.request("stop_camera")
         self._gaze_preview=False
@@ -1728,14 +1732,25 @@ class MainWindow(QMainWindow):
         self.dictation_overlay.present(dictation,message,self.screen())
 
     def closeEvent(self,event):
+        resident=getattr(self,"resident",None)
+        if not self._allow_close and not self._closing and resident and resident.minimize_on_close():
+            event.ignore();self.hide();return
         if self._allow_close:
             event.accept()
             return
         event.ignore()
         if not self._closing:
+            if resident:
+                resident.quitting=True
+                resident.disarm()
             self._closing=True
             self.banner.setText("Cerrando cámara y guardando resultados…")
             self.bridge.shutdown()
+
+    def exit_application(self):
+        resident=getattr(self,"resident",None)
+        if resident:resident.quitting=True
+        self.close()
 
     def _closed(self):
         self.timer.stop()
