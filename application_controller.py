@@ -425,7 +425,8 @@ class ApplicationController:
             self.control = ControlEngine(self.vision, self.gesture, self.config.control,
                                          backend=backend, metrics=self.metrics,
                                          mapping=ActionMapping(self.config.actions.bindings),
-                                         dictation=self.dictation,screen_bounds=bounds,movement_only=movement_only)
+                                         dictation=self.dictation,screen_bounds=bounds,movement_only=movement_only,
+                                         clock=self.clock)
             if self.config.ui.tracking_method == "eye_absolute":
                 context = self._tracking_record()["context"]
                 if (self.control._screen_w, self.control._screen_h) != (context["width"], context["height"]):
@@ -992,8 +993,13 @@ class ApplicationController:
                     pause.source_timestamp_ms, guard_ms=c.brow_decision_ms + c.both_brows_hold_ms + 250))
         if self.metrics:
             self.metrics.tracking(fresh)
+        discrete_actions = [a for a in actions if a.type in ("LEFT_DRAG_START", "LEFT_DRAG_END")]
         discrete = [e for e in events if e.type not in ("CURSOR_MOVE", "CURSOR_ABSOLUTE")]
-        if discrete:
+        if discrete_actions:
+            self.last_gesture = gesture_identity(discrete_actions[-1])
+            self.last_action = discrete_actions[-1].type
+            self._event_at = self.clock()
+        elif discrete:
             self.last_gesture = gesture_identity(discrete[-1])
             self.last_action = ActionMapping(self.config.actions.bindings).resolve(discrete[-1]).type
             self._event_at = self.clock()
@@ -1091,6 +1097,7 @@ class ApplicationController:
                     frame=self.vision.get_frame() if self.vision and include_frame else None,
                     control_enabled=bool(self.control and not self.emergency.is_set()),
                     paused=self.control.paused if self.control else True,
+                    dragging=bool(self.control and self.control.dragging and not self.emergency.is_set()),
                     gesture=self.last_gesture, action=self.last_action, cursor=self.cursor,
                     diagnostic=self.gesture.diagnostic() if self.gesture else {},
                     wizard=self.wizard.snapshot() if self.wizard else None,

@@ -1,7 +1,7 @@
 """Widgets de dibujo: solo presentación y eventos de entrada, sin motores."""
 from PySide6.QtCore import Qt, QRectF, QPointF, Signal
 from PySide6.QtGui import QPainter, QColor, QPen, QImage, QFontMetrics
-from PySide6.QtWidgets import QWidget, QLabel, QVBoxLayout, QFrame
+from PySide6.QtWidgets import QWidget, QLabel, QVBoxLayout, QHBoxLayout, QFrame
 from gaze_source import iris_markers
 
 
@@ -96,12 +96,12 @@ class CalibrationMeter(QWidget):
     def __init__(self):
         super().__init__()
         self.rows=[]
-        self.setMinimumHeight(100)
+        self.setMinimumHeight(86)
         self.setAccessibleName("Medidor de señal, neutral, liberación, activación y gesto cómodo")
 
     def present(self,rows):
         self.rows=rows
-        self.setMinimumHeight(max(100,(55 if self.width()<420 else 30)+85*len(rows)))
+        self.setMinimumHeight(max(86,(46 if self.width()<420 else 28)+68*len(rows)))
         self.update()
 
     def resizeEvent(self,event):
@@ -114,16 +114,18 @@ class CalibrationMeter(QWidget):
         p.fillRect(self.rect(),QColor("#172337"))
         p.setPen(QColor("#b1c6df"))
         if not self.rows:
-            p.drawText(self.rect(),Qt.AlignmentFlag.AlignCenter,"El medidor aparece al comenzar los gestos")
+            p.drawText(self.rect().adjusted(12,8,-12,-8),
+                       Qt.AlignmentFlag.AlignCenter|Qt.TextFlag.TextWordWrap,
+                       "El medidor aparece al comenzar los gestos")
             return
         colors={"neutral":"#b1c6df","release":"#cfb3ff","activation":"#ffd477","comfortable":"#71dfbe"}
         labels={"neutral":"Neutral","release":"Liberación","activation":"Activación","comfortable":"Gesto cómodo"}
         columns=2 if self.width()<420 else 4
         for i,(key,color) in enumerate(colors.items()):
             p.setPen(QColor(color))
-            p.drawText(QRectF(12+(i%columns)*self.width()/columns,3+25*(i//columns),self.width()/columns-12,25),Qt.AlignmentFlag.AlignLeft,labels[key])
+            p.drawText(QRectF(12+(i%columns)*self.width()/columns,3+22*(i//columns),self.width()/columns-12,22),Qt.AlignmentFlag.AlignLeft,labels[key])
         for index,row in enumerate(self.rows):
-            y=(80 if columns==2 else 55)+85*index
+            y=(64 if columns==2 else 42)+68*index
             d=row["direction"]
             values=[d*row[k] for k in (*colors,"value") if row.get(k) is not None]
             if not values: continue
@@ -137,7 +139,7 @@ class CalibrationMeter(QWidget):
                 if row.get(key) is not None:
                     x=xpos(row[key])
                     p.setPen(QPen(QColor(color),3))
-                    p.drawLine(QPointF(x,y-10),QPointF(x,y+10))
+                    p.drawLine(QPointF(x,y-8),QPointF(x,y+8))
             value=row.get("value")
             if value is not None:
                 p.setBrush(QColor("#6df4e0"))
@@ -147,7 +149,8 @@ class CalibrationMeter(QWidget):
             side={"left":"Izquierda", "right":"Derecha"}.get(row["channel"],"Señal")
             text=f"{side} · Valor actual: {value:.4f}" if value is not None else f"{side} · Esperando señal"
             if row.get("activation") is None: text+=" · Falta una captura válida"
-            p.drawText(QRectF(12,y+16,self.width()-24,26),Qt.AlignmentFlag.AlignLeft,text)
+            elided=p.fontMetrics().elidedText(text,Qt.TextElideMode.ElideRight,max(40,self.width()-24))
+            p.drawText(QRectF(12,y+12,self.width()-24,22),Qt.AlignmentFlag.AlignLeft|Qt.AlignmentFlag.AlignVCenter,elided)
 
 
 class ExperimentCanvas(QWidget):
@@ -547,12 +550,41 @@ def zoom_snapshot(snapshot, zoom):
 
 class MiniCameraWindow(QWidget):
     """Mini cámara siempre visible mientras se controla con la nariz: muestra la nariz,
-    el centro y la zona quieta para no perderlos de vista.
+    el centro, la zona quieta y el estado actual del control (ACTIVO / EN PAUSA / ARRASTRANDO).
 
     No toma el foco ni recibe clicks: un guiño hace click en lo que está debajo, como
     si la ventana no existiera. Se ubica abajo a la derecha, lejos del aviso de dictado.
     """
-    SIZE = (300, 225)
+    SIZE = (304, 268)
+    STATE_SPECS = {
+        "paused": dict(
+            border="#d4a843",
+            badge="●  EN PAUSA",
+            badge_css=("color: #ffd166; background: #2a2a1c; border: 1px solid #7a6a2c; "
+                       "border-radius: 12px; padding: 3px 10px; font-size: 12px; font-weight: 700;"),
+            hint="Ambas cejas para activar",
+            hint_no_face="Sin rostro detectado",
+            hint_color="#ffe7a3",
+        ),
+        "dragging": dict(
+            border="#6df4e0",
+            badge="●  ARRASTRANDO",
+            badge_css=("color: #071f26; background: #57d4c3; border: 1px solid #9ff5e7; "
+                       "border-radius: 12px; padding: 3px 10px; font-size: 12px; font-weight: 700;"),
+            hint="Soltá el guiño para soltar",
+            hint_no_face="Soltando click…",
+            hint_color="#8ce5cd",
+        ),
+        "active": dict(
+            border="#57d4c3",
+            badge="●  ACTIVO",
+            badge_css=("color: #8ce5cd; background: #17303a; border: 1px solid #57d4c3; "
+                       "border-radius: 12px; padding: 3px 10px; font-size: 12px; font-weight: 700;"),
+            hint="Control activo · F8 detiene",
+            hint_no_face="Sin rostro · buscando…",
+            hint_color="#c4d3e8",
+        ),
+    }
 
     def __init__(self, parent=None):
         super().__init__(parent, Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint |
@@ -560,17 +592,59 @@ class MiniCameraWindow(QWidget):
                          Qt.WindowType.WindowTransparentForInput)
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
         self.setWindowTitle("HeadMouse · mini cámara")
+        self.state_kind = ""
+        self._status_key = None
         layout = QVBoxLayout(self)
         layout.setContentsMargins(2, 2, 2, 2)
+        layout.setSpacing(0)
+        self.status_bar = QFrame()
+        self.status_bar.setObjectName("MiniStatusBar")
+        self.status_bar.setFixedHeight(42)
+        bar = QHBoxLayout(self.status_bar)
+        bar.setContentsMargins(8, 5, 8, 5)
+        bar.setSpacing(8)
+        self.status_badge = QLabel("●  EN PAUSA")
+        self.status_badge.setWordWrap(False)
+        self.status_badge.setAccessibleName("Estado en mini cámara")
+        self.status_hint = QLabel("Ambas cejas para activar")
+        self.status_hint.setWordWrap(False)
+        bar.addWidget(self.status_badge)
+        bar.addWidget(self.status_hint, 1)
+        layout.addWidget(self.status_bar)
         self.preview = CameraPreview("Esperando la cámara…")
         self.preview.setMinimumSize(1, 1)
-        layout.addWidget(self.preview)
-        self.setStyleSheet("MiniCameraWindow { background: #57d4c3; }")
+        layout.addWidget(self.preview, 1)
+        self._apply_status(dict(paused=True, detected=True))
         self.resize(*self.SIZE)
 
     ZOOM = 2.0  # recorte de medio cuadro alrededor del centro: zona quieta y nariz al doble
 
+    def _apply_status(self, snapshot):
+        if snapshot.get("paused", True):
+            kind = "paused"
+        elif snapshot.get("dragging", False):
+            kind = "dragging"
+        else:
+            kind = "active"
+        detected = bool(snapshot.get("detected", True))
+        key = (kind, detected)
+        if key == self._status_key:
+            return
+        self._status_key = key
+        self.state_kind = kind
+        spec = self.STATE_SPECS[kind]
+        hint = spec["hint"] if detected else spec["hint_no_face"]
+        hint_color = spec["hint_color"] if detected else "#ffb4bf"
+        self.status_badge.setText(spec["badge"])
+        self.status_badge.setStyleSheet(spec["badge_css"])
+        self.status_hint.setText(hint)
+        self.status_hint.setStyleSheet(f"color: {hint_color}; background: transparent; font-size: 11px; font-weight: 600;")
+        self.status_bar.setStyleSheet("QFrame#MiniStatusBar { background: #101827; border-bottom: 1px solid #26354b; }")
+        self.setStyleSheet(f"MiniCameraWindow {{ background: {spec['border']}; }}")
+        self.setAccessibleDescription(f"{spec['badge']} · {hint}")
+
     def present(self, snapshot, screen=None):
+        self._apply_status(snapshot)
         # Siempre con la guía de centro y zona quieta, aunque esté apagada en la vista normal.
         self.preview.present(zoom_snapshot(snapshot, self.ZOOM))
         if not self.isVisible():

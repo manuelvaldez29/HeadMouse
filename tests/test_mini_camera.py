@@ -102,6 +102,32 @@ class MiniCameraTests(unittest.TestCase):
         dispose_window(window)
         self.assertFalse(any(isValid(o) for o in overlays))  # no quedan ventanas huérfanas
 
+    def test_status_indicator_reflects_paused_active_and_dragging(self):
+        window, bridge = self.window(self.snapshot(control_enabled=True, paused=True))
+        window.mini_camera_check.setChecked(True)
+        window.refresh()
+        self.assertEqual(window.mini_camera.state_kind, "paused")
+        self.assertIn("EN PAUSA", window.mini_camera.status_badge.text())
+        self.assertIn("Ambas cejas", window.mini_camera.status_hint.text())
+        self.assertIn("#d4a843", window.mini_camera.styleSheet())
+
+        bridge.data = self.snapshot(control_enabled=True, paused=False, dragging=False)
+        window.refresh()
+        self.assertEqual(window.mini_camera.state_kind, "active")
+        self.assertIn("ACTIVO", window.mini_camera.status_badge.text())
+        self.assertIn("Control activo", window.mini_camera.status_hint.text())
+        self.assertIn("#57d4c3", window.mini_camera.styleSheet())
+
+        bridge.data = self.snapshot(control_enabled=True, paused=False, dragging=True)
+        window.refresh()
+        self.assertEqual(window.mini_camera.state_kind, "dragging")
+        self.assertIn("ARRASTRANDO", window.mini_camera.status_badge.text())
+        self.assertIn("Soltá", window.mini_camera.status_hint.text())
+
+        bridge.data = self.snapshot(control_enabled=True, paused=True, detected=False)
+        window.refresh()
+        self.assertIn("Sin rostro", window.mini_camera.status_hint.text())
+
     @unittest.skipUnless(__import__("sys").platform == "win32", "comprobación nativa de Windows")
     def test_windows_keeps_mini_camera_visible_when_minimized(self):
         import ctypes, time

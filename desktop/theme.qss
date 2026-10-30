@@ -5,6 +5,7 @@ QLabel#Brand { font-size: 28px; font-weight: 700; color: #f4f8ff; }
 QLabel#Title { font-size: 27px; font-weight: 650; }
 QLabel#Subtitle { color: #b2c1d7; font-size: 15px; }
 QLabel#BigInstruction { font-size: 27px; font-weight: 600; color: #ffffff; }
+QLabel#CalibrationInstruction { font-size: 21px; font-weight: 650; color: #ffffff; }
 QLabel#MetricValue { font-size: 25px; font-weight: 600; color: #69e0d0; }
 QFrame#Card { background: #172337; border: 1px solid #30425c; border-radius: 14px; }
 QFrame#Card QLabel { background: transparent; }
@@ -42,6 +43,10 @@ QPushButton#Hero { background: #57d4c3; color: #071f26; border-color: #57d4c3; f
                    min-height: 62px; border-radius: 14px; }
 QPushButton#Hero:hover { background: #84e5d9; }
 QPushButton#Hero:disabled { background: #1b3c49; color: #8aefe0; border: 1px dashed #3f7f86; }
+QPushButton#CalibrationHero { background: #57d4c3; color: #071f26; border-color: #57d4c3; font-size: 18px;
+                              min-height: 36px; padding: 8px 18px; border-radius: 12px; font-weight: 650; }
+QPushButton#CalibrationHero:hover { background: #84e5d9; }
+QPushButton#CalibrationHero:disabled { background: #1b3c49; color: #8aefe0; border: 1px dashed #3f7f86; }
 QPushButton#HeroStop { background: #803847; border-color: #ff8796; color: #ffffff; font-size: 22px;
                        min-height: 62px; border-radius: 14px; }
 QPushButton#HeroStop:hover { background: #a44355; }
@@ -67,5 +72,6 @@ QLabel#DiagStateBad { font-size: 18px; font-weight: 650; color: #ffb4bf; }
 QLabel#StatusOff { font-weight: 650; color: #c4d3e8; background: #1b2638; border: 1px solid #2b3a50; border-radius: 15px; padding: 6px 14px; }
 QLabel#StatusPaused { font-weight: 650; color: #ffd166; background: #2a2a1c; border: 1px solid #7a6a2c; border-radius: 15px; padding: 6px 14px; }
 QLabel#StatusOn { font-weight: 650; color: #8ce5cd; background: #17303a; border: 1px solid #57d4c3; border-radius: 15px; padding: 6px 14px; }
+QLabel#StatusDrag { font-weight: 700; color: #071f26; background: #57d4c3; border: 1px solid #9ff5e7; border-radius: 15px; padding: 6px 14px; }
 QLabel#StatusMessage { color: #c4d3e8; font-size: 15px; }
 QLabel#StatusError { color: #ffb4bf; font-size: 15px; font-weight: 600; }

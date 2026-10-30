@@ -50,6 +50,8 @@ def status_message(s,event=None):
     if event:
         return event[0],event[2]
     if s.get("control_enabled"):
+        if not s.get("paused") and s.get("dragging"):
+            return "Click izquierdo sostenido: mové la nariz para arrastrar; abrí el ojo para soltar.",False
         return (("Levantá ambas cejas para empezar a mover el cursor." if s.get("paused") else
                  "Ambas cejas: pausar · F8 o el botón rojo: detener."),False)
     for condition in s.get("activation_conditions",[]):
@@ -129,6 +131,7 @@ def gesture_threshold_lines(d):
 
 
 ACTION_LABELS = dict(LEFT_CLICK="Click izquierdo",RIGHT_CLICK="Click derecho",DOUBLE_CLICK="Doble click",
+                     LEFT_DRAG_START="Click sostenido",LEFT_DRAG_END="Soltar click",
                      SCROLL_UP="Scroll arriba",SCROLL_DOWN="Scroll abajo",PAUSE="Pausar / reanudar",
                      KEY_ENTER="Enter",KEY_ESCAPE="Escape",KEY_SPACE="Espacio",
                      OPEN_START_MENU="Abrir Inicio",DICTATE="Dictado por voz",
@@ -523,40 +526,61 @@ class MainWindow(QMainWindow):
             self.bridge.request("delete_profile",confirmed=True)
 
     def _calibration(self):
-        """Una lista de gestos con su estado, un botón con el próximo paso y opciones plegadas."""
-        page=self.page("Calibración","Nariz conserva su calibración original. Ojos reúne movimiento, gestos y diagnóstico.")
+        """Una lista de gestos con su estado, vista previa y botón principal en una misma pantalla."""
+        page_widget=QWidget()
+        page=QVBoxLayout(page_widget)
+        page.setContentsMargins(0,2,0,0)
+        page.setSpacing(4)
+        header=QHBoxLayout()
+        header.setContentsMargins(0,0,0,0)
+        header.setSpacing(14)
+        header.addWidget(label("Calibración","Title",wrap=False))
+        header.addWidget(label("Nariz conserva su calibración original. Ojos reúne movimiento, gestos y diagnóstico.","Subtitle"),1)
+        page.addLayout(header)
+        self.stack.addWidget(page_widget)
         self.calibration_tabs=QTabWidget()
         self.nose_calibration_tab=QWidget()
         self.eyes_calibration_tab=QWidget()
         self.nose_calibration_layout=QVBoxLayout(self.nose_calibration_tab)
+        self.nose_calibration_layout.setContentsMargins(0,4,0,0)
+        self.nose_calibration_layout.setSpacing(4)
         self.eyes_calibration_layout=QVBoxLayout(self.eyes_calibration_tab)
+        self.eyes_calibration_layout.setContentsMargins(0,4,0,0)
+        self.eyes_calibration_layout.setSpacing(4)
         self.calibration_tabs.addTab(self.nose_calibration_tab,"Nariz")
         self.calibration_tabs.addTab(self.eyes_calibration_tab,"Ojos")
         page.addWidget(self.calibration_tabs,1)
-        # Con desplazamiento: al abrir "Más opciones" la página crece en lugar de aplastarse.
+        # Con desplazamiento sólo al abrir "Más opciones"; la vista normal entra en una sola pantalla.
         scroll=QScrollArea()
         scroll.setWidgetResizable(True)
         body=QWidget()
         outer=QVBoxLayout(body)
-        outer.setContentsMargins(0,0,12,0)
-        outer.setSpacing(12)
+        outer.setContentsMargins(0,2,8,2)
+        outer.setSpacing(6)
         scroll.setWidget(body)
         self.gesture_calibration_scroll=scroll
         self.nose_calibration_layout.addWidget(scroll,1)
-        self.wizard_instruction=label("Elegí un perfil y comenzá cuando estés cómodo.","BigInstruction")
+        self.wizard_instruction=label("Elegí un perfil y comenzá cuando estés cómodo.","CalibrationInstruction")
         outer.addWidget(self.wizard_instruction)
+        status_row=QHBoxLayout()
+        status_row.setContentsMargins(0,0,0,0)
+        status_row.setSpacing(12)
+        self.wizard_status=label("Sin iniciar","Subtitle")
+        status_row.addWidget(self.wizard_status,3)
         self.wizard_progress=QProgressBar()
         self.wizard_progress.setRange(0,100)
-        outer.addWidget(self.wizard_progress)
-        self.wizard_status=label("Sin iniciar","Subtitle")
-        outer.addWidget(self.wizard_status)
+        self.wizard_progress.setMinimumHeight(18)
+        self.wizard_progress.setMaximumHeight(20)
+        status_row.addWidget(self.wizard_progress,2)
+        outer.addLayout(status_row)
         live=QHBoxLayout()
-        live.setSpacing(16)
+        live.setSpacing(12)
         steps=QFrame()
         steps.setObjectName("Card")
-        steps.setFixedWidth(300)
+        steps.setFixedWidth(255)
         steps_layout=QVBoxLayout(steps)
-        steps_layout.setContentsMargins(16,12,16,12)
+        steps_layout.setContentsMargins(12,8,12,8)
+        steps_layout.setSpacing(4)
         self.calibration_steps_title=label("Gestos","Subtitle")
         steps_layout.addWidget(self.calibration_steps_title)
         self.calibration_steps=label("")
@@ -565,8 +589,10 @@ class MainWindow(QMainWindow):
         steps_layout.addStretch()
         live.addWidget(steps)
         self.calibration_preview=CameraPreview("Cámara apagada\n\nSe enciende al comenzar la calibración")
+        self.calibration_preview.setMinimumSize(280,175)
         live.addWidget(self.calibration_preview,3)
         readings=QVBoxLayout()
+        readings.setSpacing(4)
         self.calibration_meter=CalibrationMeter()
         readings.addWidget(self.calibration_meter)
         self.capture_feedback=label("","Subtitle")
@@ -580,9 +606,10 @@ class MainWindow(QMainWindow):
         self.validation_labels.hide()
         outer.addWidget(self.validation_labels)
         actions=QHBoxLayout()
-        self.calibration_primary=button("Comenzar calibración",self.calibration_primary_action,"Hero")
+        actions.setSpacing(10)
+        self.calibration_primary=button("Comenzar calibración",self.calibration_primary_action,"CalibrationHero")
         actions.addWidget(self.calibration_primary,3)
-        self.save_calibration_button=button("Guardar perfil",lambda:self.bridge.request("save_calibration"),"Hero")
+        self.save_calibration_button=button("Guardar perfil",lambda:self.bridge.request("save_calibration"),"CalibrationHero")
         self.save_calibration_button.setEnabled(False)
         self.save_calibration_button.hide()
         actions.addWidget(self.save_calibration_button,3)
@@ -676,6 +703,8 @@ class MainWindow(QMainWindow):
         live.addWidget(controls_scroll,1);body.addLayout(live,1)
         self.ocular_content.addWidget(movement)
         gestures=QWidget();self.ocular_gesture_layout=QVBoxLayout(gestures)
+        self.ocular_gesture_layout.setContentsMargins(0,2,0,0)
+        self.ocular_gesture_layout.setSpacing(4)
         self.ocular_content.addWidget(gestures)
 
     def calibration_tab_changed(self,index):
@@ -1010,6 +1039,12 @@ class MainWindow(QMainWindow):
             number(form,f"gesture.{group}_hold_ms",f"{title}: sostener · ms",0,5000,0)
             number(form,f"gesture.{group}_cooldown_ms",f"{title}: espera · ms",0,10000,0)
         number(form,"gesture.brow_decision_ms","Cejas: tiempo para distinguir una de ambas · ms",0,1000,0)
+        section(form,"Click sostenido y arrastre")
+        self.hold_click_check=QCheckBox("Mantener apretado el click izquierdo al sostener el guiño (modo Nariz)")
+        self.hold_click_check.setAccessibleName("Click izquierdo sostenido al mantener guiño")
+        form.addRow(self.hold_click_check)
+        number(form,"control.drag_hold_ms","Guiño sostenido para empezar a arrastrar · ms",100,3000,0,
+               "Un guiño más corto hace click normal al abrir el ojo; uno más largo mantiene presionado el botón mientras movés la nariz")
         section(form,"Scroll")
         number(form,"control.scroll_lines","Muescas de rueda por gesto",1,100,0)
         number(form,"gesture.brow_repeat_delay_ms","Ceja sostenida: esperar antes de repetir · ms",0,5000,0)
@@ -1228,6 +1263,7 @@ class MainWindow(QMainWindow):
             settings[section][name]=widget.value()
         settings["ui"]["show_overlay"]=self.overlay_check.isChecked()
         settings["ui"]["show_landmarks"]=self.landmarks_check.isChecked()
+        settings["control"]["hold_click_enabled"]=self.hold_click_check.isChecked()
         public_method=self.tracking_combo.currentData()
         settings["ui"]["eye_source"]=self.eye_source_combo.currentData()
         settings["eye"]["vertical_reference"]=self.eye_vertical_reference.currentData()
@@ -1454,7 +1490,15 @@ class MainWindow(QMainWindow):
 
     def _present_status(self,s):
         enabled=s["control_enabled"]
-        state,name=(("EN PAUSA","StatusPaused") if s["paused"] else ("ACTIVO","StatusOn")) if enabled else ("DESACTIVADO","StatusOff")
+        if enabled:
+            if s["paused"]:
+                state,name="EN PAUSA","StatusPaused"
+            elif s.get("dragging"):
+                state,name="ARRASTRANDO","StatusDrag"
+            else:
+                state,name="ACTIVO","StatusOn"
+        else:
+            state,name="DESACTIVADO","StatusOff"
         self.control_status.setText("●  "+state)
         if self.control_status.objectName()!=name:
             self.control_status.setObjectName(name)
@@ -1545,6 +1589,7 @@ class MainWindow(QMainWindow):
                 widget.setValue(value)
             self.overlay_check.setChecked(s["settings"]["ui"]["show_overlay"])
             self.landmarks_check.setChecked(s["settings"]["ui"]["show_landmarks"])
+            self.hold_click_check.setChecked(s["settings"]["control"].get("hold_click_enabled",True))
             self.tracking_combo.setCurrentIndex(self.tracking_combo.findData("nose" if s["settings"]["ui"]["tracking_method"]=="nose" else "eyes"))
             self.capture_backend_combo.setCurrentIndex(self.capture_backend_combo.findData(s["settings"]["vision"].get("capture_backend","auto")))
             self.eye_source_combo.setCurrentIndex(self.eye_source_combo.findData(s["settings"]["ui"].get("eye_source","both")))

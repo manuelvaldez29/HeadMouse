@@ -376,6 +376,23 @@ class GestureEngine:
         """Neutral de todos los gestos habilitados, usando su señal y liberación."""
         return not self.unreleased_gestures(face)
 
+    _DETECTOR_FOR_GESTURE = {
+        "LEFT_WINK": "blink_left", "RIGHT_WINK": "blink_right",
+        "LEFT_BROW": "brow_left", "RIGHT_BROW": "brow_right",
+        "MOUTH_OPEN": "mouth_open", "BOTH_BROWS": "both_brows",
+    }
+
+    def is_gesture_held(self, key: str) -> bool:
+        """True mientras la compuerta con histéresis del gesto habilitado siga activa."""
+        gate = self._gates.get(key)
+        return bool(key in self.enabled_gestures and gate is not None and all(gate.states))
+
+    def gesture_started_at(self, key: str) -> Optional[float]:
+        """Instante monotónico (s) en que comenzó el gesto actual."""
+        det_key = self._DETECTOR_FOR_GESTURE.get(key)
+        det = self._detectors.get(det_key) if det_key else None
+        return (det._t_start / 1000.0) if det is not None and det._t_start > 0 else None
+
     def unreleased_gestures(self, face):
         """Gestos habilitados cuya señal sigue por encima de la liberación."""
         pending = []

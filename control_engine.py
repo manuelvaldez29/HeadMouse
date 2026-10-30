@@ -85,12 +85,14 @@ class ControlEngine:
                  vision:  VisionEngine,
                  gesture: GestureEngine,
                  config:  ControlConfig = None, backend=None, metrics=None, mapping=None,
-                 wheel_unit=None, dictation=None, screen_bounds=None, movement_only=False):
+                 wheel_unit=None, dictation=None, screen_bounds=None, movement_only=False,
+                 clock=None):
 
         self.vision  = vision
         self.gesture = gesture
         self.config  = config or ControlConfig()
         self.config.__post_init__()
+        self._clock = clock if callable(clock) else (lambda: time.monotonic())
         if backend is None:
             import pyautogui
             backend = pyautogui
@@ -113,6 +115,10 @@ class ControlEngine:
         self._last_cursor = None
         self._fraction = [0., 0.]
         self._fraction_frame = 0
+        self._pending_click = None  # guiño corto (click al soltar) vs guiño sostenido (arrastrar)
+        self._dragging = False
+        self._drag_gesture = ""
+        self._drag_release_since = None
         self.last_events = ()
         self.last_actions = ()
         self.output_allowed = threading.Event()
@@ -138,7 +144,7 @@ class ControlEngine:
         # Estado
         self._paused        = True    # arranca pausado — activar con BOTH_BROWS
         self._running       = False
-        self._face_last_ok  = time.monotonic()
+        self._face_last_ok  = self._clock()
         self._auto_paused   = False   # pausa automática por timeout de cara
 
         # Estadísticas
@@ -170,12 +176,15 @@ class ControlEngine:
             self._thread.join(timeout=2.0)
             if self._thread.is_alive():
                 raise RuntimeError("ControlEngine no respondió al cierre")
+        self._release_held_mouse()
         logger.info("[ControlEngine] Detenido.")
 
     def toggle_pause(self):
         """Pausa o reanuda el control manualmente."""
         self._paused = not self._paused
         self._fraction = [0., 0.]
+        if self._paused:
+            self._release_held_mouse()
         state = "PAUSADO" if self._paused else "ACTIVO"
         logger.info(f"[ControlEngine] Control {state}.")
 
@@ -198,36 +207,102 @@ class ControlEngine:
     def paused(self) -> bool:
         return self._paused or self._auto_paused
 
+    @property
+    def dragging(self) -> bool:
+        return self._dragging
+
+    def _is_gesture_held(self, key: str) -> bool:
+        checker = getattr(self.gesture, "is_gesture_held", None)
+        return bool(key and callable(checker) and checker(key))
+
+    def _can_hold_click(self, ev: GestureEvent) -> bool:
+        return bool(self.config.hold_click_enabled
+                    and getattr(getattr(self.gesture, "strategy", None), "name", None) == "nose"
+                    and self._is_gesture_held(ev.gesture))
+
+    def _start_drag(self, ev: GestureEvent):
+        self.backend.mouseDown(button="left", _pause=False)
+        self._dragging = True
+        self._drag_gesture = ev.gesture
+        self._drag_release_since = None
+        self._log_event("LEFT_DRAG_START", clicks=True)
+        if self.metrics:
+            self.metrics.action(ev)
+        self.last_actions += (GestureEvent("LEFT_DRAG_START", gesture=ev.gesture),)
+
+    def _release_held_mouse(self) -> bool:
+        """Suelta de forma idempotente cualquier click pendiente o botón izquierdo sostenido."""
+        self._pending_click = None
+        if not self._dragging:
+            return False
+        gesture_key = self._drag_gesture
+        self._dragging = False
+        self._drag_gesture = ""
+        self._drag_release_since = None
+        try:
+            self.backend.mouseUp(button="left", _pause=False)
+            self._log_event("LEFT_DRAG_END")
+            return bool(gesture_key or True)
+        except Exception:
+            logger.exception("[ControlEngine] No se pudo liberar click sostenido")
+            return False
+
+    def _update_hold_click(self, now: float):
+        if self._pending_click is not None:
+            pending = self._pending_click
+            if not self._is_gesture_held(pending["gesture"]):
+                self._pending_click = None
+                ev = pending["event"]
+                self._execute(ev)
+                self.last_actions += (ev,)
+            elif (now - pending["started_at"]) * 1000.0 + 1e-6 >= self.config.drag_hold_ms:
+                self._pending_click = None
+                self._start_drag(pending["event"])
+            return
+        if self._dragging:
+            if self._is_gesture_held(self._drag_gesture):
+                self._drag_release_since = None
+            else:
+                if self._drag_release_since is None:
+                    self._drag_release_since = now
+                if (now - self._drag_release_since) * 1000.0 + 1e-6 >= self.config.drag_release_ms:
+                    gesture_key = self._drag_gesture
+                    if self._release_held_mouse():
+                        self.last_actions += (GestureEvent("LEFT_DRAG_END", gesture=gesture_key),)
+
     # ── Loop principal ────────────────────────────────────────────────────────
 
     def _loop(self):
         interval = 1.0 / self.config.loop_hz
 
-        while self._running:
-            t0 = time.perf_counter()
+        try:
+            while self._running:
+                t0 = time.perf_counter()
 
-            try:
-                self._tick()
-            except self.backend.FailSafeException:
-                logger.info("\n[ControlEngine] Failsafe activado — deteniendo.")
-                self._running = False
-                self.output_allowed.clear()
-                break
-            except Exception as e:
-                self.error = e
-                logger.exception("ControlEngine detenido por error")
-                self._running = False
-                self.output_allowed.clear()
-                break
+                try:
+                    self._tick()
+                except self.backend.FailSafeException:
+                    logger.info("\n[ControlEngine] Failsafe activado — deteniendo.")
+                    self._running = False
+                    self.output_allowed.clear()
+                    break
+                except Exception as e:
+                    self.error = e
+                    logger.exception("ControlEngine detenido por error")
+                    self._running = False
+                    self.output_allowed.clear()
+                    break
 
-            # Mantener frecuencia objetivo
-            elapsed = time.perf_counter() - t0
-            sleep   = max(0.0, interval - elapsed)
-            self._stop_requested.wait(sleep)
+                # Mantener frecuencia objetivo
+                elapsed = time.perf_counter() - t0
+                sleep   = max(0.0, interval - elapsed)
+                self._stop_requested.wait(sleep)
+        finally:
+            self._release_held_mouse()
 
     def _tick(self):
         """Un ciclo del loop de control."""
-        now    = time.monotonic()
+        now    = self._clock()
         fd = self.vision.get_face_data()
         fresh = fd.fresh(self.gesture.config.stale_after_s, now)
         self.gesture.both_brows_anywhere = self.paused
@@ -241,6 +316,9 @@ class ControlEngine:
         if self.metrics:
             self.metrics.tracking(fresh)
             self.metrics.generated(events)
+
+        if not fresh or not self.output_allowed.is_set():
+            self._release_held_mouse()
 
         # ── Timeout de cara ───────────────────────────────────────────────────
         if fresh:
@@ -258,6 +336,7 @@ class ControlEngine:
         if self.movement_only:
             actions = [ev for ev in actions if ev.type in (EV_CURSOR_MOVE,"CURSOR_ABSOLUTE")]
         if self.dictation is not None and self.dictation.busy:
+            self._release_held_mouse()
             # Hablar mueve boca, ojos y cejas: mientras se dicta solo se mueve el
             # cursor, y el gesto de pausa cancela el dictado en lugar de pausar.
             if any(ev.type == "PAUSE" for ev in actions):
@@ -290,13 +369,31 @@ class ControlEngine:
                 self.metrics.action(toggle)
             self.last_actions = (toggle,)
         elif fresh and not self.paused and self.output_allowed.is_set():
+            self._update_hold_click(now)
             for ev in actions:
                 if not self.output_allowed.is_set():
                     break
+                if ev.type == EV_CURSOR_MOVE and self._pending_click is not None:
+                    continue  # anclar puntero durante guiño inicial antes de click o arrastre
+                if ev.type == EV_LEFT_CLICK:
+                    if self._dragging or self._pending_click is not None:
+                        continue
+                    if self._can_hold_click(ev):
+                        started_fn = getattr(self.gesture, "gesture_started_at", None)
+                        started_at = started_fn(ev.gesture) if callable(started_fn) else None
+                        if started_at is None:
+                            hold_offset_s = getattr(getattr(self.gesture, "config", None), "blink_hold_ms", 60.0) / 1000.0
+                            started_at = now - hold_offset_s
+                        if (now - started_at) * 1000.0 + 1e-6 >= self.config.drag_hold_ms:
+                            self._start_drag(ev)
+                        else:
+                            self._pending_click = dict(event=ev, gesture=ev.gesture, started_at=started_at)
+                        continue
                 self._execute(ev)
                 if ev.type != "NONE":
                     self.last_actions += (ev,)
-            self._check_pinned(actions, fd, now)
+            if not self._dragging and self._pending_click is None:
+                self._check_pinned(actions, fd, now)
 
         # ── Estadísticas ──────────────────────────────────────────────────────
         with self._stats_lock:

@@ -82,12 +82,19 @@ class ControlConfig:
     face_timeout_s: float = 2.0
     max_cursor_delta: float = 60.0
     loop_hz: float = 60.0
+    hold_click_enabled: bool = True
+    drag_hold_ms: float = 350.0
+    drag_release_ms: float = 80.0
 
     def __post_init__(self):
         bounded("scroll_lines", self.scroll_lines, 1, 100, integer=True)
         bounded("face_timeout_s", self.face_timeout_s, 0.01, 60)
         bounded("max_cursor_delta", self.max_cursor_delta, 1, 1000)
         bounded("loop_hz", self.loop_hz, 1, 240)
+        if type(self.hold_click_enabled) is not bool:
+            raise ValueError("hold_click_enabled debe ser true o false")
+        bounded("drag_hold_ms", self.drag_hold_ms, 100, 3000)
+        bounded("drag_release_ms", self.drag_release_ms, 0, 1000)
 
 
 @dataclass
