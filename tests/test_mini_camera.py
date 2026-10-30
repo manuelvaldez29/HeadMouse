@@ -122,7 +122,7 @@ class MiniCameraTests(unittest.TestCase):
         window.refresh()
         self.assertEqual(window.mini_camera.state_kind, "dragging")
         self.assertIn("ARRASTRANDO", window.mini_camera.status_badge.text())
-        self.assertIn("Soltá", window.mini_camera.status_hint.text())
+        self.assertIn("Guiñá", window.mini_camera.status_hint.text())
 
         bridge.data = self.snapshot(control_enabled=True, paused=True, detected=False)
         window.refresh()

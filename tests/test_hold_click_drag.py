@@ -63,39 +63,69 @@ class HoldClickDragTests(unittest.TestCase):
         self.backend.mouseUp.assert_not_called()
         self.assertFalse(control.dragging)
 
-    def test_sustained_left_wink_drags_with_nose_and_releases_on_eye_open(self):
-        _, control = self.build_engines(drag_hold_ms=350, drag_release_ms=80)
-        # Sostener guiño izquierdo hasta superar drag_hold_ms (8 pasos * 50 ms = 400 ms).
-        for _ in range(8):
+    def test_sustained_left_wink_latches_drag_with_eyes_open_until_next_left_wink(self):
+        _, control = self.build_engines(drag_hold_ms=400, drag_release_ms=80)
+        # 1) Guiño izquierdo largo (>= 400 ms) engancha el arrastre.
+        for _ in range(9):
             self.step(control, 50, eye_left_ratio=0.02)
 
         self.assertTrue(control.dragging)
         self.backend.mouseDown.assert_called_once_with(button="left", _pause=False)
         self.backend.click.assert_not_called()  # evita doble click accidental al iniciar arrastre
 
-        # Sin soltar el guiño izquierdo, mover la nariz en cualquier dirección mueve el cursor.
-        self.step(control, 50, eye_left_ratio=0.02, nose_x=0.68, nose_y=0.40)
-        self.step(control, 50, eye_left_ratio=0.02, nose_x=0.68, nose_y=0.40)
+        # 2) Abrir el ojo izquierdo NO suelta el arrastre: el usuario queda cómodo con ambos ojos abiertos.
+        for _ in range(5):
+            self.step(control, 50)
+        self.assertTrue(control.dragging)
+        self.backend.mouseUp.assert_not_called()
+
+        # 3) Con ambos ojos abiertos, mover la nariz mueve el cursor libremente manteniendo presionado el click.
+        self.step(control, 50, nose_x=0.68, nose_y=0.40)
+        self.step(control, 50, nose_x=0.68, nose_y=0.40)
         self.assertTrue(control.dragging)
         self.assertGreaterEqual(self.backend.moveRel.call_count, 2)
         dx, dy = self.backend.moveRel.call_args.args[:2]
         self.assertGreater(dx, 0)
         self.assertLess(dy, 0)
 
-        # Un parpadeo breve del ojo derecho o 1 frame ruidoso (50 ms < 120 ms) no corta el arrastre.
+        # 4) Un parpadeo natural de ambos ojos mientras se mueve el cursor NO corta el arrastre.
         self.step(control, 50, eye_left_ratio=0.02, eye_right_ratio=0.02, nose_x=0.68)
-        self.assertTrue(control.dragging)
-        self.step(control, 50, eye_left_ratio=0.10, nose_x=0.68)  # 50 ms suelto (< 120 ms)
-        self.assertTrue(control.dragging)
-        self.step(control, 50, eye_left_ratio=0.02, nose_x=0.68)  # retoma enseguida
+        self.step(control, 50, eye_left_ratio=0.02, eye_right_ratio=0.02, nose_x=0.68)
+        self.step(control, 50, nose_x=0.68)
         self.assertTrue(control.dragging)
         self.backend.mouseUp.assert_not_called()
 
-        # Abrir el ojo izquierdo de verdad (>= 120 ms) suelta el click.
-        for _ in range(3):
-            self.step(control, 50)
+        # 5) Volver a guiñar el ojo izquierdo suelta el arrastre (anclando el cursor y sin disparar click extra).
+        moves_before_release = self.backend.moveRel.call_count
+        for _ in range(3):  # >= blink_hold_ms (60 ms)
+            self.step(control, 50, eye_left_ratio=0.02, nose_x=0.70)
         self.assertFalse(control.dragging)
         self.backend.mouseUp.assert_called_once_with(button="left", _pause=False)
+        self.backend.click.assert_not_called()
+        self.assertEqual(self.backend.moveRel.call_count, moves_before_release)
+
+        # Aunque el usuario tarde en abrir el ojo tras soltar, no se re-engancha otro arrastre ni hace click.
+        for _ in range(10):
+            self.step(control, 50, eye_left_ratio=0.02)
+        self.step(control, 50)
+        self.assertFalse(control.dragging)
+        self.assertEqual(self.backend.mouseDown.call_count, 1)
+        self.backend.click.assert_not_called()
+
+    def test_quick_second_wink_releases_drag_even_before_blink_cooldown_expires(self):
+        _, control = self.build_engines(drag_hold_ms=350, drag_release_ms=50)
+        for _ in range(8):  # 400 ms cerrado -> engancha arrastre
+            self.step(control, 50, eye_left_ratio=0.02)
+        self.assertTrue(control.dragging)
+        # Abre el ojo apenas 2 frames (100 ms) y vuelve a guiñar enseguida (< 600 ms de blink_cooldown_ms).
+        self.step(control, 50)
+        self.step(control, 50)
+        self.assertTrue(control.dragging)
+        for _ in range(3):
+            self.step(control, 50, eye_left_ratio=0.02)
+        self.assertFalse(control.dragging)
+        self.backend.mouseUp.assert_called_once_with(button="left", _pause=False)
+        self.backend.click.assert_not_called()
 
     def test_safety_releases_mouse_button_on_pause_face_loss_and_stop(self):
         for scenario in ("pause", "face_loss", "stop"):

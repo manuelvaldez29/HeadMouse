@@ -51,7 +51,7 @@ def status_message(s,event=None):
         return event[0],event[2]
     if s.get("control_enabled"):
         if not s.get("paused") and s.get("dragging"):
-            return "Click izquierdo sostenido: mové la nariz para arrastrar; abrí el ojo para soltar.",False
+            return "Arrastrando con click izquierdo: mové el cursor libremente y volvé a guiñar para soltar.",False
         return (("Levantá ambas cejas para empezar a mover el cursor." if s.get("paused") else
                  "Ambas cejas: pausar · F8 o el botón rojo: detener."),False)
     for condition in s.get("activation_conditions",[]):
@@ -1040,11 +1040,11 @@ class MainWindow(QMainWindow):
             number(form,f"gesture.{group}_cooldown_ms",f"{title}: espera · ms",0,10000,0)
         number(form,"gesture.brow_decision_ms","Cejas: tiempo para distinguir una de ambas · ms",0,1000,0)
         section(form,"Click sostenido y arrastre")
-        self.hold_click_check=QCheckBox("Mantener apretado el click izquierdo al sostener el guiño (modo Nariz)")
-        self.hold_click_check.setAccessibleName("Click izquierdo sostenido al mantener guiño")
+        self.hold_click_check=QCheckBox("Activar arrastre con guiño largo y soltar con otro guiño (modo Nariz)")
+        self.hold_click_check.setAccessibleName("Click izquierdo sostenido y arrastre con guiño")
         form.addRow(self.hold_click_check)
-        number(form,"control.drag_hold_ms","Guiño sostenido para empezar a arrastrar · ms",100,3000,0,
-               "Un guiño más corto hace click normal al abrir el ojo; uno más largo mantiene presionado el botón mientras movés la nariz")
+        number(form,"control.drag_hold_ms","Guiño largo para enganchar arrastre · ms",100,3000,0,
+               "Un guiño corto hace click normal; uno largo deja apretado el botón izquierdo hasta que vuelvas a guiñar")
         section(form,"Scroll")
         number(form,"control.scroll_lines","Muescas de rueda por gesto",1,100,0)
         number(form,"gesture.brow_repeat_delay_ms","Ceja sostenida: esperar antes de repetir · ms",0,5000,0)

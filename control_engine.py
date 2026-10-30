@@ -115,10 +115,11 @@ class ControlEngine:
         self._last_cursor = None
         self._fraction = [0., 0.]
         self._fraction_frame = 0
-        self._pending_click = None  # guiño corto (click al soltar) vs guiño sostenido (arrastrar)
+        self._pending_click = None  # guiño corto (click al soltar) vs guiño largo (enganchar arrastre)
         self._dragging = False
         self._drag_gesture = ""
-        self._drag_release_since = None
+        self._drag_release_armed = False
+        self._drag_open_since = None
         self.last_events = ()
         self.last_actions = ()
         self.output_allowed = threading.Event()
@@ -215,6 +216,12 @@ class ControlEngine:
         checker = getattr(self.gesture, "is_gesture_held", None)
         return bool(key and callable(checker) and checker(key))
 
+    def _is_gesture_active(self, key: str) -> bool:
+        checker = getattr(self.gesture, "is_gesture_active", None)
+        if callable(checker):
+            return bool(key and checker(key))
+        return self._is_gesture_held(key)
+
     def _can_hold_click(self, ev: GestureEvent) -> bool:
         return bool(self.config.hold_click_enabled
                     and getattr(getattr(self.gesture, "strategy", None), "name", None) == "nose"
@@ -224,21 +231,23 @@ class ControlEngine:
         self.backend.mouseDown(button="left", _pause=False)
         self._dragging = True
         self._drag_gesture = ev.gesture
-        self._drag_release_since = None
+        self._drag_release_armed = not self._is_gesture_held(ev.gesture)
+        self._drag_open_since = None
         self._log_event("LEFT_DRAG_START", clicks=True)
         if self.metrics:
             self.metrics.action(ev)
         self.last_actions += (GestureEvent("LEFT_DRAG_START", gesture=ev.gesture),)
 
     def _release_held_mouse(self) -> bool:
-        """Suelta de forma idempotente cualquier click pendiente o botón izquierdo sostenido."""
+        """Suelta de forma idempotente cualquier click pendiente o botón izquierdo enganchado."""
         self._pending_click = None
         if not self._dragging:
             return False
         gesture_key = self._drag_gesture
         self._dragging = False
         self._drag_gesture = ""
-        self._drag_release_since = None
+        self._drag_release_armed = False
+        self._drag_open_since = None
         try:
             self.backend.mouseUp(button="left", _pause=False)
             self._log_event("LEFT_DRAG_END")
@@ -259,16 +268,18 @@ class ControlEngine:
                 self._pending_click = None
                 self._start_drag(pending["event"])
             return
-        if self._dragging:
+        if self._dragging and not self._drag_release_armed:
             if self._is_gesture_held(self._drag_gesture):
-                self._drag_release_since = None
+                self._drag_open_since = None
             else:
-                if self._drag_release_since is None:
-                    self._drag_release_since = now
-                if (now - self._drag_release_since) * 1000.0 + 1e-6 >= self.config.drag_release_ms:
-                    gesture_key = self._drag_gesture
-                    if self._release_held_mouse():
-                        self.last_actions += (GestureEvent("LEFT_DRAG_END", gesture=gesture_key),)
+                if self._drag_open_since is None:
+                    self._drag_open_since = now
+                if (now - self._drag_open_since) * 1000.0 + 1e-6 >= self.config.drag_release_ms:
+                    self._drag_release_armed = True
+                    self._drag_open_since = None
+                    rearm = getattr(self.gesture, "rearm_gesture", None)
+                    if callable(rearm):
+                        rearm(self._drag_gesture)
 
     # ── Loop principal ────────────────────────────────────────────────────────
 
@@ -370,13 +381,21 @@ class ControlEngine:
             self.last_actions = (toggle,)
         elif fresh and not self.paused and self.output_allowed.is_set():
             self._update_hold_click(now)
+            releasing_wink = (self._dragging and self._drag_release_armed
+                              and self._is_gesture_active(self._drag_gesture))
             for ev in actions:
                 if not self.output_allowed.is_set():
                     break
-                if ev.type == EV_CURSOR_MOVE and self._pending_click is not None:
-                    continue  # anclar puntero durante guiño inicial antes de click o arrastre
+                if ev.type == EV_CURSOR_MOVE and (self._pending_click is not None or releasing_wink):
+                    continue  # anclar puntero durante guiño antes de click, enganchar o soltar arrastre
                 if ev.type == EV_LEFT_CLICK:
-                    if self._dragging or self._pending_click is not None:
+                    if self._dragging:
+                        if self._drag_release_armed or ev.gesture != self._drag_gesture:
+                            gesture_key = self._drag_gesture or ev.gesture
+                            if self._release_held_mouse():
+                                self.last_actions += (GestureEvent("LEFT_DRAG_END", gesture=gesture_key),)
+                        continue
+                    if self._pending_click is not None:
                         continue
                     if self._can_hold_click(ev):
                         started_fn = getattr(self.gesture, "gesture_started_at", None)

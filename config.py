@@ -83,8 +83,8 @@ class ControlConfig:
     max_cursor_delta: float = 60.0
     loop_hz: float = 60.0
     hold_click_enabled: bool = True
-    drag_hold_ms: float = 350.0
-    drag_release_ms: float = 80.0
+    drag_hold_ms: float = 400.0
+    drag_release_ms: float = 50.0
 
     def __post_init__(self):
         bounded("scroll_lines", self.scroll_lines, 1, 100, integer=True)

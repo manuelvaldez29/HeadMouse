@@ -387,11 +387,22 @@ class GestureEngine:
         gate = self._gates.get(key)
         return bool(key in self.enabled_gestures and gate is not None and all(gate.states))
 
+    def is_gesture_active(self, key: str) -> bool:
+        """True cuando el gesto está activo de forma efectiva (excluye parpadeo bilateral)."""
+        return bool(self.last_active.get(key, False))
+
     def gesture_started_at(self, key: str) -> Optional[float]:
         """Instante monotónico (s) en que comenzó el gesto actual."""
         det_key = self._DETECTOR_FOR_GESTURE.get(key)
         det = self._detectors.get(det_key) if det_key else None
         return (det._t_start / 1000.0) if det is not None and det._t_start > 0 else None
+
+    def rearm_gesture(self, key: str):
+        """Deja el detector listo para detectar un nuevo gesto tras liberar uno sostenido."""
+        det_key = self._DETECTOR_FOR_GESTURE.get(key)
+        det = self._detectors.get(det_key) if det_key else None
+        if det is not None and not self.is_gesture_held(key):
+            det.reset()
 
     def unreleased_gestures(self, face):
         """Gestos habilitados cuya señal sigue por encima de la liberación."""

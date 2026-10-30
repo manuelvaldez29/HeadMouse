@@ -571,7 +571,7 @@ class MiniCameraWindow(QWidget):
             badge="●  ARRASTRANDO",
             badge_css=("color: #071f26; background: #57d4c3; border: 1px solid #9ff5e7; "
                        "border-radius: 12px; padding: 3px 10px; font-size: 12px; font-weight: 700;"),
-            hint="Soltá el guiño para soltar",
+            hint="Guiñá izq. para soltar",
             hint_no_face="Soltando click…",
             hint_color="#8ce5cd",
         ),
