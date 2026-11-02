@@ -122,6 +122,50 @@ class RecenterTests(unittest.TestCase):
         self.assertTrue(result["ok"], result)
         self.assertAlmostEqual(engine.config.neutral_y, .45)
 
+    def pause_adjust_resume(self, engine, still_frames, flicker=None, step=67):
+        """Patrón real a 15 fps (2026-10-28): pausa, acomodarse, quedarse quieto poco, reanudar."""
+        import random
+        rng = random.Random(1)
+
+        def feed(n, y, brows=False, extra=None):
+            for k in range(n):
+                self.ms += step
+                v = dict(nose_x=.5 + rng.gauss(0, .003), nose_y=y + rng.gauss(0, .003))
+                if brows:
+                    v |= dict(brow_left_lift=.4, brow_right_lift=.5)
+                if extra and k % 2:
+                    v |= extra
+                engine.update(FaceData(True, timestamp_ms=self.ms, **(NEUTRAL | v)))
+        feed(30, .5)
+        feed(8, .5, brows=True)
+        paused = self.ms
+        for k in range(9):
+            feed(1, .5 + .02 * k)                       # se acomoda
+        feed(still_frames, .68, extra=flicker)          # postura nueva
+        feed(6, .67, brows=True)                        # levanta las cejas para reanudar
+        c = engine.config
+        return engine.recenter(self.ms, guard_ms=c.both_brows_hold_ms + 250, since_ms=paused,
+                               window_ms=500, search_ms=10000, min_samples=5)
+
+    def test_resume_after_brief_stillness_at_15_fps(self):
+        # 0,6 s quieto: con 8 cuadros en 0,6 s hacía falta casi un segundo y no se acomodaba.
+        result = self.pause_adjust_resume(self.engine(), 9)
+        self.assertTrue(result["ok"], result)
+        self.assertAlmostEqual(result["dy"], .18, delta=.01)
+
+    def test_flickering_gesture_in_the_new_posture_does_not_block_recentering(self):
+        # En una postura incómoda la boca titila sobre su umbral: antes descartaba todos los cuadros.
+        engine = self.engine()
+        result = self.pause_adjust_resume(engine, 22, flicker=dict(mouth_open=.3))
+        self.assertTrue(result["ok"], result)
+        self.assertAlmostEqual(engine.config.neutral_y, .68, delta=.01)
+
+    def test_failure_reports_how_long_the_head_was_still(self):
+        result = self.pause_adjust_resume(self.engine(), 2)
+        self.assertFalse(result["ok"])
+        self.assertIn("still_ms", result)
+        self.assertLess(result["still_ms"], 300)
+
     def test_still_frames_inside_short_gaps_are_not_enough(self):
         engine = self.engine()
         for k in range(80):
@@ -164,6 +208,10 @@ class ControlResumeTests(unittest.TestCase):
         control._tick()  # activo → pausado: no recentra
         self.assertTrue(control.paused)
         self.assertEqual(gesture.recenter.call_count, 1)
+        control._tick()  # reanudar después de pausar: 0,3 s quieto alcanza (15 fps)
+        self.assertEqual(gesture.recenter.call_args.kwargs,
+                         dict(guard_ms=c.both_brows_hold_ms + 250, since_ms=5000, window_ms=500,
+                              search_ms=10000, min_samples=5))
 
     def test_can_be_disabled(self):
         control, gesture = self.make(auto_recenter=False)

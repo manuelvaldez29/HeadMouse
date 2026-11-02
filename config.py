@@ -292,14 +292,18 @@ class AppConfig:
 
 @dataclass
 class AbsoluteTrackingConfig:
-    smoothing_alpha: float = .65
+    smoothing_alpha: float = .65  # dentro de una fijación: cuánto tarda el ancla en acomodarse
     max_step_px: float = 35.
     jitter_px: float = 3.
+    fixation_radius_px: float = 70.  # mirar dentro de este radio no mueve el cursor (gaze_filter)
+    vertical_factor: float = 1.6     # el eje vertical es más ruidoso: radio vertical mayor
 
     def __post_init__(self):
         bounded("absolute.smoothing_alpha", self.smoothing_alpha, 0, 1, inclusive_high=False)
         bounded("absolute.max_step_px", self.max_step_px, 1, 100)
         bounded("absolute.jitter_px", self.jitter_px, 0, 30)
+        bounded("absolute.fixation_radius_px", self.fixation_radius_px, 10, 400)
+        bounded("absolute.vertical_factor", self.vertical_factor, 1, 4)
 
 
 SECTIONS = dict(vision=VisionConfig, gesture=GestureConfig, control=ControlConfig,

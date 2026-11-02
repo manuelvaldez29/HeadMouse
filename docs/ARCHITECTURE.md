@@ -11,6 +11,26 @@ independiente, bancos por modalidad y logs persistentes. Las secciones históric
 que describen solo neutral ocular o acciones compartidas corresponden a la base
 anterior. No hay precisión física demostrada ni causa confirmada del cierre.
 
+## Cursor por posición de mirada: filtro de fijaciones (2026-10-28)
+
+Problema reportado: el cursor no se quedaba quieto mirando un punto fijo y fallaba
+más arriba/abajo que a los costados. En la calibración del perfil, el rango vertical
+del iris es 0,049 del ancho del ojo contra 0,176 horizontal, con un temblor por
+fijación de hasta 0,017: el eje vertical apenas triplica su propio ruido. Además,
+cada parpadeo reiniciaba el promedio exponencial y el cursor saltaba a la primera
+lectura cruda, la más ruidosa.
+
+`gaze_filter.FixationFilter` reemplaza ese promedio en `GestureEngine` (sólo para
+`eye_absolute`; el modelo de Julián no cambia). Mantiene un ancla quieta mientras la
+mediana de las últimas 3 lecturas esté dentro de un radio elíptico
+(`absolute.fixation_radius_px`, 70 px; el vertical es `absolute.vertical_factor`
+veces mayor, 1,6). Si sale del radio en 2 cuadros seguidos, salta de una vez (una
+sacada). Si la mediana de 0,5 s se corre de forma sostenida dentro del radio, el
+ancla se acomoda a ritmo `1-absolute.smoothing_alpha`. Parpadeos y pérdidas breves
+de iris (<1,5 s) conservan el ancla. Tests: `tests/test_fixation_filter.py`.
+El filtro no mejora la exactitud (~95 px de error medio validado): eso depende de
+la señal; la combinación con la nariz para el ajuste fino es el paso siguiente.
+
 ## Extensión experimental de tracking ocular
 
 En `experiment/eye-tracking` se agrega EyeGazeTrackingStrategy, seleccionable
@@ -185,6 +205,13 @@ experimental futura. No están implementadas.
   reanudar enseguida desde la postura cómoda, el recentrado elegía el segundo previo a
   la pausa: el centro se movía 0,03-0,05 cuando la postura real estaba a 0,17-0,21.
   La primera reanudación (el control arranca en pausa) mantiene la búsqueda de 4 s.
+  Ajuste del mismo día, tras volver a fallar casi siempre ("pauso, me acomodo y activo
+  y no se acomoda"): a 15 fps, 8 cuadros en 0,6 s pedían casi un segundo inmóvil, y
+  cualquier gesto activo descartaba el cuadro, así que una señal que titila en la
+  postura incómoda (boca, guiño) no dejaba ningún tramo limpio. Ahora alcanza 0,3 s
+  con 5 cuadros, sólo las cejas descalifican un cuadro (mueven la nariz) y el reposo
+  de cada gesto se mide sin los cuadros en que ese gesto estaba activo. Si falla, el
+  resultado registra `frames` y `still_ms` (el tramo quieto más largo encontrado).
 - Recentrado automático (`auto_recenter`): al reanudar con ambas cejas, el
   neutral de la nariz pasa a ser la mediana del segundo quieto más reciente de
   los 4 s previos. Se excluyen el propio gesto (decisión de cejas + hold +

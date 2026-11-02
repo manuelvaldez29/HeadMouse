@@ -1089,7 +1089,13 @@ class MainWindow(QMainWindow):
         self.eye_vertical_reference.setAccessibleName("Referencia vertical del joystick ocular")
         form.addRow("Referencia vertical",self.eye_vertical_reference)
         section(form,"Movimiento por posición en pantalla")
-        number(form,"absolute.smoothing_alpha","Suavizado",0,.95,2)
+        number(form,"absolute.fixation_radius_px","Radio de mirada quieta · px",10,400,1,
+               "Mientras la mirada no salga de este radio, el cursor no se mueve. Más grande: más quieto, "
+               "pero hay que mirar más lejos para moverlo.")
+        number(form,"absolute.vertical_factor","Tolerancia vertical extra · veces",1,4,2,
+               "Arriba/abajo la cámara mide peor que a los costados: el radio vertical es este múltiplo del horizontal.")
+        number(form,"absolute.smoothing_alpha","Suavizado dentro de la mirada quieta",0,.95,2,
+               "Cuánto tarda el cursor en acomodarse si mirás algo apenas al lado.")
         number(form,"absolute.max_step_px","Paso máximo · px",1,100,1)
         number(form,"absolute.jitter_px","Tolerancia de vibración · px",0,30,1)
         self.ocular_upgrade=button("Preparar seguimiento por zonas de pantalla",self.confirm_ocular_upgrade)

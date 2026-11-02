@@ -301,13 +301,15 @@ class GestureEngine:
                 events = [e for e in events if e.type not in ("CURSOR_MOVE", "CURSOR_ABSOLUTE")]
                 self._eye_smooth_x = self._eye_smooth_y = 0.
                 self._absolute_smooth = None
+                self._interrupt_fixation()
                 self._cursor_delta = (0., 0.)
                 self._tracking_block = "guiño/parpadeo o recuperación (180 ms)"
                 self._eye_recovering = True
                 self._eye_recovery.clear()
         # El historial de recentrado facial conserva siempre coordenadas nasales.
         x, y = fd.nose_x, fd.nose_y
-        self._history.append((fd.timestamp_ms, x, y, dict(self.last_signals), any(self.last_active.values())))
+        self._history.append((fd.timestamp_ms, x, y, dict(self.last_signals),
+                              frozenset(k for k, v in self.last_active.items() if v)))
 
         for event in events:
             event.source_timestamp_ms = fd.timestamp_ms
@@ -337,7 +339,8 @@ class GestureEngine:
                         eye_source=self.strategy.eye_source,
                         prediction=getattr(self, "_absolute_smooth", None),
                         block_reason=self._tracking_block, model_reason=self.strategy.reason,
-                        cursor_delta=self._cursor_delta)
+                        cursor_delta=self._cursor_delta,
+                        fixation=self._fixation.diagnostic() if getattr(self, "_fixation", None) else None)
         eye = self.strategy.name == "eye"
         c = self.strategy.config if eye else self.config
         calibration = self.strategy.calibration if eye else None
@@ -352,9 +355,17 @@ class GestureEngine:
                     prediction=getattr(self, "_absolute_smooth", None),
                     model_reason=getattr(self.strategy, "reason", ""))
 
+    def _interrupt_fixation(self):
+        # Parpadeo o iris perdido: el ancla de la fijación se conserva. Antes se
+        # reiniciaba el suavizado y el cursor saltaba a la primera lectura cruda.
+        fixation = getattr(self, "_fixation", None)
+        if fixation is not None:
+            fixation.interrupt()
+
     def reset(self):
         self._eye_smooth_x = self._eye_smooth_y = 0.
         self._absolute_smooth = None
+        self._interrupt_fixation()
         self._cursor_delta = (0., 0.)
         self._tracking_block = "rostro ausente, inválido o vencido"
         self._eye_recovering = True
@@ -415,6 +426,8 @@ class GestureEngine:
                 pending.append(key)
         return pending
 
+    BROW_KEYS = frozenset(("LEFT_BROW", "RIGHT_BROW", "BOTH_BROWS"))
+
     def recenter(self, before_ms, window_ms=1000, search_ms=4000, guard_ms=300, max_spread=.012, max_shift=.4, warn_shift=.2,
                  since_ms=None, min_samples=10):
         """Toma como neutral el tramo quieto más reciente previo a `before_ms`.
@@ -439,14 +452,19 @@ class GestureEngine:
         # una postura real de 0,17-0,21).
         end = before_ms - guard_ms
         start = end - search_ms if since_ms is None else max(end - search_ms, since_ms)
-        candidates = [r for r in self._history if start <= r[0] <= end and not r[4]]
+        # Sólo las cejas descalifican un cuadro: levantarlas mueve la nariz. Antes
+        # cualquier gesto activo lo hacía, y en una postura incómoda alguna señal
+        # (boca, guiño) titila sobre su umbral: nunca quedaba un tramo limpio y el
+        # centro no se movía (2026-10-28, "pauso, me acomodo y activo y no se acomoda").
+        # Que la nariz esté quieta lo decide su dispersión, no los gestos.
+        candidates = [r for r in self._history if start <= r[0] <= end and not r[4] & self.BROW_KEYS]
 
         def spread(window):
             xs, ys = [r[1] for r in window], [r[2] for r in window]
             # Rango p10–p90 (no MAD: un vaivén regular puede dejar la mediana de las desviaciones en cero).
             return max(percentile(xs, 90) - percentile(xs, 10), percentile(ys, 90) - percentile(ys, 10))
 
-        rows = None
+        rows, still_ms = None, 0
         enough = len(candidates) >= min_samples
         for i in range(len(candidates) - 1, -1, -1):  # del más reciente al más viejo
             # El tramo crece hacia atrás sólo mientras la cabeza siga quieta: una ventana
@@ -456,12 +474,14 @@ class GestureEngine:
                 if candidates[i][0] - row[0] > window_ms or spread([row] + window) > max_spread:
                     break
                 window.insert(0, row)
+            still_ms = max(still_ms, window[-1][0] - window[0][0])
             if len(window) >= min_samples and window[-1][0] - window[0][0] >= .6 * window_ms:
                 rows = window
                 break
         if rows is None:
-            return dict(ok=False, reason="no hubo un segundo con la cabeza quieta antes de reanudar" if enough
-                        else "pocos datos de la postura previa")
+            # Cuadros usables y el tramo quieto más largo: para leer en el log por qué falló.
+            return dict(ok=False, reason="no hubo un momento con la cabeza quieta antes de reanudar" if enough
+                        else "pocos datos de la postura previa", frames=len(candidates), still_ms=round(still_ms))
         xs, ys = [r[1] for r in rows], [r[2] for r in rows]
         mx, my = median(xs), median(ys)
         cx, cy = self._calibrated_neutral
@@ -472,13 +492,13 @@ class GestureEngine:
             return dict(ok=False, reason="la cara está casi fuera de la zona calibrada; recalibrá con esta cámara")
         self.config.neutral_x, self.config.neutral_y = mx, my
         self._smooth_x, self._smooth_y = mx, my
-        relaxed = rows  # ya sin frames con gestos activos
         self.gesture_offsets = {}
         for key, record in self.calibrations.items():
-            if not record.get("enabled") or key not in self._gates or len(relaxed) < 10:
+            if not record.get("enabled") or key not in self._gates:
                 continue
             spec, (activation, release) = GESTURE_SIGNALS[key], self._calibrated_gates[key]
-            values = [r[3].get(key) for r in relaxed if r[3].get(key) is not None]
+            # El reposo de cada gesto, sin los cuadros en que ese gesto estaba activo.
+            values = [r[3].get(key) for r in rows if key not in r[4] and r[3].get(key) is not None]
             neutral = record.get("neutral_statistics", {})
             if len(values) < 10 or set(neutral) != set(spec.channels):
                 continue
@@ -585,14 +605,18 @@ class GestureEngine:
             # Cortar inmediatamente: no emitir la cola del EMA sin iris válido.
             self._eye_smooth_x = self._eye_smooth_y = 0.
             self._absolute_smooth = None
+            self._interrupt_fixation()
             self._cursor_delta = (0., 0.)
             self._tracking_block = getattr(self.strategy, "reason", "falta calibración")
             return None
         self._tracking_block = ""
         if self.strategy.name == "eye_absolute":
-            previous = getattr(self, "_absolute_smooth", None)
-            a = self.strategy.config.smoothing_alpha
-            self._absolute_smooth = tuple(a*p+(1-a)*v for p,v in zip(previous,position)) if previous else position
+            if getattr(self, "_fixation", None) is None:
+                from gaze_filter import FixationFilter
+                context, c = self.strategy.model.record["context"], self.strategy.config
+                self._fixation = FixationFilter(context["width"], context["height"], c.fixation_radius_px,
+                                                c.vertical_factor, c.smoothing_alpha)
+            self._absolute_smooth = self._fixation.update(fd.timestamp_ms, position)
             return GestureEvent(type="CURSOR_ABSOLUTE", dx=self._absolute_smooth[0], dy=self._absolute_smooth[1])
         c = self.strategy.config
         a = c.smoothing_alpha

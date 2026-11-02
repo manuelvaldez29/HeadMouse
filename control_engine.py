@@ -371,9 +371,11 @@ class ControlEngine:
                         since_ms=None)
                 else:
                     # Los cuadros con las cejas arriba ya se excluyen; el margen cubre la subida.
+                    # 0,3 s quieto (≥5 cuadros): a 15 fps, 8 cuadros en 0,6 s exigían casi
+                    # un segundo inmóvil antes de reanudar y fallaba (log del 2026-10-28).
                     self.last_recenter = self.gesture.recenter(
                         toggle.source_timestamp_ms, guard_ms=c.both_brows_hold_ms + 250, since_ms=since,
-                        window_ms=600, search_ms=10000, min_samples=8)
+                        window_ms=500, search_ms=10000, min_samples=5)
                 logger.info("[ControlEngine] Recentrado: %s", self.last_recenter)
             self._log_event(EV_BOTH_BROWS)
             if self.metrics:
