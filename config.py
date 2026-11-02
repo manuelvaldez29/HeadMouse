@@ -10,7 +10,8 @@ from action_mapping import DEFAULT_MAPPING, ActionMapping
 
 ROOT = Path(__file__).resolve().parent
 DEFAULT_THRESHOLDS = dict(blink_left=0.045, blink_right=0.045,
-                          brow_left=0.290, brow_right=0.290, mouth_open=0.180)
+                          brow_left=0.290, brow_right=0.290,
+                          mouth_left=0.100, mouth_right=0.100, mouth_open=0.180)
 
 
 def bounded(name, value, low, high, *, integer=False, inclusive_high=True):

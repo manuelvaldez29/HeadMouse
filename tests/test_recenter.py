@@ -88,25 +88,25 @@ class RecenterTests(unittest.TestCase):
 
     def test_gesture_thresholds_follow_rest_shift_with_cap(self):
         profile = self.calibrated_profile()
-        record = profile["gesture_calibrations"]["LEFT_BROW"]
-        rest, activation = record["neutral_statistics"]["left"]["median"], record["activation_threshold"]["left"]
+        record = profile["gesture_calibrations"]["MOUTH_LEFT"]
+        rest, activation = record["neutral_statistics"]["mouth_left"]["median"], record["activation_threshold"]["mouth_left"]
         margin = activation - rest
         engine = self.engine(profile)
-        # Con otro ángulo de cámara la ceja relajada mide un 30 % del margen más.
+        # Con otro ángulo de cámara los labios relajados miden un 30 % del margen más.
         shifted_rest = rest + .3 * margin
-        self.feed(engine, 40, brow_left_lift=shifted_rest)
+        self.feed(engine, 40, mouth_left=shifted_rest)
         self.assertTrue(engine.recenter(self.ms, guard_ms=0)["ok"])
-        offset = engine.gesture_offsets["LEFT_BROW"]["left"]
+        offset = engine.gesture_offsets["MOUTH_LEFT"]["mouth_left"]
         self.assertAlmostEqual(offset, .3 * margin, places=6)
-        self.assertAlmostEqual(engine._gates["LEFT_BROW"].activation["left"], activation + offset, places=6)
+        self.assertAlmostEqual(engine._gates["MOUTH_LEFT"].activation["mouth_left"], activation + offset, places=6)
         # El reposo desplazado ya no está a 30 % del umbral sino lejos; el gesto sigue detectándose.
-        self.assertEqual([e.type for e in self.feed(engine, 8, brow_left_lift=.4) if e.type != "CURSOR_MOVE"],
+        self.assertEqual([e.type for e in self.feed(engine, 8, mouth_left=.35) if e.type != "CURSOR_MOVE"],
                          ["SCROLL_UP"])
-        # Un desplazamiento enorme se limita a la mitad del margen calibrado.
+        # Un desplazamiento enorme se limita: labios "activos" todo el rato no son reposo.
         engine = self.engine(profile)
-        self.feed(engine, 40, brow_left_lift=rest + 3 * margin, brow_right_lift=.22)
+        self.feed(engine, 40, mouth_left=rest + 3 * margin)
         engine.recenter(self.ms, guard_ms=0)
-        self.assertNotIn("LEFT_BROW", engine.gesture_offsets)  # ceja "activa" todo el rato: no es reposo
+        self.assertNotIn("MOUTH_LEFT", engine.gesture_offsets)
 
     def test_resume_soon_after_pausing_uses_the_still_moment(self):
         """Pausar mueve la nariz (hasta 0,034 al levantar ambas cejas)."""
@@ -260,7 +260,7 @@ class UnreachableCenterTests(unittest.TestCase):
     def face(self, **values):
         return FaceData(True, timestamp_ms=self.ms, **(NEUTRAL | values))
 
-    def test_paused_accepts_both_brows_off_center_but_never_scroll(self):
+    def test_paused_accepts_both_brows_off_center_unlike_active_mode(self):
         engine = GestureEngine(None, calibration=calibration(), clock=self.clock)
         engine.both_brows_anywhere = True
         events = []
@@ -271,11 +271,12 @@ class UnreachableCenterTests(unittest.TestCase):
         for _ in range(30):
             self.ms += 50
             engine.update(self.face(nose_y=.70))
-        scroll = []
+        engine.both_brows_anywhere = False
+        blocked = []
         for _ in range(20):
             self.ms += 50
-            scroll += engine.update(self.face(nose_y=.70, brow_left_lift=.4))
-        self.assertEqual([e.type for e in scroll if e.type != "CURSOR_MOVE"], [])
+            blocked += engine.update(self.face(nose_y=.70, brow_left_lift=.4, brow_right_lift=.5))
+        self.assertEqual([e.type for e in blocked if e.type != "CURSOR_MOVE"], [])
 
     def control(self, gesture, position):
         backend = Mock()

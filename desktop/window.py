@@ -14,13 +14,13 @@ from gaze_source import SOURCE_LABELS as EYE_SOURCE_LABELS, eye_coordinates
 from desktop.widgets import (CameraPreview, ExperimentCanvas, CalibrationMeter, DictationOverlay, LineChart, MiniCameraWindow,
     GestureMeters, gesture_progress, CHART_SERIES, CHART_NEUTRAL, label, card)
 
-GESTURE_LABELS = dict(LEFT_WINK="Guiño izquierdo", RIGHT_WINK="Guiño derecho", LEFT_BROW="Ceja izquierda",
-                      RIGHT_BROW="Ceja derecha", BOTH_BROWS="Ambas cejas", MOUTH_OPEN="Boca abierta")
-CALIBRATION_ORDER = ("LEFT_WINK","RIGHT_WINK","LEFT_BROW","RIGHT_BROW","MOUTH_OPEN","BOTH_BROWS")  # = GESTURE_SIGNALS
-EVENT_GESTURE = dict(LEFT_CLICK="LEFT_WINK",RIGHT_CLICK="RIGHT_WINK",SCROLL_UP="LEFT_BROW",SCROLL_DOWN="RIGHT_BROW",
+GESTURE_LABELS = dict(LEFT_WINK="Guiño izquierdo", RIGHT_WINK="Guiño derecho", MOUTH_LEFT="Labios a la izquierda",
+                      MOUTH_RIGHT="Labios a la derecha", BOTH_BROWS="Ambas cejas", MOUTH_OPEN="Boca abierta")
+CALIBRATION_ORDER = ("LEFT_WINK","RIGHT_WINK","MOUTH_LEFT","MOUTH_RIGHT","MOUTH_OPEN","BOTH_BROWS")  # = GESTURE_SIGNALS
+EVENT_GESTURE = dict(LEFT_CLICK="LEFT_WINK",RIGHT_CLICK="RIGHT_WINK",SCROLL_UP="MOUTH_LEFT",SCROLL_DOWN="MOUTH_RIGHT",
                      MOUTH_OPEN="MOUTH_OPEN",BOTH_BROWS="BOTH_BROWS")
 SOURCE_LABELS = dict(GEOMETRIC="Geométrica",BLENDSHAPE="Blendshapes",HYBRID="Híbrida",GEOMETRIC_3D="Geométrica 3D")
-GESTURE_ROWS = (("Ojos izq/der",("LEFT_WINK","RIGHT_WINK")),("Cejas izq/der",("LEFT_BROW","RIGHT_BROW")),
+GESTURE_ROWS = (("Ojos izq/der",("LEFT_WINK","RIGHT_WINK")),("Labios izq/der",("MOUTH_LEFT","MOUTH_RIGHT")),
                 ("Ambas cejas",("BOTH_BROWS",)),("Boca",("MOUTH_OPEN",)))
 
 
@@ -1035,10 +1035,10 @@ class MainWindow(QMainWindow):
         form,_=tab("Gestos y scroll","Cuánto hay que sostener cada gesto y cuánto esperar antes de repetirlo. "
                                      "Cambiarlos invalida la prueba de gestos del método editado.")
         section(form,"Tiempos de los gestos")
-        for group,title in (("blink","Guiños"),("brow","Cejas"),("both_brows","Ambas cejas"),("mouth","Boca")):
+        for group,title in (("blink","Guiños"),("brow","Labios izq/der"),("both_brows","Ambas cejas"),("mouth","Boca abierta")):
             number(form,f"gesture.{group}_hold_ms",f"{title}: sostener · ms",0,5000,0)
             number(form,f"gesture.{group}_cooldown_ms",f"{title}: espera · ms",0,10000,0)
-        number(form,"gesture.brow_decision_ms","Cejas: tiempo para distinguir una de ambas · ms",0,1000,0)
+        number(form,"gesture.brow_decision_ms","Ambas cejas: margen de detección · ms",0,1000,0)
         section(form,"Click sostenido y arrastre")
         self.hold_click_check=QCheckBox("Activar arrastre con guiño largo y soltar con otro guiño (modo Nariz)")
         self.hold_click_check.setAccessibleName("Click izquierdo sostenido y arrastre con guiño")
@@ -1047,8 +1047,8 @@ class MainWindow(QMainWindow):
                "Un guiño corto hace click normal; uno largo deja apretado el botón izquierdo hasta que vuelvas a guiñar")
         section(form,"Scroll")
         number(form,"control.scroll_lines","Muescas de rueda por gesto",1,100,0)
-        number(form,"gesture.brow_repeat_delay_ms","Ceja sostenida: esperar antes de repetir · ms",0,5000,0)
-        number(form,"gesture.brow_repeat_ms","Ceja sostenida: repetir cada · ms (0 = apagado)",0,5000,0)
+        number(form,"gesture.brow_repeat_delay_ms","Labios sostenidos: esperar antes de repetir · ms",0,5000,0)
+        number(form,"gesture.brow_repeat_ms","Labios sostenidos: repetir cada · ms (0 = apagado)",0,5000,0)
         section(form,"Seguridad")
         number(form,"control.face_timeout_s","Pausar si no se ve la cara durante · s",.1,60,1)
 
@@ -1655,7 +1655,7 @@ class MainWindow(QMainWindow):
             extra=[t for t in (feedback if feedback not in (wizard["instruction"],wizard.get("error")) else "",
                                wizard.get("capture_message","")) if t]
             self.capture_feedback.setText("  ·  ".join(extra))
-            names={"LEFT_CLICK":"Guiño izq.","RIGHT_CLICK":"Guiño der.","SCROLL_UP":"Ceja izq.","SCROLL_DOWN":"Ceja der.","MOUTH_OPEN":"Boca","BOTH_BROWS":"Ambas cejas"}
+            names={"LEFT_CLICK":"Guiño izq.","RIGHT_CLICK":"Guiño der.","SCROLL_UP":"Labios izq.","SCROLL_DOWN":"Labios der.","MOUTH_OPEN":"Boca","BOTH_BROWS":"Ambas cejas"}
             self.validation_labels.setText("  ·  ".join(f"{title}: "+("NO DISPONIBLE" if not wizard.get("enabled",{}).get(EVENT_GESTURE[key],True) else "DETECTADO ✓" if key in wizard['recognized'] else "NO DETECTADO") for key,title in names.items()))
         else:
             self.calibration_source.setEnabled(True)

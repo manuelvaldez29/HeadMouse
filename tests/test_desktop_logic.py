@@ -220,7 +220,7 @@ class DesktopLogicTests(unittest.TestCase):
         session=CalibrationSession({"user_id":"julian"},cc,lambda:now[0])
         session.start()
         values=[{}, {"eye_left_ratio":.02},{"eye_right_ratio":.03},
-                {"brow_left_lift":.4},{"brow_right_lift":.5},{"mouth_open":.3},
+                {"mouth_left":.25},{"mouth_right":.25},{"mouth_open":.3},
                 {"brow_left_lift":.3,"brow_right_lift":.33}]
         for phase in range(7):
             count=0
@@ -229,7 +229,8 @@ class DesktopLogicTests(unittest.TestCase):
                 self.assertLess(count,150)
                 now[0]+=.03
                 face=replace(FaceData(True,timestamp_ms=int(now[0]*1000),eye_left_ratio=.1,
-                                      eye_right_ratio=.12,brow_left_lift=.2,brow_right_lift=.22,mouth_open=.01),
+                                      eye_right_ratio=.12,brow_left_lift=.2,brow_right_lift=.22,
+                                      mouth_left=.01,mouth_right=.01,mouth_open=.01),
                              **(values[phase] if session.stage=="active" else {}))
                 session.update(face)
         self.assertEqual(session.state,"measured")
@@ -246,7 +247,8 @@ class DesktopLogicTests(unittest.TestCase):
             for _ in range(round(seconds/.05)):
                 now[0]+=.05
                 face=replace(FaceData(True,timestamp_ms=int(now[0]*1000),eye_left_ratio=.1,
-                                      eye_right_ratio=.12,brow_left_lift=.2,brow_right_lift=.22,mouth_open=.01),
+                                      eye_right_ratio=.12,brow_left_lift=.2,brow_right_lift=.22,
+                                      mouth_left=.01,mouth_right=.01,mouth_open=.01),
                              **(overrides or {}))
                 session.update(face)
         feed(2.2)

@@ -231,7 +231,7 @@ class SingleScreenCalibrationLayoutTests(unittest.TestCase):
             countdown=0, progress=0.85, samples=24, attempt=2, repetitions=3,
             feedback="Mantené el gesto un instante más", capture_message="Señal clara",
             recognized=["LEFT_CLICK", "RIGHT_CLICK"], meter=meter_two_rows, error="",
-            enabled={k: True for k in ("LEFT_WINK", "RIGHT_WINK", "LEFT_BROW", "RIGHT_BROW", "MOUTH_OPEN", "BOTH_BROWS")},
+            enabled={k: True for k in ("LEFT_WINK", "RIGHT_WINK", "MOUTH_LEFT", "MOUTH_RIGHT", "MOUTH_OPEN", "BOTH_BROWS")},
             quality={"LEFT_WINK": dict(label="BUENA", score=1, retries=0)}, can_save=False,
         )
         window, bridge = self.make_window()

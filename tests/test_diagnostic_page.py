@@ -19,7 +19,7 @@ class DiagnosticPageTests(unittest.TestCase):
     GATES = {"LEFT_WINK": dict(activation={"eye_left_ratio": .05}, release={"eye_left_ratio": .055}, enabled=True),
              "MOUTH_OPEN": dict(activation={"mouth_open": .08}, release={"mouth_open": .05}, enabled=True),
              "BOTH_BROWS": dict(activation={"left": .24, "right": .24}, release={"left": .23, "right": .23}, enabled=True),
-             "RIGHT_BROW": dict(activation={"right": .23}, release={"right": .22}, enabled=False)}
+             "MOUTH_RIGHT": dict(activation={"mouth_right": .15}, release={"mouth_right": .10}, enabled=False)}
     CAL = {key: dict(enabled=True, source="GEOMETRIC", quality_score=1., repetitions_valid=3,
                      activation_threshold=gate["activation"], release_threshold=gate["release"], neutral_statistics=neutral)
            for key, gate, neutral in (
@@ -73,7 +73,7 @@ class DiagnosticPageTests(unittest.TestCase):
         rows = {label: (value, active, available) for label, value, active, available in w.gesture_meters.rows}
         self.assertAlmostEqual(rows["Boca abierta"][0], 1.)
         self.assertTrue(rows["Boca abierta"][1])
-        self.assertFalse(rows["Ceja derecha"][2])  # desmarcado en la calibración
+        self.assertFalse(rows["Labios a la derecha"][2])  # desmarcado en la calibración
         self.assertTrue(w.diagnostic_values.parentWidget().isHidden())  # plegado por defecto
         self.assertIn("Facial X", w.diagnostic_values.text())  # el texto técnico se sigue generando
         w.diagnostic_details_toggle.setChecked(True)

@@ -224,8 +224,8 @@ class CalibrationSession:
         return True
 
     def _relax_hint(self):
-        return {"LEFT_WINK":"el ojo izquierdo","RIGHT_WINK":"el ojo derecho","LEFT_BROW":"la ceja izquierda",
-                "RIGHT_BROW":"la ceja derecha","MOUTH_OPEN":"la boca","BOTH_BROWS":"las cejas"}.get(self.gesture_id,"la cara")
+        return {"LEFT_WINK":"el ojo izquierdo","RIGHT_WINK":"el ojo derecho","MOUTH_LEFT":"los labios",
+                "MOUTH_RIGHT":"los labios","MOUTH_OPEN":"la boca","BOTH_BROWS":"las cejas"}.get(self.gesture_id,"la cara")
 
     def _state_key(self):
         model=self.models.get(self.gesture_id)
@@ -484,7 +484,12 @@ class CalibrationSession:
         if self.stage=="active": elapsed,duration=float(bool(self._plateau)),1.
         validating=self.validator is not None
         v=self.validator
+        nx=(self.candidate.get("neutral_nose_x") if self.candidate else
+            self.baseline.median("nose_x") if self.baseline and self.baseline.nose_x else None)
+        ny=(self.candidate.get("neutral_nose_y") if self.candidate else
+            self.baseline.median("nose_y") if self.baseline and self.baseline.nose_y else None)
         return dict(state=self.state,stage=("return_neutral" if v.neutral else "gesture") if validating else self.stage,
+                    neutral_x=nx,neutral_y=ny,
                     phase=v.index+1 if validating else self.phase+1,total_phases=len(v.gestures)+1 if validating else len(PHASES),
                     gesture_id=self._meter_key(),instruction=instruction,
                     countdown=max(0,math.ceil((cc.countdown_s if self.stage=="baseline" else cc.transition_s)-(self.clock()-self.started))),

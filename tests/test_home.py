@@ -125,7 +125,7 @@ class CalibrationButtonTests(HomeButtonTests):
         base = dict(state=state, stage="active", phase=2, total_phases=7, gesture_id="RIGHT_WINK",
                     instruction="Guiñá el ojo derecho", countdown=0, progress=0, samples=0, attempt=1,
                     repetitions=3, feedback="", capture_message="", recognized=[], meter=[], error="",
-                    enabled={k: True for k in ("LEFT_WINK", "RIGHT_WINK", "LEFT_BROW", "RIGHT_BROW",
+                    enabled={k: True for k in ("LEFT_WINK", "RIGHT_WINK", "MOUTH_LEFT", "MOUTH_RIGHT",
                                                "MOUTH_OPEN", "BOTH_BROWS")},
                     quality={"LEFT_WINK": dict(label="BUENA", score=1, retries=0)}, can_save=False)
         return base | extra

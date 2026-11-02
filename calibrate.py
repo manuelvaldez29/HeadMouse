@@ -87,19 +87,19 @@ PHASES = [
         "color":       C_CYAN,
     },
     {
-        "id":          "brow_left",
-        "title":       "CEJA IZQUIERDA",
-        "instruction": "Levantá tu\nceja IZQUIERDA",
-        "sub":         "Subila y bajala varias veces durante la medición",
-        "icon":        "🤨",
+        "id":          "mouth_left",
+        "title":       "LABIOS A LA IZQUIERDA",
+        "instruction": "Llevá los labios\na tu IZQUIERDA",
+        "sub":         "Movelos hacia tu izquierda y volvé al centro",
+        "icon":        "😗",
         "color":       C_ORANGE,
     },
     {
-        "id":          "brow_right",
-        "title":       "CEJA DERECHA",
-        "instruction": "Levantá tu\nceja DERECHA",
-        "sub":         "Subila y bajala varias veces durante la medición",
-        "icon":        "🤨",
+        "id":          "mouth_right",
+        "title":       "LABIOS A LA DERECHA",
+        "instruction": "Llevá los labios\na tu DERECHA",
+        "sub":         "Movelos hacia tu derecha y volvé al centro",
+        "icon":        "😗",
         "color":       C_ORANGE,
     },
     {
@@ -158,11 +158,11 @@ def draw_live_values(frame, fd: FaceData):
     if not fd.detected:
         return
     items = [
-        (f"Ojo izq  : {fd.eye_left_ratio:.3f}",  C_CYAN),
-        (f"Ojo der  : {fd.eye_right_ratio:.3f}",  C_CYAN),
-        (f"Ceja izq : {fd.brow_left_lift:.3f}",   C_ORANGE),
-        (f"Ceja der : {fd.brow_right_lift:.3f}",  C_ORANGE),
-        (f"Boca     : {fd.mouth_open:.3f}",        C_PURPLE),
+        (f"Ojo izq    : {fd.eye_left_ratio:.3f}",  C_CYAN),
+        (f"Ojo der    : {fd.eye_right_ratio:.3f}",  C_CYAN),
+        (f"Labios izq : {fd.mouth_left:.3f}",       C_ORANGE),
+        (f"Labios der : {fd.mouth_right:.3f}",      C_ORANGE),
+        (f"Boca       : {fd.mouth_open:.3f}",        C_PURPLE),
     ]
     for i, (txt, col) in enumerate(items):
         put_bg_text(frame, txt, (10, 28 + i * 26),
@@ -233,8 +233,8 @@ def draw_results(frame, thresholds: dict, calibration: dict):
     items = [
         (f"Guino izq  : < {thresholds['blink_left']:.4f}",  C_CYAN),
         (f"Guino der  : < {thresholds['blink_right']:.4f}", C_CYAN),
-        (f"Ceja izq   : > {thresholds['brow_left']:.4f}",   C_ORANGE),
-        (f"Ceja der   : > {thresholds['brow_right']:.4f}",  C_ORANGE),
+        (f"Labios izq : > {thresholds['mouth_left']:.4f}",  C_ORANGE),
+        (f"Labios der : > {thresholds['mouth_right']:.4f}", C_ORANGE),
         (f"Boca       : > {thresholds['mouth_open']:.4f}",  C_PURPLE),
     ]
     for i, (txt, col) in enumerate(items):
@@ -375,7 +375,7 @@ def draw_adaptive_calibration(frame, snapshot):
         y+=35
     put_centered(vis,"Neutral blanco | Liberacion violeta | Activacion naranja | Gesto verde",h-65,.45,C_GRAY,1)
     put_centered(vis,"SPACE iniciar/validar/guardar | R repetir | C reiniciar | S omitir | Q salir",h-40,.45,C_WHITE,1)
-    put_centered(vis,"Repetir: 1 guino izq | 2 der | 3 ceja izq | 4 der | 5 boca | 6 ambas",h-18,.4,C_GRAY,1)
+    put_centered(vis,"Repetir: 1 guino izq | 2 der | 3 labios izq | 4 der | 5 boca | 6 ambas",h-18,.4,C_GRAY,1)
     return vis
 
 

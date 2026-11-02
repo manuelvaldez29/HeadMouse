@@ -13,6 +13,8 @@ BROW_LEFT = (70, 63, 105, 66, 107)
 BROW_RIGHT = (336, 296, 334, 293, 300)
 EYE_LEFT = (33, 133)    # comisura externa, interna (mismo lado que BROW_LEFT)
 EYE_RIGHT = (263, 362)
+MOUTH_POINTS = (61, 291, 13, 14, 0, 17)  # comisuras y centro superior/inferior de labios
+MOUTH_HALF_WIDTH_REF = 0.255  # semiancho mínimo de referencia (sobre IOD) para exigir arrastre de comisura opuesta
 NOSE_BRIDGE, SUBNASALE = 6, 2
 EAR_LEFT, EAR_RIGHT = 234, 454
 
@@ -85,3 +87,45 @@ def head_pose(lms, width, height):
     yaw = math.degrees(math.atan2(x_axis[2], x_axis[0]))
     roll = math.degrees(math.atan2(x_axis[1], x_axis[0]))
     return pitch, yaw, roll
+
+
+def mouth_shift(lms, width=1.0, height=1.0):
+    """Desplazamiento lateral de los labios (izquierda, derecha del usuario >= 0)
+    respecto al centro rígido entre ambos ojos, normalizado por la distancia
+    interocular. En el frame espejado de VisionEngine, mover los labios hacia la
+    izquierda del usuario desplaza la boca hacia -x_axis (dx < 0)."""
+    eyes = EYE_LEFT + EYE_RIGHT
+    indices = eyes + (NOSE_BRIDGE, SUBNASALE) + MOUTH_POINTS
+    has_3d = all(isinstance(getattr(lms[i], "z", None), (int, float))
+                 and not isinstance(getattr(lms[i], "z", None), bool)
+                 and math.isfinite(lms[i].z) for i in indices)
+    if has_3d:
+        frame = face_frame(lms, width, height)
+        if frame is not None:
+            point, x_axis, _, _, iod = frame
+            eye_mid = _mean([point(i) for i in eyes])
+            mouth_mid = _mean([point(i) for i in MOUTH_POINTS])
+            dx = _dot(_sub(mouth_mid, eye_mid), x_axis) / iod
+            # Exigir también desplazamiento interno de la comisura opuesta: al guiñar
+            # un ojo la mejilla estira solo la comisura ipsilateral sin mover toda la boca.
+            c_left = _dot(_sub(point(61), eye_mid), x_axis) / iod
+            c_right = _dot(_sub(point(291), eye_mid), x_axis) / iod
+            left = min(max(0.0, -dx), max(0.0, MOUTH_HALF_WIDTH_REF - c_right))
+            right = min(max(0.0, dx), max(0.0, c_left + MOUTH_HALF_WIDTH_REF))
+            return float(left), float(right)
+    ax = (lms[EYE_RIGHT[0]].x - lms[EYE_LEFT[0]].x) * width
+    ay = (lms[EYE_RIGHT[0]].y - lms[EYE_LEFT[0]].y) * height
+    iod2d = math.hypot(ax, ay)
+    if iod2d <= 1e-6:
+        return None
+    ux, uy = ax / iod2d, ay / iod2d
+    ex = sum(lms[i].x for i in eyes) / len(eyes) * width
+    ey = sum(lms[i].y for i in eyes) / len(eyes) * height
+    mx = sum(lms[i].x for i in MOUTH_POINTS) / len(MOUTH_POINTS) * width
+    my = sum(lms[i].y for i in MOUTH_POINTS) / len(MOUTH_POINTS) * height
+    dx = ((mx - ex) * ux + (my - ey) * uy) / iod2d
+    c_left = ((lms[61].x * width - ex) * ux + (lms[61].y * height - ey) * uy) / iod2d
+    c_right = ((lms[291].x * width - ex) * ux + (lms[291].y * height - ey) * uy) / iod2d
+    left = min(max(0.0, -dx), max(0.0, MOUTH_HALF_WIDTH_REF - c_right))
+    right = min(max(0.0, dx), max(0.0, c_left + MOUTH_HALF_WIDTH_REF))
+    return float(left), float(right)

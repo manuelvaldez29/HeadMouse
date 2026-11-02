@@ -6,8 +6,8 @@ from gesture_signals import GESTURE_SIGNALS
 GESTURES = (
     ("LEFT_CLICK", "Guina el ojo IZQUIERDO"),
     ("RIGHT_CLICK", "Guina el ojo DERECHO"),
-    ("SCROLL_UP", "Levanta la ceja IZQUIERDA"),
-    ("SCROLL_DOWN", "Levanta la ceja DERECHA"),
+    ("SCROLL_UP", "Lleva los labios hacia tu IZQUIERDA"),
+    ("SCROLL_DOWN", "Lleva los labios hacia tu DERECHA"),
     ("MOUTH_OPEN", "Abri la boca"),
     ("BOTH_BROWS", "Levanta AMBAS cejas"),
 )
@@ -17,6 +17,10 @@ class CalibrationValidation:
     def __init__(self, gesture, timeout_s=None, clock=time.monotonic, neutral_s=None,
                  noise_s=None, wrong_s=None):
         self.gesture = gesture
+        if hasattr(self.gesture, "both_brows_anywhere"):
+            # En la prueba de gestos no se mueve el cursor del SO: una leve deriva de
+            # postura respecto al baseline inicial no debe bloquear "Ambas cejas".
+            self.gesture.both_brows_anywhere = True
         self.clock = clock
         defaults = CalibrationConfig()
         self.timeout_s = defaults.validation_timeout_s if timeout_s is None else timeout_s
@@ -47,6 +51,7 @@ class CalibrationValidation:
         self._wrong_since = None
         self._wrong_types = set()
         self._fired_wrong = set()
+        self._expected_deferred = False
 
     def _blocking_labels(self):
         return ", ".join(GESTURE_SIGNALS[key].label for key in self.blocking)
@@ -175,7 +180,11 @@ class CalibrationValidation:
         else:
             expected = self.gestures[self.index][0]
             wrong = (sustained | set(types)) - {expected}
+            if expected not in sustained and expected not in types:
+                self._expected_deferred = False
             if wrong:
+                if expected in types:
+                    self._expected_deferred = True
                 if self._wrong_since is None or not wrong.intersection(self._wrong_types):
                     self._wrong_since = now
                 self._wrong_types = wrong
@@ -185,7 +194,7 @@ class CalibrationValidation:
                 return
             self._wrong_since = None
             self._wrong_types = set()
-            if expected in types:
+            if expected in types or (self._expected_deferred and expected in sustained):
                 self.returning_from = expected
                 self.recognized.append(expected)
                 self.index += 1

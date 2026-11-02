@@ -93,10 +93,10 @@ class CalibrationRegressionTests(unittest.TestCase):
         self.assertEqual(self.session.state,"error")
         self.assertIn("Tiempo agotado",self.session.snapshot()["error"])
         self.session.repeat()
-        self.session.set_enabled("RIGHT_BROW",False)
+        self.session.set_enabled("MOUTH_RIGHT",False)
         self.capture()
         self.assertEqual(self.session.state,"measured")
-        self.assertEqual(self.session.candidate["settings"]["actions"]["bindings"]["RIGHT_BROW"],"NONE")
+        self.assertEqual(self.session.candidate["settings"]["actions"]["bindings"]["MOUTH_RIGHT"],"NONE")
 
     def test_missing_blendshapes_have_explicit_timeout_and_recover(self):
         self.config.calibration.brow_signal_source="BLENDSHAPE"
@@ -116,13 +116,13 @@ class CalibrationRegressionTests(unittest.TestCase):
         self.assertEqual(self.session.state,"measured",self.session.snapshot())
 
     def test_weak_gesture_retries_without_losing_previous(self):
-        self.capture(weak="RIGHT_BROW")
+        self.capture(weak="MOUTH_RIGHT")
         self.assertEqual(self.session.state,"error")
-        previous=self.session.models["LEFT_BROW"].to_record()
+        previous=self.session.models["MOUTH_LEFT"].to_record()
         self.session.repeat()
         self.capture()
         self.assertEqual(self.session.state,"measured")
-        self.assertEqual(previous,self.session.models["LEFT_BROW"].to_record())
+        self.assertEqual(previous,self.session.models["MOUTH_LEFT"].to_record())
 
     def test_validation_wrong_gesture_and_never_released_timeout(self):
         self.capture()

@@ -15,7 +15,7 @@ from test_core import calibration
 
 
 class AdaptiveCalibrationTests(unittest.TestCase):
-    def make_model(self, gesture_id="LEFT_BROW", source="GEOMETRIC"):
+    def make_model(self, gesture_id="MOUTH_LEFT", source="GEOMETRIC"):
         signal=get_signal(gesture_id)
         return GestureCalibration(gesture_id,signal.channels,signal.directions,source)
 
@@ -29,12 +29,12 @@ class AdaptiveCalibrationTests(unittest.TestCase):
         self.assertTrue(model.usable)
         self.assertEqual(model.quality_score,1)
         self.assertEqual(model.quality_label,"BUENA")
-        self.assertGreater(model.activation_threshold["left"],.2)
-        self.assertLess(model.activation_threshold["left"],.4)
-        self.assertLess(model.release_threshold["left"],model.activation_threshold["left"])
+        self.assertGreater(model.activation_threshold["mouth_left"],.2)
+        self.assertLess(model.activation_threshold["mouth_left"],.4)
+        self.assertLess(model.release_threshold["mouth_left"],model.activation_threshold["mouth_left"])
         record=model.to_record()
         self.assertEqual(record["repetitions_valid"],3)
-        self.assertEqual(record["neutral_statistics"]["left"]["mad"],0)
+        self.assertEqual(record["neutral_statistics"]["mouth_left"]["mad"],0)
         encoded=json.dumps(record,allow_nan=False)
         self.assertNotIn("neutral_samples",encoded)
         self.assertNotIn("active_samples",encoded)
@@ -49,13 +49,13 @@ class AdaptiveCalibrationTests(unittest.TestCase):
     def test_noisy_neutral_rejected(self):
         model=self.fit([(.1,),(.2,),(.4,),(.5,)]*5,[(.45,)]*20)
         self.assertFalse(model.usable)
-        self.assertGreater(model.neutral_noise["left"],0)
+        self.assertGreater(model.neutral_noise["mouth_left"],0)
 
     def test_single_outlier_does_not_set_extreme_threshold(self):
         clean=self.fit([(.2,)]*20,[(.4,)]*20)
         noisy=self.fit([(.2,)]*19+[(9.,)],[(.4,)]*19+[(-9.,)])
         self.assertTrue(noisy.usable)
-        self.assertAlmostEqual(clean.activation_threshold["left"],noisy.activation_threshold["left"])
+        self.assertAlmostEqual(clean.activation_threshold["mouth_left"],noisy.activation_threshold["mouth_left"])
         self.assertAlmostEqual(noisy.quality_score,.95)
 
     def test_repetitions_required_and_bad_repetition_not_hidden(self):
@@ -106,17 +106,19 @@ class AdaptiveCalibrationTests(unittest.TestCase):
         self.assertEqual(model.activation_threshold,{})
 
     def test_all_current_adapters_and_blendshape_missing(self):
-        face=FaceData(True,eye_left_ratio=.1,eye_right_ratio=.2,brow_left_lift=.3,brow_right_lift=.4,mouth_open=.5)
-        expected={"LEFT_WINK":(.1,),"RIGHT_WINK":(.2,),"LEFT_BROW":(.3,),"RIGHT_BROW":(.4,),"MOUTH_OPEN":(.5,),"BOTH_BROWS":(.3,.4)}
+        face=FaceData(True,eye_left_ratio=.1,eye_right_ratio=.2,brow_left_lift=.3,brow_right_lift=.4,
+                      mouth_left=.15,mouth_right=.25,mouth_open=.5)
+        expected={"LEFT_WINK":(.1,),"RIGHT_WINK":(.2,),"MOUTH_LEFT":(.15,),"MOUTH_RIGHT":(.25,),
+                  "MOUTH_OPEN":(.5,),"BOTH_BROWS":(.3,.4)}
         for key,signal in GESTURE_SIGNALS.items(): self.assertEqual(signal.extract(face),expected[key])
         self.assertIsNone(get_signal("BOTH_BROWS").extract(face,"BLENDSHAPE"))
         blends=(("browInnerUp",.4),("browOuterUpLeft",.8),("browOuterUpRight",.6),("browDownLeft",.2),("browDownRight",.1))
         face=replace(face,blendshapes=blends)
-        left=get_signal("LEFT_BROW")
+        both=get_signal("BOTH_BROWS")
         # Frame espejado: la ceja izquierda del usuario usa los blendshapes "Right".
-        self.assertAlmostEqual(left.extract(face,"BLENDSHAPE")[0],.45)
-        self.assertAlmostEqual(left.extract(face,"HYBRID")[0],(.3/.25+.45)/2)
-        self.assertEqual(left.extract(face,"GEOMETRIC"),(.3,))
+        self.assertAlmostEqual(both.extract(face,"BLENDSHAPE")[0],.45)
+        self.assertAlmostEqual(both.extract(face,"HYBRID")[0],(.3/.25+.45)/2)
+        self.assertEqual(both.extract(face,"GEOMETRIC"),(.3,.4))
 
     def test_invalid_samples_and_hysteresis_rejected(self):
         model=self.make_model()
@@ -155,29 +157,33 @@ class AdaptiveCalibrationTests(unittest.TestCase):
         self.assertIsNone(arb.update(False,True,False,1.2))
         self.assertEqual(arb.update(False,True,False,1.4),"right")
 
-    def test_detector_emits_only_resolved_brow_event(self):
-        cases=((0,None,"SCROLL_UP"),(None,0,"SCROLL_DOWN"),(0,0,"BOTH_BROWS"),
-               (0,.08,"BOTH_BROWS"),(.12,0,"BOTH_BROWS"),(0,.3,"SCROLL_UP"),(.3,0,"SCROLL_DOWN"))
-        for left_start,right_start,expected in cases:
-            with self.subTest(left=left_start,right=right_start):
+    def test_detector_emits_lip_scroll_and_both_brows_priority(self):
+        cases=((0,None,False,"SCROLL_UP"),(None,0,False,"SCROLL_DOWN"),
+               (None,None,True,"BOTH_BROWS"),(0,None,True,"BOTH_BROWS"))
+        for left_start,right_start,both_active,expected in cases:
+            with self.subTest(left=left_start,right=right_start,both=both_active):
                 now=[1.]
                 engine=GestureEngine(None,calibration=calibration(),clock=lambda:now[0])
                 emitted=[]
-                for frame in range(30):
+                for frame in range(20):
                     elapsed=frame*.02
                     timestamp=1000+frame*20
                     now[0]=timestamp/1000
                     face=FaceData(True,timestamp_ms=timestamp,eye_left_ratio=.1,eye_right_ratio=.12,
-                                  brow_left_lift=.4 if left_start is not None and elapsed>=left_start else .2,
-                                  brow_right_lift=.5 if right_start is not None and elapsed>=right_start else .22,mouth_open=.01)
+                                  brow_left_lift=.4 if both_active else .2,
+                                  brow_right_lift=.5 if both_active else .22,
+                                  mouth_left=.25 if left_start is not None and elapsed>=left_start else .01,
+                                  mouth_right=.25 if right_start is not None and elapsed>=right_start else .01,
+                                  mouth_open=.01)
                     emitted += [e.type for e in engine.update(face)]
                 self.assertEqual(emitted,[expected])
 
     def adaptive_profile(self):
         profile=calibration()
-        neutral=FaceData(True,eye_left_ratio=.1,eye_right_ratio=.12,brow_left_lift=.2,brow_right_lift=.22,mouth_open=.01)
+        neutral=FaceData(True,eye_left_ratio=.1,eye_right_ratio=.12,brow_left_lift=.2,brow_right_lift=.22,
+                         mouth_left=.01,mouth_right=.01,mouth_open=.01)
         variants={"LEFT_WINK":{"eye_left_ratio":.02},"RIGHT_WINK":{"eye_right_ratio":.03},
-                  "LEFT_BROW":{"brow_left_lift":.4},"RIGHT_BROW":{"brow_right_lift":.5},
+                  "MOUTH_LEFT":{"mouth_left":.25},"MOUTH_RIGHT":{"mouth_right":.25},
                   "MOUTH_OPEN":{"mouth_open":.3},"BOTH_BROWS":{"brow_left_lift":.3,"brow_right_lift":.33}}
         records={}
         for key,spec in GESTURE_SIGNALS.items():
@@ -210,7 +216,7 @@ class AdaptiveCalibrationTests(unittest.TestCase):
         profile["gesture_calibrations"]["LEFT_WINK"]["source"]="BLENDSHAPE"
         with self.assertRaises(ValueError): validate_profile(profile)
         profile=self.adaptive_profile()
-        profile["gesture_calibrations"]["LEFT_BROW"]["release_threshold"]["left"]=.9
+        profile["gesture_calibrations"]["MOUTH_LEFT"]["release_threshold"]["mouth_left"]=.9
         with self.assertRaises(ValueError): validate_profile(profile)
 
 

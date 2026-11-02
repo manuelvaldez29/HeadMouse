@@ -82,10 +82,12 @@ class SafetyTests(unittest.TestCase):
                                            eye_right_ratio=values.get("eye_right_ratio", .12),
                                            brow_left_lift=values.get("brow_left_lift", .2),
                                            brow_right_lift=values.get("brow_right_lift", .22),
+                                           mouth_left=values.get("mouth_left", .01),
+                                           mouth_right=values.get("mouth_right", .01),
                                            mouth_open=values.get("mouth_open", .01)))
         feed(2.2)
         for values in (dict(eye_left_ratio=.02), dict(eye_right_ratio=.03),
-                       dict(brow_left_lift=.4), dict(brow_right_lift=.5),
+                       dict(mouth_left=.25), dict(mouth_right=.25),
                        dict(mouth_open=.3), dict(brow_left_lift=.4, brow_right_lift=.5)):
             feed(.3, **values)
             feed(2.2)

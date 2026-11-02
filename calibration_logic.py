@@ -10,6 +10,8 @@ CHANNELS = {
     "blink_right": ("eye_right", "eye_right_min", -1),
     "brow_left": ("brow_left", "brow_left_max", 1),
     "brow_right": ("brow_right", "brow_right_max", 1),
+    "mouth_left": ("mouth_left", "mouth_left_max", 1),
+    "mouth_right": ("mouth_right", "mouth_right_max", 1),
     "mouth_open": ("mouth", "mouth_max", 1),
 }
 
@@ -20,6 +22,8 @@ class Samples:
     eye_right: list = field(default_factory=list)
     brow_left: list = field(default_factory=list)
     brow_right: list = field(default_factory=list)
+    mouth_left: list = field(default_factory=list)
+    mouth_right: list = field(default_factory=list)
     mouth: list = field(default_factory=list)
     nose_x: list = field(default_factory=list)
     nose_y: list = field(default_factory=list)
@@ -30,9 +34,10 @@ class Samples:
             return False
         self._last_timestamp = fd.timestamp_ms
         for name, value in zip(("eye_left", "eye_right", "brow_left", "brow_right",
-                                "mouth", "nose_x", "nose_y"),
+                                "mouth_left", "mouth_right", "mouth", "nose_x", "nose_y"),
                                (fd.eye_left_ratio, fd.eye_right_ratio, fd.brow_left_lift,
-                                fd.brow_right_lift, fd.mouth_open, fd.nose_x, fd.nose_y)):
+                                fd.brow_right_lift, fd.mouth_left, fd.mouth_right,
+                                fd.mouth_open, fd.nose_x, fd.nose_y)):
             getattr(self, name).append(value)
         return True
 
@@ -77,7 +82,7 @@ def validate_calibration(data, config=None):
             mad = data.get("neutral_variability", {}).get(channel, 0)
             if not all(type(v) in (int, float) and math.isfinite(v) for v in (n, e, t, mad)):
                 raise ValueError("valor no finito")
-            if mad < 0 or (direction < 0 or channel == "mouth") and min(n, e) < 0:
+            if mad < 0 or (direction < 0 or channel.startswith("mouth")) and min(n, e) < 0:
                 raise ValueError("ratio o variabilidad negativos")
             margin = max(config.min_separation, config.noise_multiplier * 1.4826 * mad)
             if direction * (t - n) <= margin or direction * (e - t) <= 0:
@@ -89,11 +94,11 @@ def validate_calibration(data, config=None):
 
 def build_calibration(user_id, phases, config=None):
     config = config or CalibrationConfig()
-    required = ("neutral", "wink_left", "wink_right", "brow_left", "brow_right", "mouth")
+    required = ("neutral", "wink_left", "wink_right", "mouth_left", "mouth_right", "both_brows", "mouth")
     if any(name not in phases or len(phases[name].eye_left) < config.min_samples for name in required):
         raise ValueError("Muestras insuficientes: repetir las fases")
     neutral = phases["neutral"]
-    channels = ("eye_left", "eye_right", "brow_left", "brow_right", "mouth", "nose_x", "nose_y")
+    channels = ("eye_left", "eye_right", "brow_left", "brow_right", "mouth_left", "mouth_right", "mouth", "nose_x", "nose_y")
     data = dict(user_id=user_id, calibrated_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
                 neutral_nose_x=neutral.median("nose_x"), neutral_nose_y=neutral.median("nose_y"),
                 neutral={key: neutral.median(key) for key in channels},
@@ -102,8 +107,10 @@ def build_calibration(user_id, phases, config=None):
                 gesture_extremes={
                     "eye_left_min": phases["wink_left"].percentile("eye_left", 10),
                     "eye_right_min": phases["wink_right"].percentile("eye_right", 10),
-                    "brow_left_max": phases["brow_left"].percentile("brow_left", 90),
-                    "brow_right_max": phases["brow_right"].percentile("brow_right", 90),
+                    "brow_left_max": phases["both_brows"].percentile("brow_left", 90),
+                    "brow_right_max": phases["both_brows"].percentile("brow_right", 90),
+                    "mouth_left_max": phases["mouth_left"].percentile("mouth_left", 90),
+                    "mouth_right_max": phases["mouth_right"].percentile("mouth_right", 90),
                     "mouth_max": phases["mouth"].percentile("mouth", 90)})
     data["thresholds"] = compute_thresholds(data, config)
     errors = validate_calibration(data, config)
@@ -119,6 +126,8 @@ def validate_phase_immediate(neutral: Samples, phase_id: str, phase_samples: Sam
     mapping = {
         "wink_left": ("eye_left", "eye_left_min", "blink_left"),
         "wink_right": ("eye_right", "eye_right_min", "blink_right"),
+        "mouth_left": ("mouth_left", "mouth_left_max", "mouth_left"),
+        "mouth_right": ("mouth_right", "mouth_right_max", "mouth_right"),
         "brow_left": ("brow_left", "brow_left_max", "brow_left"),
         "brow_right": ("brow_right", "brow_right_max", "brow_right"),
         "mouth": ("mouth", "mouth_max", "mouth_open")
@@ -138,7 +147,7 @@ def validate_phase_immediate(neutral: Samples, phase_id: str, phase_samples: Sam
     try:
         if not all(type(v) in (int, float) and math.isfinite(v) for v in (n, e, t, mad)):
             raise ValueError("valor no finito")
-        if mad < 0 or (direction < 0 or channel == "mouth") and min(n, e) < 0:
+        if mad < 0 or (direction < 0 or channel.startswith("mouth")) and min(n, e) < 0:
             raise ValueError("ratio o variabilidad negativos")
         margin = max(config.min_separation, config.noise_multiplier * 1.4826 * mad)
         if direction * (t - n) <= margin or direction * (e - t) <= 0:

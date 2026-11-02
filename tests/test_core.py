@@ -16,9 +16,11 @@ from profiles import ProfileStore
 
 def calibration():
     data = dict(user_id="julian", neutral_nose_x=0.5, neutral_nose_y=0.5,
-                neutral=dict(eye_left=.1, eye_right=.12, brow_left=.2, brow_right=.22, mouth=.01),
+                neutral=dict(eye_left=.1, eye_right=.12, brow_left=.2, brow_right=.22,
+                             mouth_left=.01, mouth_right=.01, mouth=.01),
                 gesture_extremes=dict(eye_left_min=.02, eye_right_min=.03,
-                                      brow_left_max=.4, brow_right_max=.5, mouth_max=.3))
+                                      brow_left_max=.4, brow_right_max=.5,
+                                      mouth_left_max=.25, mouth_right_max=.25, mouth_max=.3))
     data["thresholds"] = compute_thresholds(data)
     return data
 
@@ -123,14 +125,17 @@ class CoreTests(unittest.TestCase):
         phases = {}
         variants = {"neutral": {}, "wink_left": {"eye_left_ratio": .02},
                     "wink_right": {"eye_right_ratio": .03},
-                    "brow_left": {"brow_left_lift": .4},
-                    "brow_right": {"brow_right_lift": .5}, "mouth": {"mouth_open": .3}}
+                    "mouth_left": {"mouth_left": .25},
+                    "mouth_right": {"mouth_right": .25},
+                    "both_brows": {"brow_left_lift": .4, "brow_right_lift": .5},
+                    "mouth": {"mouth_open": .3}}
         for phase, values in variants.items():
             samples = Samples()
             for index in range(25):
                 face = replace(FaceData(True, timestamp_ms=1000 + index * 30,
                                         eye_left_ratio=.1, eye_right_ratio=.12,
-                                        brow_left_lift=.2, brow_right_lift=.22, mouth_open=.01), **values)
+                                        brow_left_lift=.2, brow_right_lift=.22,
+                                        mouth_left=.01, mouth_right=.01, mouth_open=.01), **values)
                 samples.add(face, now=face.timestamp_ms/1000)
             phases[phase] = samples
         result = build_calibration("julian", phases)
@@ -205,10 +210,55 @@ class CoreTests(unittest.TestCase):
 
     def test_both_brows_suppress_scroll(self):
         engine = self.make_gesture()
-        engine.update(FaceData(True, timestamp_ms=1000, brow_left_lift=.4, brow_right_lift=.4))
+        engine.update(FaceData(True, timestamp_ms=1000, brow_left_lift=.4, brow_right_lift=.4, mouth_left=.25))
         self.now = 1.2
-        events = engine.update(FaceData(True, timestamp_ms=1200, brow_left_lift=.4, brow_right_lift=.4))
+        events = engine.update(FaceData(True, timestamp_ms=1200, brow_left_lift=.4, brow_right_lift=.4, mouth_left=.25))
         self.assertEqual([e.type for e in events], ["BOTH_BROWS"])
+
+    def test_legacy_brow_profile_migrates_preserving_voice_and_settings(self):
+        from adaptive_calibration import GestureCalibration
+        with tempfile.TemporaryDirectory(dir=Path(__file__).resolve().parents[1]) as directory:
+            store = ProfileStore(directory)
+            legacy_bindings = {
+                "LEFT_WINK": "LEFT_CLICK", "RIGHT_WINK": "RIGHT_CLICK",
+                "LEFT_BROW": "SCROLL_UP", "RIGHT_BROW": "SCROLL_DOWN",
+                "BOTH_BROWS": "PAUSE", "MOUTH_OPEN": "OPEN_START_MENU",
+            }
+            records = {}
+            for gid, ch, d, brow, act, rel in (
+                ("LEFT_WINK", ("eye_left_ratio",), (-1,), False, {"eye_left_ratio": .05}, {"eye_left_ratio": .06}),
+                ("RIGHT_WINK", ("eye_right_ratio",), (-1,), False, {"eye_right_ratio": .05}, {"eye_right_ratio": .06}),
+                ("LEFT_BROW", ("left",), (1,), True, {"left": .28}, {"left": .24}),
+                ("RIGHT_BROW", ("right",), (1,), True, {"right": .28}, {"right": .24}),
+                ("MOUTH_OPEN", ("mouth_open",), (1,), False, {"mouth_open": .18}, {"mouth_open": .12}),
+                ("BOTH_BROWS", ("left", "right"), (1, 1), True, {"left": .25, "right": .25}, {"left": .22, "right": .22}),
+            ):
+                rec = GestureCalibration(gid, ch, d, "GEOMETRIC", enabled=True).to_record()
+                rec.update(quality_score=0.95, quality_label="BUENA", validation_state="passed",
+                           activation_threshold=act, release_threshold=rel)
+                records[gid] = rec
+            legacy_profile = dict(
+                schema_version=2, user_id="ivan", display_name="Iván",
+                status="calibrated", neutral_nose_x=0.5, neutral_nose_y=0.5,
+                thresholds=dict(blink_left=.05, blink_right=.05, brow_left=.28, brow_right=.28, mouth_open=.18),
+                gesture_calibrations=records,
+                validation={"passed": True},
+                settings={
+                    "voice": {"enabled": True, "model": "small"},
+                    "actions": {"bindings": legacy_bindings},
+                    "methods": {"nose": {"actions": {"bindings": dict(legacy_bindings)}}},
+                },
+            )
+            store.path("ivan").parent.mkdir(parents=True, exist_ok=True)
+            store.path("ivan").write_text(json.dumps(legacy_profile), encoding="utf-8")
+            loaded = store.load("ivan")
+            self.assertTrue(loaded["settings"]["voice"]["enabled"])
+            self.assertEqual(loaded["settings"]["actions"]["bindings"]["MOUTH_LEFT"], "SCROLL_UP")
+            self.assertEqual(loaded["settings"]["actions"]["bindings"]["MOUTH_RIGHT"], "SCROLL_DOWN")
+            self.assertNotIn("LEFT_BROW", loaded["gesture_calibrations"])
+            self.assertIn("MOUTH_LEFT", loaded["gesture_calibrations"])
+            self.assertIn("MOUTH_RIGHT", loaded["gesture_calibrations"])
+            self.assertFalse(loaded["validation"]["passed"])
 
     def test_control_mock_only(self):
         backend = Mock()

@@ -14,9 +14,10 @@ from gesture_signals import GESTURE_SIGNALS
 from profiles import validate_profile
 from test_core import calibration
 
-NEUTRAL=dict(eye_left_ratio=.1,eye_right_ratio=.12,brow_left_lift=.2,brow_right_lift=.22,mouth_open=.01)
+NEUTRAL=dict(eye_left_ratio=.1,eye_right_ratio=.12,brow_left_lift=.2,brow_right_lift=.22,
+             mouth_left=.01,mouth_right=.01,mouth_open=.01)
 ACTIVE={"LEFT_WINK":{"eye_left_ratio":.02},"RIGHT_WINK":{"eye_right_ratio":.03},
-        "LEFT_BROW":{"brow_left_lift":.4},"RIGHT_BROW":{"brow_right_lift":.5},
+        "MOUTH_LEFT":{"mouth_left":.25},"MOUTH_RIGHT":{"mouth_right":.25},
         "MOUTH_OPEN":{"mouth_open":.3},"BOTH_BROWS":{"brow_left_lift":.3,"brow_right_lift":.33}}
 
 
@@ -80,7 +81,7 @@ class AdaptiveSessionTests(unittest.TestCase):
         self.feed(s,2.2)
         result=s.result()
         self.assertTrue(result["validation"]["passed"])
-        self.assertEqual(result["gesture_calibrations"]["LEFT_BROW"]["validation_state"],"disabled")
+        self.assertEqual(result["gesture_calibrations"]["MOUTH_LEFT"]["validation_state"],"disabled")
 
     def test_retry_only_failed_gesture_preserves_others(self):
         s=self.session()
@@ -195,7 +196,7 @@ class AdaptiveSessionTests(unittest.TestCase):
         s.candidate=calibration()
         s.validate()
         with self.assertRaisesRegex(ValueError,"nueva calibración"):
-            s.repeat("LEFT_BROW")
+            s.repeat("MOUTH_LEFT")
         self.assertEqual(s.state,"validation")
 
     def test_single_available_wink_preserves_bilateral_blink_suppression(self):
@@ -216,6 +217,27 @@ class AdaptiveSessionTests(unittest.TestCase):
             events=[]
             for _ in range(10): events+=engine.update(self.face(neutral | {channel:.006}))
             self.assertEqual([e.type for e in events],[GESTURE_SIGNALS[available].event_type])
+
+    def test_validation_accepts_drifted_nose_for_both_brows_and_ignores_wink_cheek_pull(self):
+        s=self.session()
+        self.capture(s)
+        s.validate()
+        self.assertAlmostEqual(s.snapshot()["neutral_y"],.5)
+        for key in GESTURE_SIGNALS:
+            self.feed(s,2.2,{"nose_y":.57})
+            self.assertFalse(s.validator.neutral,key)
+            if key=="RIGHT_WINK":
+                # Primero cierra el ojo derecho; al apretar el guiño la mejilla tira del labio derecho.
+                self.feed(s,.1,ACTIVE["RIGHT_WINK"] | {"nose_y":.57})
+                self.feed(s,.45,ACTIVE["RIGHT_WINK"] | {"mouth_right":.25,"nose_y":.57})
+                self.feed(s,.15,{"mouth_right":.25,"nose_y":.57})
+            else:
+                # En BOTH_BROWS la nariz está fuera de dead_zone (0.57 vs 0.50): igual debe validarse.
+                self.feed(s,.35,ACTIVE[key] | {"nose_y":.57})
+            self.assertIsNone(s.validator.error,key)
+        self.feed(s,2.2,{"nose_y":.57})
+        self.assertEqual(s.state,"validated")
+        self.assertEqual(len(s.result()["validation"]["recognized"]),6)
 
 
 if __name__=="__main__": unittest.main()

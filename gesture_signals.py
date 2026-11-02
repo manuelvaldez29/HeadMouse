@@ -9,6 +9,8 @@ from dataclasses import dataclass
 SOURCES = ("GEOMETRIC", "BLENDSHAPE", "HYBRID", "GEOMETRIC_3D")
 BROW_BLENDSHAPES = ("browInnerUp", "browOuterUpLeft", "browOuterUpRight",
                     "browDownLeft", "browDownRight")
+MOUTH_BLENDSHAPES = ("mouthLeft", "mouthRight", "mouthPucker")
+KNOWN_BLENDSHAPES = BROW_BLENDSHAPES + MOUTH_BLENDSHAPES
 
 
 def extract_blendshapes(categories):
@@ -16,7 +18,7 @@ def extract_blendshapes(categories):
     values = {}
     for category in categories:
         name, score = getattr(category, "category_name", None), getattr(category, "score", None)
-        if name in BROW_BLENDSHAPES and isinstance(score, (int,float)) and not isinstance(score,bool) and math.isfinite(score) and 0 <= score <= 1:
+        if name in KNOWN_BLENDSHAPES and isinstance(score, (int,float)) and not isinstance(score,bool) and math.isfinite(score) and 0 <= score <= 1:
             values[name] = float(score)
     return tuple(sorted(values.items()))
 
@@ -75,10 +77,10 @@ GESTURE_SIGNALS = {
                       "LEFT_CLICK", ("eye_left_ratio",), (-1,), ("blink_left",)),
         GestureSignal("RIGHT_WINK", "wink_right", "Guiño derecho", "Guiñá el ojo derecho",
                       "RIGHT_CLICK", ("eye_right_ratio",), (-1,), ("blink_right",)),
-        GestureSignal("LEFT_BROW", "brow_left", "Ceja izquierda", "Levantá la ceja izquierda cómodamente",
-                      "SCROLL_UP", ("left",), (1,), ("brow_left",), True),
-        GestureSignal("RIGHT_BROW", "brow_right", "Ceja derecha", "Levantá la ceja derecha cómodamente",
-                      "SCROLL_DOWN", ("right",), (1,), ("brow_right",), True),
+        GestureSignal("MOUTH_LEFT", "mouth_left", "Labios a la izquierda", "Llevá los labios hacia tu izquierda",
+                      "SCROLL_UP", ("mouth_left",), (1,), ("mouth_left",)),
+        GestureSignal("MOUTH_RIGHT", "mouth_right", "Labios a la derecha", "Llevá los labios hacia tu derecha",
+                      "SCROLL_DOWN", ("mouth_right",), (1,), ("mouth_right",)),
         GestureSignal("MOUTH_OPEN", "mouth", "Boca", "Abrí la boca cómodamente",
                       "MOUTH_OPEN", ("mouth_open",), (1,), ("mouth_open",)),
         GestureSignal("BOTH_BROWS", "both_brows", "Ambas cejas", "Levantá ambas cejas cómodamente",

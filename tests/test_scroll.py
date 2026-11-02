@@ -50,22 +50,46 @@ class ScrollTests(unittest.TestCase):
         config = load_config(overrides={"gesture": settings}).gesture
         return GestureEngine(None, config=config, calibration=calibration(), clock=self.clock)
 
-    def test_held_brow_repeats_scroll_until_released(self):
+    def test_held_lips_repeat_scroll_until_released(self):
         engine = self.engine()
-        # 2 s sostenida: primer scroll a ~200 ms, repeticiones cada 250 ms desde ~700 ms.
-        held = self.scrolls(engine, 40, brow_left_lift=.4)
+        # 2 s sostenidos: primer scroll a ~150 ms, repeticiones cada 250 ms tras 500 ms.
+        held = self.scrolls(engine, 40, mouth_left=.25)
         self.assertEqual(set(held), {"SCROLL_UP"})
         self.assertGreaterEqual(len(held), 6)
         self.assertLessEqual(len(held), 8)
         self.assertEqual(self.scrolls(engine, 20), [])
-        self.assertEqual(self.scrolls(engine, 6, brow_left_lift=.4), ["SCROLL_UP"])  # elevación breve: uno
+        self.assertEqual(self.scrolls(engine, 6, mouth_left=.25), ["SCROLL_UP"])  # gesto breve: uno
 
-    def test_repeat_can_be_disabled_and_stops_when_head_moves(self):
-        self.assertEqual(self.scrolls(self.engine(brow_repeat_ms=0), 40, brow_right_lift=.5), ["SCROLL_DOWN"])
+    def test_repeat_can_be_disabled_and_works_even_if_nose_shifts_slightly(self):
+        self.assertEqual(self.scrolls(self.engine(brow_repeat_ms=0), 40, mouth_right=.25), ["SCROLL_DOWN"])
         engine = self.engine()
-        first = self.scrolls(engine, 20, brow_right_lift=.5)
-        self.assertGreaterEqual(len(first), 2)
-        self.assertEqual(self.scrolls(engine, 20, brow_right_lift=.5, nose_y=.42), [])
+        # Al mover los labios de costado la nariz suele acompañarlos un poco: el scroll sigue activo.
+        shifted = self.scrolls(engine, 20, mouth_right=.25, nose_x=.45)
+        self.assertGreaterEqual(len(shifted), 2)
+        self.assertEqual(set(shifted), {"SCROLL_DOWN"})
+
+    def test_lateral_lips_suppress_cheek_squint_click_and_mouth_open(self):
+        engine = self.engine()
+        # Llevar labios a la izquierda sube el pómulo izquierdo (cierra ojo izq.) y separa labios levemente.
+        events = self.scrolls(engine, 12, mouth_left=.25, eye_left_ratio=.02, mouth_open=.25)
+        self.assertEqual(events, ["SCROLL_UP"])
+        # Si al soltar los labios el párpado tarda 150 ms más en abrirse, tampoco dispara un click fantasma.
+        lingering = self.scrolls(engine, 3, mouth_left=.01, eye_left_ratio=.02)
+        self.assertEqual(lingering, [])
+        # Una vez que el ojo vuelve a abrirse, el próximo guiño intencional funciona normal.
+        self.scrolls(engine, 5)
+        self.assertEqual(self.scrolls(engine, 4, eye_left_ratio=.02), ["LEFT_CLICK"])
+
+    def test_wink_episode_suppresses_secondary_cheek_lip_pull(self):
+        engine = self.engine()
+        # Al guiñar fuerte el ojo derecho, primero cierra el párpado y luego el pómulo tira del labio derecho.
+        events = self.scrolls(engine, 2, eye_right_ratio=.02)
+        events += self.scrolls(engine, 8, eye_right_ratio=.02, mouth_right=.25)
+        # Al abrir el ojo, la mejilla tarda unos frames más en relajarse: tampoco dispara scroll fantasma.
+        events += self.scrolls(engine, 4, mouth_right=.25)
+        self.assertEqual(events, ["RIGHT_CLICK"])
+        self.scrolls(engine, 6)
+        self.assertEqual(self.scrolls(engine, 6, mouth_right=.25), ["SCROLL_DOWN"])
 
     def test_both_brows_never_repeat_pause(self):
         engine = self.engine()

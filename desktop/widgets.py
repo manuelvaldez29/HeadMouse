@@ -77,9 +77,13 @@ class CameraPreview(QWidget):
         if settings["ui"]["show_overlay"]:
             profile=s.get("profile") or {}
             diagnostic=s.get("diagnostic") or {}
-            # El neutral vigente puede venir del recentrado automático.
-            nx=diagnostic.get("neutral_x",profile.get("neutral_nose_x",.5))
-            ny=diagnostic.get("neutral_y",profile.get("neutral_nose_y",.5))
+            wizard=s.get("wizard") or {}
+            # En calibración mostrar el centro de la propia sesión; fuera de ella, el vigente.
+            if s.get("state")=="CALIBRATING" and wizard.get("neutral_x") is not None and wizard.get("neutral_y") is not None:
+                nx,ny=wizard["neutral_x"],wizard["neutral_y"]
+            else:
+                nx=diagnostic.get("neutral_x",profile.get("neutral_nose_x",.5))
+                ny=diagnostic.get("neutral_y",profile.get("neutral_nose_y",.5))
             dz=settings["gesture"]["dead_zone"]
             p.setPen(QPen(QColor("#ffd477"),2))
             p.setBrush(Qt.BrushStyle.NoBrush)
@@ -146,7 +150,7 @@ class CalibrationMeter(QWidget):
                 p.setPen(Qt.PenStyle.NoPen)
                 p.drawEllipse(QPointF(xpos(value),y),6,6)
             p.setPen(QColor("#eef3fc"))
-            side={"left":"Izquierda", "right":"Derecha"}.get(row["channel"],"Señal")
+            side={"left":"Izquierda", "right":"Derecha", "mouth_left":"Labios izq.", "mouth_right":"Labios der."}.get(row["channel"],"Señal")
             text=f"{side} · Valor actual: {value:.4f}" if value is not None else f"{side} · Esperando señal"
             if row.get("activation") is None: text+=" · Falta una captura válida"
             elided=p.fontMetrics().elidedText(text,Qt.TextElideMode.ElideRight,max(40,self.width()-24))

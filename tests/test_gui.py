@@ -164,16 +164,16 @@ class GUITests(unittest.TestCase):
     def test_optional_gestures_and_signal_selection_reach_worker(self):
         self.select_calibrated()
         self.window.refresh()
-        self.window.calibration_enabled["LEFT_BROW"].setChecked(False)
+        self.window.calibration_enabled["MOUTH_LEFT"].setChecked(False)
         self.window.calibration_source.setCurrentIndex(self.window.calibration_source.findData("HYBRID"))
         self.window.start_calibration()
         self.wait(lambda:self.bridge.snapshot().get("state")=="CALIBRATING")
         wizard=self.bridge.snapshot()["wizard"]
-        self.assertFalse(wizard["enabled"]["LEFT_BROW"])
+        self.assertFalse(wizard["enabled"]["MOUTH_LEFT"])
         self.assertEqual(self.controller.wizard.source,"HYBRID")
         self.window.refresh()
-        self.window.calibration_enabled["RIGHT_BROW"].setChecked(False)
-        self.wait(lambda:not self.bridge.snapshot()["wizard"]["enabled"]["RIGHT_BROW"])
+        self.window.calibration_enabled["MOUTH_RIGHT"].setChecked(False)
+        self.wait(lambda:not self.bridge.snapshot()["wizard"]["enabled"]["MOUTH_RIGHT"])
         self.backend_factory.assert_not_called()
 
 

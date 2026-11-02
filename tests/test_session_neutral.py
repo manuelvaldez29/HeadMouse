@@ -15,7 +15,7 @@ from gesture_signals import GESTURE_SIGNALS
 from test_adaptive_session import NEUTRAL
 from test_core import calibration
 
-REST, RAISED = .195, .23
+REST, RAISED = .015, .15
 
 
 class SessionNeutralTests(unittest.TestCase):
@@ -29,101 +29,99 @@ class SessionNeutralTests(unittest.TestCase):
 
     def face(self, **values):
         self.ms += 50
-        return FaceData(True, timestamp_ms=self.ms, **(NEUTRAL | dict(brow_left_lift=REST) | values))
+        return FaceData(True, timestamp_ms=self.ms, **(NEUTRAL | dict(mouth_left=REST) | values))
 
     def calibrate(self, drifted_rest):
-        """Ceja izquierda primero; durante los neutrales de la boca la ceja reposa más alta."""
+        """Labios izq. primero; durante los neutrales de boca abierta el reposo lateral sube."""
         s = CalibrationSession({"user_id": "drift"}, self.config, self.clock,
-                               {key: key in ("LEFT_BROW", "MOUTH_OPEN") for key in GESTURE_SIGNALS})
+                               {key: key in ("MOUTH_LEFT", "MOUTH_OPEN") for key in GESTURE_SIGNALS})
         s.start()
         for frame in range(3000):
-            if s.state in ("measured", "error") or s.gesture_id == "LEFT_BROW" and s.models["LEFT_BROW"].retries:
+            if s.state in ("measured", "error") or s.gesture_id == "MOUTH_LEFT" and s.models["MOUTH_LEFT"].retries:
                 return s
             values = {}
             if s.gesture_id == "MOUTH_OPEN":
-                values["brow_left_lift"] = drifted_rest
+                values["mouth_left"] = drifted_rest
             if s.stage == "active":
                 # Gesto breve con reacción y liberación, como en la prueba física.
                 phase = len(s._rows) % 30
                 if 3 <= phase < 15:
-                    values |= {"brow_left_lift": RAISED} if s.gesture_id == "LEFT_BROW" else {"mouth_open": .3}
+                    values |= {"mouth_left": RAISED} if s.gesture_id == "MOUTH_LEFT" else {"mouth_open": .3}
             s.update(self.face(**values))
         self.fail("La calibración no terminó")
 
     def test_moderate_drift_raises_activation_above_observed_rest(self):
-        s = self.calibrate(drifted_rest=.215)
+        s = self.calibrate(drifted_rest=.06)
         self.assertEqual(s.state, "measured", s.snapshot())
-        record = s.candidate["gesture_calibrations"]["LEFT_BROW"]
-        self.assertGreater(record["release_threshold"]["left"], .215)
-        self.assertLess(record["activation_threshold"]["left"], RAISED)
-        self.assertGreaterEqual(record["session_neutral"]["left"], .215)
+        record = s.candidate["gesture_calibrations"]["MOUTH_LEFT"]
+        self.assertGreater(record["release_threshold"]["mouth_left"], .06)
+        self.assertLess(record["activation_threshold"]["mouth_left"], RAISED)
+        self.assertGreaterEqual(record["session_neutral"]["mouth_left"], .06)
         # Con la cara relajada en el reposo desplazado, la validación avanza.
         s.validate()
-        for _ in range(45): s.update(self.face(brow_left_lift=.215))
+        for _ in range(45): s.update(self.face(mouth_left=.06))
         self.assertIsNone(s.validator.error)
         self.assertFalse(s.validator.neutral)
         self.assertEqual(s.validator.blocking, [])
 
     def test_severe_drift_asks_to_repeat_only_that_gesture(self):
-        s = self.calibrate(drifted_rest=.229)
+        s = self.calibrate(drifted_rest=.149)
         self.assertNotEqual(s.state, "error", s.snapshot())
-        self.assertEqual(s.gesture_id, "LEFT_BROW")
-        self.assertEqual(s.models["LEFT_BROW"].retries, 1)
+        self.assertEqual(s.gesture_id, "MOUTH_LEFT")
+        self.assertEqual(s.models["MOUTH_LEFT"].retries, 1)
         self.assertEqual(len(s.models["MOUTH_OPEN"].active_samples), 3)
-        self.assertIn("Ceja izquierda", s.capture_message)
+        self.assertIn("Labios a la izquierda", s.capture_message)
         self.assertIn("reposo", s.capture_message)
         failed = s.telemetry[-1]
-        self.assertEqual((failed["gesture_id"], failed["quality_label"]), ("LEFT_BROW", "DÉBIL"))
+        self.assertEqual((failed["gesture_id"], failed["quality_label"]), ("MOUTH_LEFT", "DÉBIL"))
 
     def test_validation_waits_and_names_gesture_that_does_not_release(self):
-        s = self.calibrate(drifted_rest=.215)
-        record = s.candidate["gesture_calibrations"]["LEFT_BROW"]
-        between = (record["release_threshold"]["left"] + record["activation_threshold"]["left"]) / 2
+        s = self.calibrate(drifted_rest=.06)
+        record = s.candidate["gesture_calibrations"]["MOUTH_LEFT"]
+        between = (record["release_threshold"]["mouth_left"] + record["activation_threshold"]["mouth_left"]) / 2
         s.validate()
         v = s.validator
-        for _ in range(100): s.update(self.face(brow_left_lift=between))  # 5 s sin acción
+        for _ in range(100): s.update(self.face(mouth_left=between))  # 5 s sin acción
         self.assertIsNone(v.error)
         self.assertTrue(v.neutral)
-        self.assertEqual(v.blocking, ["LEFT_BROW"])
-        self.assertIn("Ceja izquierda", s.snapshot()["instruction"])
-        for _ in range(round(v.timeout_s / .05)): s.update(self.face(brow_left_lift=between))
-        self.assertIn("Ceja izquierda", v.error)
+        self.assertEqual(v.blocking, ["MOUTH_LEFT"])
+        self.assertIn("Labios a la izquierda", s.snapshot()["instruction"])
+        for _ in range(round(v.timeout_s / .05)): s.update(self.face(mouth_left=between))
+        self.assertIn("Labios a la izquierda", v.error)
         self.assertIn("Tiempo agotado", v.error)
 
-    def test_brow_lingering_after_both_brows_is_not_scroll(self):
+    def test_both_brows_suppresses_concurrent_scroll_until_released(self):
         engine = GestureEngine(None, calibration=calibration(), clock=self.clock)
         events = []
-        for _ in range(12): events += engine.update(self.face(brow_left_lift=.4, brow_right_lift=.5))
-        for _ in range(12):
-            events += engine.update(self.face(brow_left_lift=.4, brow_right_lift=.22))
-            self.assertFalse(engine.last_active["LEFT_BROW"])
+        for _ in range(12): events += engine.update(self.face(brow_left_lift=.4, brow_right_lift=.5, mouth_left=.25))
+        self.assertFalse(engine.last_active["MOUTH_LEFT"])
         self.assertEqual([e.type for e in events if e.type != "CURSOR_MOVE"], ["BOTH_BROWS"])
-        for _ in range(25): engine.update(self.face(brow_left_lift=.2, brow_right_lift=.22))
+        for _ in range(25): engine.update(self.face(brow_left_lift=.2, brow_right_lift=.22, mouth_left=.01))
         events = []
-        for _ in range(12): events += engine.update(self.face(brow_left_lift=.4, brow_right_lift=.22))
+        for _ in range(6): events += engine.update(self.face(mouth_left=.25))
         self.assertEqual([e.type for e in events if e.type != "CURSOR_MOVE"], ["SCROLL_UP"])
 
     def test_wrong_action_during_neutral_still_fails_with_its_name(self):
         engine = GestureEngine(None, calibration=calibration(), clock=self.clock)
         v = CalibrationValidation(engine, clock=self.clock)
-        for _ in range(15): v.update(self.face(brow_left_lift=.2, mouth_open=.3))
+        for _ in range(15): v.update(self.face(mouth_left=.01, mouth_open=.3))
         self.assertIn("Boca", v.error)
 
 
     def test_relaxed_mouth_later_in_session_is_accepted_as_neutral(self):
         """2026-10-11: boca 0.0066 en el neutral inicial y hasta 0.015 relajada después."""
         s = CalibrationSession({"user_id": "mouth"}, self.config, self.clock,
-                               {key: key in ("LEFT_BROW", "MOUTH_OPEN") for key in GESTURE_SIGNALS})
+                               {key: key in ("MOUTH_LEFT", "MOUTH_OPEN") for key in GESTURE_SIGNALS})
         s.start()
         for frame in range(3000):
             if s.state in ("measured", "error"): break
             values = dict(mouth_open=.0066)
-            if s.gesture_id == "LEFT_BROW":
+            if s.gesture_id == "MOUTH_LEFT":
                 values["mouth_open"] = .015 if frame % 2 else .0066  # labios que se separan solos
             if s.gesture_id == "MOUTH_OPEN":
                 values["mouth_open"] = .014
             if s.stage == "active" and 3 <= len(s._rows) % 30 < 15:
-                values |= {"brow_left_lift": RAISED} if s.gesture_id == "LEFT_BROW" else {"mouth_open": .2}
+                values |= {"mouth_left": RAISED} if s.gesture_id == "MOUTH_LEFT" else {"mouth_open": .2}
             s.update(self.face(**values))
         self.assertEqual(s.state, "measured", s.snapshot())
         record = s.candidate["gesture_calibrations"]["MOUTH_OPEN"]
@@ -173,9 +171,11 @@ class BrowMotionGateTests(unittest.TestCase):
         still = self.run_engine(engine, 20, brow_left_lift=.4, brow_right_lift=.5)
         self.assertEqual(still, ["BOTH_BROWS"])
 
-    def test_gate_blocks_scroll_but_not_clicks_or_mouth(self):
+    def test_gate_blocks_both_brows_but_not_clicks_mouth_or_lip_scroll(self):
         engine = self.engine()
-        self.assertEqual(self.run_engine(engine, 12, nose_y=.42, brow_left_lift=.4), [])
+        self.assertEqual(self.run_engine(engine, 12, nose_y=.42, brow_left_lift=.4, brow_right_lift=.5), [])
+        self.assertEqual(self.run_engine(engine, 6, nose_y=.42, mouth_left=.25), ["SCROLL_UP"])
+        self.run_engine(engine, 20, nose_y=.42)
         self.assertEqual(self.run_engine(engine, 12, nose_y=.42, eye_left_ratio=.02), ["LEFT_CLICK"])
         self.run_engine(engine, 20, nose_y=.42)
         self.assertEqual(self.run_engine(engine, 12, nose_y=.42, mouth_open=.3), ["MOUTH_OPEN"])

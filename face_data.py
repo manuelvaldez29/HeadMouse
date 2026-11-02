@@ -14,6 +14,8 @@ class FaceData:
     brow_left_lift: float = 0.0
     brow_right_lift: float = 0.0
     mouth_open: float = 0.0
+    mouth_left: float = 0.0
+    mouth_right: float = 0.0
     face_scale: float = 1.0
     timestamp_ms: int = 0
     detected_at: float = 0.0  # monotonic: final de extracción
@@ -54,7 +56,8 @@ class FaceData:
     def valid(self):
         values = (self.nose_x, self.nose_y, self.eye_left_ratio,
                   self.eye_right_ratio, self.brow_left_lift, self.brow_right_lift,
-                  self.mouth_open, self.face_scale, self.timestamp_ms,
+                  self.mouth_open, self.mouth_left, self.mouth_right,
+                  self.face_scale, self.timestamp_ms,
                   self.detected_at, self.processing_ms)
         optional = ((self.brow_left_3d, 10), (self.brow_right_3d, 10),
                     (self.head_pitch, 180), (self.head_yaw, 180), (self.head_roll, 180))
@@ -67,7 +70,9 @@ class FaceData:
                 and 0 <= self.nose_x <= 1 and 0 <= self.nose_y <= 1
                 and 0 <= self.eye_left_ratio <= 10 and 0 <= self.eye_right_ratio <= 10
                 and abs(self.brow_left_lift) <= 10 and abs(self.brow_right_lift) <= 10
-                and 0 <= self.mouth_open <= 10 and 1e-6 < self.face_scale <= 1
+                and 0 <= self.mouth_open <= 10
+                and 0 <= self.mouth_left <= 10 and 0 <= self.mouth_right <= 10
+                and 1e-6 < self.face_scale <= 1
                 and isinstance(self.timestamp_ms, int) and self.timestamp_ms > 0
                 and self.detected_at >= 0 and self.processing_ms >= 0)
 

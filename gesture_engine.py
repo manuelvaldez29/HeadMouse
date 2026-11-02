@@ -11,8 +11,8 @@ Responsabilidad:
         CURSOR_MOVE  → movimiento de cabeza (nariz como joystick)
         LEFT_CLICK   → guiño ojo izquierdo
         RIGHT_CLICK  → guiño ojo derecho
-        SCROLL_UP    → ceja izquierda levantada
-        SCROLL_DOWN  → ceja derecha levantada
+        SCROLL_UP    → labios hacia la izquierda
+        SCROLL_DOWN  → labios hacia la derecha
         BOTH_BROWS   → ambas cejas levantadas (gesto combinado)
         MOUTH_OPEN   → boca abierta (para combinar con otros gestos)
 
@@ -219,6 +219,9 @@ class GestureEngine:
         self._brow_arbiter = BrowArbiter(self.config.brow_decision_ms)
         self._brow_pending = {}
         self._brow_repeat = {}  # detector -> [primer evento, último evento] en ms
+        self._mouth_tainted = {"LEFT_WINK": False, "RIGHT_WINK": False, "MOUTH_OPEN": False}
+        self._wink_tainted = {"MOUTH_LEFT": False, "MOUTH_RIGHT": False}
+        self._wink_owning = False
         self.config.neutral_x = calibration.get("neutral_nose_x", self.config.neutral_x)
         self.config.neutral_y = calibration.get("neutral_nose_y", self.config.neutral_y)
 
@@ -243,8 +246,8 @@ class GestureEngine:
         self._detectors = {
             "blink_left":  SingleGestureDetector(EV_LEFT_CLICK,  c.blink_hold_ms,     c.blink_cooldown_ms),
             "blink_right": SingleGestureDetector(EV_RIGHT_CLICK, c.blink_hold_ms,     c.blink_cooldown_ms),
-            "brow_left":   SingleGestureDetector(EV_SCROLL_UP,   c.brow_hold_ms,      c.brow_cooldown_ms),
-            "brow_right":  SingleGestureDetector(EV_SCROLL_DOWN, c.brow_hold_ms,      c.brow_cooldown_ms),
+            "mouth_left":  SingleGestureDetector(EV_SCROLL_UP,   c.brow_hold_ms,      c.brow_cooldown_ms),
+            "mouth_right": SingleGestureDetector(EV_SCROLL_DOWN, c.brow_hold_ms,      c.brow_cooldown_ms),
             "mouth_open":  SingleGestureDetector(EV_MOUTH_OPEN,  c.mouth_hold_ms,     c.mouth_cooldown_ms),
             "both_brows":  SingleGestureDetector(EV_BOTH_BROWS,  c.both_brows_hold_ms,c.both_brows_cooldown_ms),
         }
@@ -380,6 +383,9 @@ class GestureEngine:
         self._brow_arbiter.reset()
         self._brow_pending.clear()
         self._brow_repeat.clear()
+        self._mouth_tainted = {"LEFT_WINK": False, "RIGHT_WINK": False, "MOUTH_OPEN": False}
+        self._wink_tainted = {"MOUTH_LEFT": False, "MOUTH_RIGHT": False}
+        self._wink_owning = False
         self.last_active = {}
         self.last_signals = {}
 
@@ -389,7 +395,7 @@ class GestureEngine:
 
     _DETECTOR_FOR_GESTURE = {
         "LEFT_WINK": "blink_left", "RIGHT_WINK": "blink_right",
-        "LEFT_BROW": "brow_left", "RIGHT_BROW": "brow_right",
+        "MOUTH_LEFT": "mouth_left", "MOUTH_RIGHT": "mouth_right",
         "MOUTH_OPEN": "mouth_open", "BOTH_BROWS": "both_brows",
     }
 
@@ -637,50 +643,56 @@ class GestureEngine:
         self.last_signals = {key:spec.extract(fd,self._signal_sources[key]) for key,spec in GESTURE_SIGNALS.items()}
         physical = {key:self._gates[key].update(value) for key,value in self.last_signals.items()}
         active_gestures = {key:value and key in self.enabled_gestures for key,value in physical.items()}
-        if self.config.brow_motion_gate and not self.head_still:
+        if self.config.brow_motion_gate and not self.head_still and not self.both_brows_anywhere:
             # Con la cabeza desplazada (cursor en movimiento) la elevación de cejas
             # no es confiable: mirar hacia arriba la imita. Ojos y boca no cambian.
-            for key in ("LEFT_BROW", "RIGHT_BROW") + (() if self.both_brows_anywhere else ("BOTH_BROWS",)):
-                active_gestures[key] = False
-        self.last_active = active_gestures.copy()
+            active_gestures["BOTH_BROWS"] = False
         both_eyes = physical["LEFT_WINK"] and physical["RIGHT_WINK"]
-        left, right, both = (active_gestures[k] for k in ("LEFT_BROW","RIGHT_BROW","BOTH_BROWS"))
-        choice = self._brow_arbiter.update(left,right,both,self._clock())
+        both_mouth_sides = physical["MOUTH_LEFT"] and physical["MOUTH_RIGHT"]
+        for key in ("MOUTH_LEFT", "MOUTH_RIGHT"):
+            if not physical[key]:
+                self._wink_tainted[key] = False
+            elif self._wink_owning:
+                self._wink_tainted[key] = True
+        mouth_left_ok = physical["MOUTH_LEFT"] and not self._wink_tainted["MOUTH_LEFT"]
+        mouth_right_ok = physical["MOUTH_RIGHT"] and not self._wink_tainted["MOUTH_RIGHT"]
+        mouth_lateral = (mouth_left_ok or mouth_right_ok) and not both_mouth_sides
+        for key in ("LEFT_WINK", "RIGHT_WINK", "MOUTH_OPEN"):
+            if not physical[key]:
+                self._mouth_tainted[key] = False
+            elif mouth_lateral:
+                self._mouth_tainted[key] = True
+        self._wink_owning = (
+            (physical["LEFT_WINK"] and not self._mouth_tainted["LEFT_WINK"])
+            or (physical["RIGHT_WINK"] and not self._mouth_tainted["RIGHT_WINK"])
+        ) and not both_eyes and not mouth_lateral
+        both = active_gestures["BOTH_BROWS"]
         active = {
-            "blink_left": active_gestures["LEFT_WINK"] and not both_eyes,
-            "blink_right": active_gestures["RIGHT_WINK"] and not both_eyes,
-            "brow_left": left and choice in (None,"left") and not both,
-            "brow_right": right and choice in (None,"right") and not both,
-            "mouth_open": active_gestures["MOUTH_OPEN"],
-            "both_brows": both and choice == "both",
+            "blink_left": active_gestures["LEFT_WINK"] and not both_eyes and not mouth_lateral and not self._mouth_tainted["LEFT_WINK"],
+            "blink_right": active_gestures["RIGHT_WINK"] and not both_eyes and not mouth_lateral and not self._mouth_tainted["RIGHT_WINK"],
+            "mouth_left": active_gestures["MOUTH_LEFT"] and not both_mouth_sides and not both and not self._wink_tainted["MOUTH_LEFT"],
+            "mouth_right": active_gestures["MOUTH_RIGHT"] and not both_mouth_sides and not both and not self._wink_tainted["MOUTH_RIGHT"],
+            "mouth_open": active_gestures["MOUTH_OPEN"] and not mouth_lateral and not self._mouth_tainted["MOUTH_OPEN"],
+            "both_brows": both,
         }
-        # Actividad efectiva para validación: respeta supresión bilateral y arbitraje.
+        # Actividad efectiva para validación: respeta supresión bilateral y de mejilla.
         effective = {detector.event_type:active[key] for key,detector in self._detectors.items()}
         self.last_active = {key:effective[spec.event_type] for key,spec in GESTURE_SIGNALS.items()}
         events = []
         for gesture_id, is_active in active.items():
             ev = self._detectors[gesture_id].update(is_active)
-            if gesture_id in ("brow_left","brow_right"):
-                if not is_active:
-                    self._brow_pending.pop(gesture_id, None)
-                elif ev:
-                    self._brow_pending[gesture_id] = ev
-            elif ev:
+            if ev:
                 events.append(ev)
-        if choice in ("left","right"):
-            event = self._brow_pending.pop("brow_"+choice, None)
-            if event:
-                events.append(event)
-        self._repeat_scroll(events, active, choice)
+        self._repeat_scroll(events, active)
         return events
 
-    def _repeat_scroll(self, events, active, choice):
-        """Con la ceja sostenida, repetir el scroll como la repetición de teclado."""
+    def _repeat_scroll(self, events, active):
+        """Con los labios sostenidos hacia un lado, repetir el scroll como teclado."""
         now = self._clock() * 1000
         c = self.config
-        for key, side in (("brow_left", "left"), ("brow_right", "right")):
+        for key in ("mouth_left", "mouth_right"):
             event_type = self._detectors[key].event_type
-            if not active[key] or choice != side:
+            if not active[key]:
                 self._brow_repeat.pop(key, None)
             elif any(e.type == event_type for e in events):
                 self._brow_repeat[key] = [now, now]

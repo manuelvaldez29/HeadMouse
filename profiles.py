@@ -84,7 +84,7 @@ def validate_profile(data):
         return data
     thresholds = data.get("thresholds")
     if not isinstance(thresholds, dict) or set(thresholds) != set(DEFAULT_THRESHOLDS):
-        raise ValueError("El perfil necesita los cinco thresholds")
+        raise ValueError("El perfil necesita todos los thresholds requeridos")
     for name, value in thresholds.items():
         bounded(name, value, -10 if name.startswith("brow") else 0.000001, 10)
     for name in ("neutral_nose_x", "neutral_nose_y"):
@@ -143,6 +143,83 @@ def replace_with_retry(source, target, attempts=10, delay_s=.05):
             time.sleep(delay_s * (attempt + 1))
 
 
+LEGACY_THRESHOLD_KEYS = {"blink_left", "blink_right", "brow_left", "brow_right", "mouth_open"}
+
+
+def _migrate_bindings_dict(bindings):
+    if not isinstance(bindings, dict) or not ({"LEFT_BROW", "RIGHT_BROW"} & set(bindings)):
+        return False
+    left_act = bindings.pop("LEFT_BROW", "SCROLL_UP")
+    right_act = bindings.pop("RIGHT_BROW", "SCROLL_DOWN")
+    bindings.setdefault("MOUTH_LEFT", "SCROLL_UP" if left_act == "NONE" else left_act)
+    bindings.setdefault("MOUTH_RIGHT", "SCROLL_DOWN" if right_act == "NONE" else right_act)
+    return True
+
+
+def _migrate_gesture_block(block):
+    if not isinstance(block, dict):
+        return False
+    changed = False
+    thresholds = block.get("thresholds")
+    if isinstance(thresholds, dict) and set(thresholds) == LEGACY_THRESHOLD_KEYS:
+        thresholds["mouth_left"] = DEFAULT_THRESHOLDS["mouth_left"]
+        thresholds["mouth_right"] = DEFAULT_THRESHOLDS["mouth_right"]
+        changed = True
+    if isinstance(block.get("neutral"), dict) and isinstance(block.get("gesture_extremes"), dict):
+        if "mouth_left" not in block["neutral"]:
+            block["neutral"]["mouth_left"] = 0.0
+            block["neutral"]["mouth_right"] = 0.0
+            block["gesture_extremes"]["mouth_left_max"] = 0.18
+            block["gesture_extremes"]["mouth_right_max"] = 0.18
+            changed = True
+    records = block.get("gesture_calibrations")
+    if isinstance(records, dict) and ({"LEFT_BROW", "RIGHT_BROW"} & set(records)):
+        from adaptive_calibration import GestureCalibration
+        records.pop("LEFT_BROW", None)
+        records.pop("RIGHT_BROW", None)
+        for gid, ch in (("MOUTH_LEFT", "mouth_left"), ("MOUTH_RIGHT", "mouth_right")):
+            if gid not in records:
+                cal = GestureCalibration(gid, (ch,), (1,), "GEOMETRIC", enabled=True)
+                rec = cal.to_record()
+                act = DEFAULT_THRESHOLDS[ch]
+                rec.update(
+                    quality_score=0.85,
+                    quality_label="PROVISIONAL",
+                    validation_state="pending",
+                    activation_threshold={ch: act},
+                    release_threshold={ch: round(act * 0.7, 4)},
+                )
+                records[gid] = rec
+        changed = True
+    if changed and isinstance(block.get("validation"), dict):
+        block["validation"]["passed"] = False
+    elif changed and "thresholds" in block:
+        block["validation"] = {"passed": False}
+    return changed
+
+
+def migrate_legacy_lip_gestures(data):
+    """Migra en memoria perfiles anteriores (cejas individuales → labios izq/der)."""
+    if not isinstance(data, dict):
+        return data
+    changed = _migrate_gesture_block(data)
+    settings = data.get("settings")
+    if isinstance(settings, dict):
+        if isinstance(settings.get("actions"), dict):
+            changed = _migrate_bindings_dict(settings["actions"].get("bindings")) or changed
+        if isinstance(settings.get("methods"), dict):
+            for method_cfg in settings["methods"].values():
+                if isinstance(method_cfg, dict) and isinstance(method_cfg.get("actions"), dict):
+                    changed = _migrate_bindings_dict(method_cfg["actions"].get("bindings")) or changed
+    if isinstance(data.get("gesture_modes"), dict):
+        for mode_block in data["gesture_modes"].values():
+            changed = _migrate_gesture_block(mode_block) or changed
+    if changed:
+        logger.info("Perfil '%s' migrado de cejas individuales a gestos de labios; requiere recalibrar gestos.",
+                    data.get("user_id", "default"))
+    return data
+
+
 class ProfileStore:
     def __init__(self, directory=None):
         self.directory = Path(directory) if directory is not None else data_root() / "profiles"
@@ -155,7 +232,7 @@ class ProfileStore:
         if not path.exists() and legacy_path is not None:
             path = Path(legacy_path)
         with path.open(encoding="utf-8") as stream:
-            data = json.load(stream)
+            data = migrate_legacy_lip_gestures(json.load(stream))
         validate_profile(data)
         if data.get("user_id", "default") != user_id:
             raise ValueError(f"El perfil no corresponde al usuario {user_id}")
@@ -201,7 +278,7 @@ class ProfileStore:
 
 def load_legacy(path):
     with open(path, encoding="utf-8") as stream:
-        return validate_profile(json.load(stream))
+        return validate_profile(migrate_legacy_lip_gestures(json.load(stream)))
 
 
 GESTURE_PROFILE_KEYS = ("status", "thresholds", "neutral_nose_x", "neutral_nose_y", "neutral",

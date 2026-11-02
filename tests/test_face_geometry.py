@@ -17,6 +17,7 @@ BASE = {
     33: (-45, 0, 12), 133: (-15, 0, 4), 263: (45, 0, 12), 362: (15, 0, 4),
     6: (0, -2, -8), 2: (0, 45, -14), 1: (0, 35, -30),
     234: (-70, 20, 60), 454: (70, 20, 60),
+    61: (-24, 65, -8), 291: (24, 65, -8), 13: (0, 63, -12), 14: (0, 67, -12), 0: (0, 60, -13), 17: (0, 71, -11),
     **{i: (-50 + 9 * k, -22, -4) for k, i in enumerate(fg.BROW_LEFT)},
     **{i: (14 + 9 * k, -22, -4) for k, i in enumerate(fg.BROW_RIGHT)},
 }
@@ -34,12 +35,14 @@ def rotate(p, pitch=0, yaw=0, roll=0):
     return x, y, z
 
 
-def landmarks(raise_mm=0, distance_scale=1.0, **pose):
+def landmarks(raise_mm=0, lip_shift_mm=0, distance_scale=1.0, **pose):
     """Proyección ortográfica a coordenadas normalizadas de MediaPipe."""
     points = [SimpleNamespace(x=.5, y=.5, z=0.)] * 478
     for i, (x, y, z) in BASE.items():
         if i in fg.BROW_LEFT + fg.BROW_RIGHT:
             y -= raise_mm
+        if i in fg.MOUTH_POINTS:
+            x += lip_shift_mm
         x, y, z = rotate((x, y, z), **pose)
         k = 2.2 * distance_scale  # px por mm
         points[i] = SimpleNamespace(x=.5 + x * k / W, y=.45 + y * k / H, z=z * k / W)
@@ -96,6 +99,28 @@ class FaceGeometryTests(unittest.TestCase):
         self.assertIsNone(brow_signal(FaceData(True, timestamp_ms=1), "left", "GEOMETRIC_3D"))
         self.assertTrue(face.valid())
         self.assertFalse(FaceData(True, timestamp_ms=1, head_pitch=float("nan")).valid())
+
+    def test_mouth_shift_detects_left_and_right_and_ignores_pose(self):
+        self.assertEqual(fg.mouth_shift(landmarks(), W, H), (0.0, 0.0))
+        for pose in ({"pitch": 20}, {"yaw": 25}, {"roll": 15}, {"pitch": -15, "yaw": -20, "roll": 10}):
+            left, right = fg.mouth_shift(landmarks(**pose), W, H)
+            self.assertAlmostEqual(left, 0.0, places=6)
+            self.assertAlmostEqual(right, 0.0, places=6)
+        # Frame espejado: -x es la izquierda del usuario, +x es la derecha del usuario.
+        left_pose = fg.mouth_shift(landmarks(lip_shift_mm=-14, yaw=15, pitch=10), W, H)
+        right_pose = fg.mouth_shift(landmarks(lip_shift_mm=14, yaw=-15, roll=10), W, H)
+        self.assertGreater(left_pose[0], 0.14)
+        self.assertEqual(left_pose[1], 0.0)
+        self.assertGreater(right_pose[1], 0.14)
+        self.assertEqual(right_pose[0], 0.0)
+        # Fallback 2D cuando no hay coordenada z disponible.
+        pts_2d = [SimpleNamespace(x=p.x, y=p.y) for p in landmarks(lip_shift_mm=-14)]
+        self.assertGreater(fg.mouth_shift(pts_2d, W, H)[0], 0.14)
+        # Estiramiento unilateral de una sola comisura (mueca al guiñar) no cuenta como gesto labial.
+        wink_smirk = landmarks()
+        wink_smirk[291] = SimpleNamespace(x=wink_smirk[291].x + 0.04, y=wink_smirk[291].y - 0.01, z=wink_smirk[291].z)
+        self.assertEqual(fg.mouth_shift(wink_smirk, W, H), (0.0, 0.0))
+        self.assertIsNone(fg.mouth_shift([SimpleNamespace(x=.5, y=.5, z=0.)] * 478, W, H))
 
 
 if __name__ == "__main__": unittest.main()
