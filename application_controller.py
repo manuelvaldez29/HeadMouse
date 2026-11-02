@@ -1124,11 +1124,11 @@ class ApplicationController:
         now = self.clock()
         if now - self._models_checked >= 2:
             from config import WHISPER_MODELS
-            from dictation import MODEL_DIR
+            from dictation import installed_model
             face = Path(self.config.vision.model_path)
             face = face if face.is_absolute() else face_model_path(face)
             self._models = dict(face=face.is_file() and face.stat().st_size > 0,
-                                voice={m: (MODEL_DIR / m / "model.bin").is_file() for m in WHISPER_MODELS})
+                                voice={m: installed_model(m) is not None for m in WHISPER_MODELS})
             self._models_checked = now
         return self._models
 

@@ -111,9 +111,9 @@ Si la bandeja no está disponible, la ventana permanece accesible.
 Los datos están en `%LOCALAPPDATA%\HeadMouse`: profiles, último perfil, métricas,
 experimentos, diagnósticos, logs y startup.json. No se guardan fotos ni vídeo.
 Los modelos faciales distribuidos son recursos de lectura; los modelos opcionales
-de voz se descargan dentro del directorio de datos. El dictado requiere sus
-dependencias opcionales y modelos: no se incluye un motor de voz completo en
-este instalador básico.
+de voz se descargan dentro del directorio de datos. El dictado viene incluido;
+sólo hay que descargar una vez el modelo de voz desde Configuración (requiere
+Internet esa única vez; después funciona sin conexión).
 
 Desde el código fuente se copian los perfiles antiguos de data de forma verificable.
 En una instalación nueva, usar Importar perfiles anteriores en Inicio con Windows

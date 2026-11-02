@@ -359,6 +359,26 @@ class UIAFocusProbeTests(unittest.TestCase):
         self.assertFalse(probe.focused().editable)
 
 
+class ModelLocationTests(unittest.TestCase):
+    def test_models_downloaded_inside_the_project_are_still_found(self):
+        # 0.4.0 movió las descargas a %LOCALAPPDATA%\HeadMouse; los modelos ya bajados
+        # en models/whisper del proyecto tienen que seguir sirviendo (2026-11-02).
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+        import dictation
+        with tempfile.TemporaryDirectory() as temp:
+            data, project = Path(temp) / "data", Path(temp) / "project"
+            (project / "small").mkdir(parents=True)
+            (project / "small" / "model.bin").write_bytes(b"x")
+            with patch.object(dictation, "MODEL_DIR", data), patch.object(dictation, "MODEL_DIRS", (data, project)):
+                self.assertEqual(dictation.model_path("small"), project / "small")
+                self.assertEqual(dictation.model_path("base"), data / "base")  # sin instalar: se baja a datos
+                (data / "small").mkdir(parents=True)
+                (data / "small" / "model.bin").write_bytes(b"x")
+                self.assertEqual(dictation.model_path("small"), data / "small")  # el de datos tiene prioridad
+
+
 class ControlIntegrationTests(unittest.TestCase):
     def control(self, busy):
         backend = Mock()

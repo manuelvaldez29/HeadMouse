@@ -264,3 +264,27 @@ class DistributionGUITests(unittest.TestCase):
         r.disarm()
         with patch('desktop.resident.desktop_unlocked',return_value=True):r.begin()
         self.assertFalse(r.pending);self.backend_factory.assert_not_called()
+
+
+class DistributionVoiceTests(unittest.TestCase):
+    """El dictado es parte del instalador (2026-11-02): no puede quedar afuera sin aviso."""
+
+    def test_spec_bundles_the_dictation_engine_but_no_whisper_model(self):
+        from app_paths import RESOURCE_ROOT
+        spec=(RESOURCE_ROOT/'packaging'/'HeadMouse.spec').read_text(encoding='utf-8')
+        for package in ('faster_whisper','ctranslate2','onnxruntime','_sounddevice_data','comtypes.client'):
+            self.assertIn(f"'{package}'",spec)
+        self.assertNotIn('models/whisper',spec)  # el modelo se descarga, no se distribuye
+        lock=(RESOURCE_ROOT/'packaging'/'requirements-windows-py312-build.lock.txt').read_text(encoding='utf-8')
+        for pin in ('faster-whisper==','ctranslate2==','comtypes==','sounddevice=='):
+            self.assertIn(pin,lock)
+
+    @unittest.skipUnless(__import__('importlib.util').util.find_spec('faster_whisper'),'sin requirements-voice.txt')
+    def test_runtime_check_reports_the_voice_engine(self):
+        import distribution_check
+        with tempfile.TemporaryDirectory() as temp,patch.dict('os.environ',HEADMOUSE_DATA_DIR=temp), \
+                patch('dictation.installed_model',return_value=None):
+            voice=distribution_check.voice_check()
+        self.assertTrue(voice['ui_automation'])
+        self.assertFalse(voice['model_installed'])
+        self.assertIn('PortAudio',voice['portaudio'])

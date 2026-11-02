@@ -11,10 +11,19 @@ datas=[(str(root/'desktop/theme.qss'),'desktop'),(str(root/'assets'),'assets'),
 binaries=[];hidden=[]
 for package in ('mediapipe','cv2'):
     d,b,h=collect_all(package);datas+=d;binaries+=b;hidden+=h
-for distribution in ('mediapipe','opencv-contrib-python','numpy','PySide6','PyAutoGUI'):
+# Dictado por voz (requirements-voice.txt): faster-whisper sobre CTranslate2, VAD Silero
+# con onnxruntime, micrófono con sounddevice/PortAudio y foco con UI Automation (comtypes).
+# Se importan dentro de funciones: collect_all asegura DLL, datos (el VAD .onnx) y submódulos.
+# El modelo Whisper no se incluye: se descarga una vez desde Configuración.
+for package in ('faster_whisper','ctranslate2','onnxruntime','av','tokenizers','_sounddevice_data'):
+    d,b,h=collect_all(package);datas+=d;binaries+=b;hidden+=h
+for distribution in ('mediapipe','opencv-contrib-python','numpy','PySide6','PyAutoGUI',
+                     'faster-whisper','ctranslate2','onnxruntime','av','tokenizers','huggingface-hub',
+                     'tqdm','sounddevice','comtypes'):
     datas+=copy_metadata(distribution)
 a=Analysis([str(root/'app.py')],pathex=[str(root)],binaries=binaries,datas=datas,
-    hiddenimports=hidden+['PySide6.QtNetwork','PySide6.QtSvg','pyautogui._pyautogui_win'],
+    hiddenimports=hidden+['PySide6.QtNetwork','PySide6.QtSvg','pyautogui._pyautogui_win',
+                          'dictation','sounddevice','comtypes.client','comtypes.stream'],
     excludes=['pytest','IPython','PySide6.QtWebEngineCore','PySide6.QtWebEngineWidgets','PySide6.QtPdf'],
     hooksconfig={'matplotlib': {'backends': ['Agg']}},
     noarchive=False)

@@ -16,7 +16,7 @@ ni texto. La transcripción es local; el modelo se descarga una sola vez:
 Las partes puras (Endpointer, Dictation) no dependen de Windows ni de audio y
 se prueban con dobles; los adaptadores reales se cargan solo al usarlos.
 """
-from app_paths import data_root, face_model_path
+from app_paths import RESOURCE_ROOT, data_root
 import argparse
 import importlib.util
 import logging
@@ -34,7 +34,35 @@ from config import ROOT, VoiceConfig, configure_logging
 logger = logging.getLogger(__name__)
 
 SAMPLE_RATE = 16000
-MODEL_DIR = data_root() / "models" / "whisper"
+MODEL_DIR = data_root() / "models" / "whisper"  # donde se descargan
+# Antes de 0.4.0 se descargaban dentro del proyecto: se siguen usando sin copiar
+# cientos de MB al directorio de datos (2026-11-02, el dictado "desapareció").
+MODEL_DIRS = (MODEL_DIR, RESOURCE_ROOT / "models" / "whisper")
+
+
+_legacy_found = {}
+
+
+def installed_model(model):
+    """Carpeta del modelo de voz instalado, o None.
+
+    La GUI lo consulta cada 2 s desde el worker: las carpetas viejas (dentro de
+    OneDrive) se revisan una sola vez; sólo la de descarga puede cambiar.
+    """
+    if (MODEL_DIRS[0] / model / "model.bin").is_file():
+        return MODEL_DIRS[0] / model
+    for directory in MODEL_DIRS[1:]:
+        key = (directory, model)
+        if key not in _legacy_found:
+            _legacy_found[key] = (directory / model / "model.bin").is_file()
+        if _legacy_found[key]:
+            return directory / model
+    return None
+
+
+def model_path(model):
+    """Carpeta del modelo de voz instalado, o la de descarga si todavía no está."""
+    return installed_model(model) or MODEL_DIRS[0] / model
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -617,7 +645,7 @@ class SoundDeviceRecorder:
 class WhisperTranscriber:
     """faster-whisper en CPU con int8; solo archivos locales en uso normal."""
 
-    def __init__(self, model="small", directory=MODEL_DIR):
+    def __init__(self, model="small", directory=None):
         self.model_name, self.directory = model, directory
         self._model = None
         self._lock = threading.Lock()
@@ -632,7 +660,7 @@ class WhisperTranscriber:
         with self._lock:
             if self._model is None:
                 from faster_whisper import WhisperModel
-                path = self.directory / self.model_name
+                path = model_path(self.model_name) if self.directory is None else self.directory / self.model_name
                 if not path.is_dir():
                     raise FileNotFoundError(f"Falta el modelo de voz: {path}. Ejecutar "
                                             "python dictation.py --download-model durante la preparación.")
@@ -757,7 +785,7 @@ def create_dictation(config: VoiceConfig, metrics=None):
     if missing:
         raise RuntimeError("Faltan dependencias de dictado: " + ", ".join(missing) +
                            ". Instalar con: pip install -r requirements-voice.txt")
-    if not (MODEL_DIR / config.model).is_dir():
+    if installed_model(config.model) is None:
         raise RuntimeError(f"Falta el modelo de voz '{config.model}'. "
                            "Preparalo en Configuración o con: python dictation.py --download-model")
     return Dictation(config, UIAFocusProbe(), SoundDeviceRecorder, WhisperTranscriber(config.model),

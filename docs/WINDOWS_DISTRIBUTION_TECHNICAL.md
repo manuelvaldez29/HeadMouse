@@ -63,7 +63,7 @@ models/face_landmarker.task desde la fuente oficial documentada por el proyecto.
 del entorno utilizado; es distinto del lock histórico para Python 3.14.4.
 
 ```powershell
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt -r requirements-build.txt
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt -r requirements-voice.txt -r requirements-build.txt
 .\.venv\Scripts\python.exe main.py --download-model
 powershell -ExecutionPolicy Bypass -File packaging\build_windows.ps1 -Iscc "RUTA\ISCC.exe"
 ```
@@ -78,11 +78,16 @@ Incluye icono, recursos y Qt. Es onedir/windowed, sin consola. La compilación l
 el PATH para no tomar DLL de otras herramientas. No se distribuyen las ICU genéricas
 de Poppler: Qt usa la API del Windows objetivo. Esto se verifica ejecutando el binario.
 
-La aplicación básica no incluye los paquetes opcionales de dictado (faster-whisper,
-comtypes) ni un modelo Whisper. El control por gestos no depende de esa extensión.
+El dictado por voz se incluye (2026-11-02): el spec recoge faster-whisper,
+CTranslate2, onnxruntime (VAD Silero, con su .onnx), PyAV, tokenizers, sounddevice
+con PortAudio y comtypes (UI Automation). Suman unos 130 MB. No se incluye ningún
+modelo Whisper: se descarga una vez desde Configuración a
+`%LOCALAPPDATA%\HeadMouse\models\whisper`. Desde el código también se usan los
+modelos ya descargados en `models/whisper` del proyecto. `--verify-runtime` comprueba
+el motor congelado sin grabar ni escribir: VAD con audio sintético, UI Automation y
+PortAudio; si hay un modelo instalado, lo carga y transcribe un segundo de silencio.
 Los avisos sobre módulos opcionales en warn-HeadMouse.txt deben revisarse, no ignorar
-un import requerido. Para habilitar dictado en otra distribución hay que instalar
-requirements-voice.txt y agregar sus recursos/hook de empaquetado y pruebas.
+un import requerido.
 
 ## Instalador y actualización
 

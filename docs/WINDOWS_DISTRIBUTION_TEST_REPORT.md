@@ -104,7 +104,10 @@ control automático físico. Los perfiles personales no se incluyen en los binar
 - Prueba de tareas reales de accesibilidad y precisión, hardware físico y sesiones
   prolongadas. No se ampliaron tolerancias para aprobar calibraciones deficientes.
 - Firma digital de distribución y validación de SmartScreen en otro equipo.
-- El motor opcional de dictado no se incluye en esta edición básica.
+- Dictado (agregado el 2026-11-02): `--verify-runtime` del ejecutable congelado pasó
+  con faster-whisper 1.2.1, CTranslate2 4.8.2, PortAudio 19.7 y UI Automation, y con
+  el modelo `small` cargado y transcribiendo. Falta probarlo instalado en una máquina
+  limpia: descarga del modelo desde Configuración, micrófono y dictado en una app real.
 
 La guía técnica explica cómo reconstruir y repetir los ensayos. Los archivos de
 build/dist y los logs se excluyen de Git. El respaldo anterior está en
