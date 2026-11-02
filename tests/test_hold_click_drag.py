@@ -48,6 +48,48 @@ class HoldClickDragTests(unittest.TestCase):
             self.face = replace(FaceData(True, timestamp_ms=self.ms, **NEUTRAL), **overrides)
         control._tick()
 
+    def with_dictation(self, control):
+        control.dictation = Mock(busy=False)
+        return control.dictation
+
+    def test_deliberate_wink_under_a_second_is_a_click_that_arms_dictation(self):
+        # 2026-11-02: con 400 ms los tres clicks del usuario quedaron como arrastre y el
+        # dictado nunca se enteró. Un guiño deliberado de 600 ms tiene que ser un click.
+        _, control = self.build_engines()
+        dictation = self.with_dictation(control)
+        for _ in range(12):
+            self.step(control, 50, eye_left_ratio=0.02)
+        self.step(control, 50)
+        self.backend.click.assert_called_once_with(_pause=False)
+        self.backend.mouseDown.assert_not_called()
+        dictation.on_click.assert_called_once()
+
+    def test_drag_released_in_place_counts_as_click_for_dictation(self):
+        _, control = self.build_engines(drag_hold_ms=400)
+        dictation = self.with_dictation(control)
+        for _ in range(9):
+            self.step(control, 50, eye_left_ratio=0.02)
+        for _ in range(3):
+            self.step(control, 50)
+        self.assertTrue(control.dragging)
+        for _ in range(3):  # segundo guiño: suelta donde apretó
+            self.step(control, 50, eye_left_ratio=0.02)
+        self.assertFalse(control.dragging)
+        dictation.on_click.assert_called_once()
+
+    def test_real_drag_does_not_open_dictation(self):
+        _, control = self.build_engines(drag_hold_ms=400)
+        dictation = self.with_dictation(control)
+        for _ in range(9):
+            self.step(control, 50, eye_left_ratio=0.02)
+        for _ in range(3):
+            self.step(control, 50)
+        self.backend.position.return_value = (700, 420)  # el cursor se movió arrastrando
+        for _ in range(3):
+            self.step(control, 50, eye_left_ratio=0.02)
+        self.assertFalse(control.dragging)
+        dictation.on_click.assert_not_called()
+
     def test_short_left_wink_fires_normal_click_without_drag(self):
         _, control = self.build_engines()
         # Guiño corto (~150 ms < 350 ms) y apertura del ojo.

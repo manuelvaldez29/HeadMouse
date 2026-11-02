@@ -120,6 +120,7 @@ class ControlEngine:
         self._drag_gesture = ""
         self._drag_release_armed = False
         self._drag_open_since = None
+        self._drag_origin = None    # dónde se apretó: soltar ahí mismo cuenta como click
         self.last_events = ()
         self.last_actions = ()
         self.output_allowed = threading.Event()
@@ -228,6 +229,10 @@ class ControlEngine:
                     and self._is_gesture_held(ev.gesture))
 
     def _start_drag(self, ev: GestureEvent):
+        try:
+            self._drag_origin = tuple(self.backend.position())
+        except Exception:
+            self._drag_origin = None
         self.backend.mouseDown(button="left", _pause=False)
         self._dragging = True
         self._drag_gesture = ev.gesture
@@ -256,16 +261,26 @@ class ControlEngine:
             logger.exception("[ControlEngine] No se pudo liberar click sostenido")
             return False
 
+    def _released_in_place(self, origin, tolerance_px=8):
+        try:
+            x, y = self.backend.position()
+        except Exception:
+            return False
+        return origin is not None and abs(x - origin[0]) <= tolerance_px and abs(y - origin[1]) <= tolerance_px
+
     def _update_hold_click(self, now: float):
         if self._pending_click is not None:
             pending = self._pending_click
             if not self._is_gesture_held(pending["gesture"]):
                 self._pending_click = None
+                logger.info("[ControlEngine] Guiño de %.0f ms → click (arrastre desde %.0f ms)",
+                            (now - pending["started_at"]) * 1000, self.config.drag_hold_ms)
                 ev = pending["event"]
                 self._execute(ev)
                 self.last_actions += (ev,)
             elif (now - pending["started_at"]) * 1000.0 + 1e-6 >= self.config.drag_hold_ms:
                 self._pending_click = None
+                logger.info("[ControlEngine] Guiño de más de %.0f ms → arrastre", self.config.drag_hold_ms)
                 self._start_drag(pending["event"])
             return
         if self._dragging and not self._drag_release_armed:
@@ -394,8 +409,13 @@ class ControlEngine:
                     if self._dragging:
                         if self._drag_release_armed or ev.gesture != self._drag_gesture:
                             gesture_key = self._drag_gesture or ev.gesture
+                            origin = self._drag_origin
                             if self._release_held_mouse():
                                 self.last_actions += (GestureEvent("LEFT_DRAG_END", gesture=gesture_key),)
+                                # Apretar y soltar en el mismo lugar es un click para Windows
+                                # (el campo recibe el foco): el dictado también tiene que enterarse.
+                                if self.dictation is not None and self._released_in_place(origin):
+                                    self.dictation.on_click()
                         continue
                     if self._pending_click is not None:
                         continue

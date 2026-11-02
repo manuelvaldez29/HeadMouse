@@ -15,9 +15,12 @@ python dictation.py --test                    # hablar después del tono
 ```
 
 El modelo también se puede preparar desde Configuración → "Preparar modelo de
-voz". Después se marca **Dictado por voz** y se guarda la configuración. El
-modelo queda en `models/whisper/<modelo>` (excluido de Git). En uso normal se
-carga con `local_files_only` y no hay tráfico de red.
+voz". Después se marca **Dictado por voz** y se guarda la configuración. Desde
+0.4.0 el modelo se descarga en `%LOCALAPPDATA%\HeadMouse\models\whisper\<modelo>`
+(fuera del proyecto y de Git). Los ya descargados en `models/whisper/<modelo>` del
+proyecto se siguen usando sin copiarlos; esa carpeta se revisa una sola vez por
+ejecución. En uso normal se carga con `local_files_only` y no hay tráfico de red.
+El instalador de Windows incluye el motor de dictado, pero no el modelo.
 
 ## Flujo
 
@@ -83,6 +86,14 @@ python dictation.py --probe-focus 30
 
 Muestra el elemento con foco y el que está bajo el puntero (con cuatro ancestros)
 cada vez que cambian.
+
+**Guiño largo = arrastre (2026-11-02).** Con el click sostenido (modo Nariz), un
+guiño de más de `control.drag_hold_ms` aprieta el botón y lo deja apretado hasta el
+próximo guiño. Con el valor inicial de 400 ms, los clicks deliberados del usuario
+quedaban como `LEFT_DRAG_START` en el log y el dictado nunca se activaba. Ahora el
+valor inicial es 1 s, el log anota la duración de cada guiño ("Guiño de … ms → click")
+y un arrastre que se suelta sin mover el cursor también avisa al dictado, porque para
+Windows es un click.
 
 **WebView2 dentro de WinUI 3 (WhatsApp Desktop 2.2640, 2026-10-28).** Con el cursor
 de texto ya parpadeando en el cuadro de mensaje, `GetFocusedElement` devuelve el

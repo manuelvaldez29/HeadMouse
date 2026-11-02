@@ -83,7 +83,9 @@ class ControlConfig:
     max_cursor_delta: float = 60.0
     loop_hz: float = 60.0
     hold_click_enabled: bool = True
-    drag_hold_ms: float = 400.0
+    # 1 s: con 400 ms los guiños deliberados de un click (2026-11-02, todos >400 ms)
+    # quedaban como arrastre y el click nunca llegaba, ni al dictado.
+    drag_hold_ms: float = 1000.0
     drag_release_ms: float = 50.0
 
     def __post_init__(self):
