@@ -7,7 +7,7 @@ import unittest
 from unittest.mock import Mock
 from config import VoiceConfig, load_config
 from control_engine import ControlEngine
-from dictation import Dictation, Endpointer, FocusInfo, SAMPLE_RATE, finish_text, parse_command
+from dictation import Dictation, Endpointer, FocusInfo, SAMPLE_RATE, UIAFocusProbe, finish_text, parse_command
 from gesture_engine import GestureEvent
 
 RNG = random.Random(7)
@@ -179,6 +179,18 @@ class DictationTests(unittest.TestCase):
             self.assertEqual(FakeRecorder.opened, 0)
             self.typer.type_text.assert_not_called()
 
+    def test_click_without_text_field_logs_what_uia_saw_without_its_name(self):
+        # 2026-10-28: en WhatsApp (WebView2) el click con el cursor ya parpadeando no dictaba
+        # y el log no decía nada. Se registra el tipo de elemento, nunca su nombre.
+        focus = FakeFocus(FocusInfo(False, control_type="Pane", name="Chat con Ana"))
+        focus.last = dict(control=50033, framework="Chrome", class_name="Chrome_RenderWidgetHostHWND")
+        d = self.make(focus, focus_window_ms=100)
+        with self.assertLogs("dictation", "INFO") as logs:
+            d.on_click()
+            self.wait_idle(d)
+        self.assertIn("Chrome_RenderWidgetHostHWND", logs.output[0])
+        self.assertNotIn("Ana", logs.output[0])
+
     def test_disabled_does_nothing_and_busy_blocks_second_request(self):
         d = Dictation(VoiceConfig(enabled=False), FakeFocus(FocusInfo(True)), Mock(), Mock(), Mock())
         d.on_click()
@@ -252,6 +264,99 @@ class DictationTests(unittest.TestCase):
         self.assertTrue(d.busy)
         clock[0] = 100.5
         self.assertFalse(d.busy)
+
+
+class FakeElement:
+    """Elemento UIA con las propiedades que lee UIAFocusProbe."""
+
+    def __init__(self, control, focus=False, value=False, read_only=True, password=False,
+                 parent=None, framework="Chrome", class_name=""):
+        self.CurrentControlType, self.CurrentHasKeyboardFocus = control, focus
+        self.CurrentIsPassword, self.CurrentName = password, "Chat con Ana"
+        self.CurrentFrameworkId, self.CurrentClassName = framework, class_name
+        self.properties = {30043: value, 30046: read_only, 30040: value}
+        self.parent = parent
+
+    def GetCurrentPropertyValue(self, prop):
+        return self.properties[prop]
+
+
+class FakeAutomation:
+    def __init__(self, focused, pointed):
+        self.focused, self.pointed = focused, pointed
+        self.ControlViewWalker = self
+
+    def GetFocusedElement(self):
+        return self.focused
+
+    def ElementFromPoint(self, point):
+        return self.pointed
+
+    def GetParentElement(self, element):
+        return element.parent
+
+
+class PointerProbe(UIAFocusProbe):
+    foreground = True
+
+    def __init__(self, focused, pointed):
+        super().__init__()
+        self._automation = FakeAutomation(focused, pointed)
+
+    def _cursor_point(self):
+        return None
+
+    def _pointer_in_foreground(self):
+        return self.foreground
+
+
+class UIAFocusProbeTests(unittest.TestCase):
+    # Lo que vio `dictation.py --probe-focus` en WhatsApp Desktop 2.2640 (2026-10-28): el foco
+    # de UIA se queda en el puente de WinUI; el cuadro de mensaje sí tiene el foco de teclado.
+    BRIDGE = dict(control=50033, framework="Win32", class_name="Microsoft.UI.Content.DesktopChildSiteBri")
+
+    def whatsapp(self, pointed_at_box=True, password=False):
+        root = FakeElement(50026)
+        box = FakeElement(50004, focus=True, value=True, read_only=False, password=password,
+                          parent=FakeElement(50026, parent=root))
+        message = FakeElement(50026, parent=root)  # un mensaje del chat: sin foco
+        return PointerProbe(FakeElement(**self.BRIDGE), box if pointed_at_box else message)
+
+    def test_whatsapp_box_with_caret_is_found_under_the_pointer(self):
+        probe = self.whatsapp()
+        info = probe.focused()
+        self.assertTrue(info.editable)
+        self.assertEqual(info.control_type, "Edit")
+        self.assertEqual(probe.last["via"], "puntero")
+        self.assertNotIn("Ana", str(probe.last))
+
+    def test_text_inside_the_box_finds_the_focused_ancestor(self):
+        probe = self.whatsapp()
+        box = probe._automation.pointed
+        probe._automation.pointed = FakeElement(50020, parent=box)  # el texto ya escrito
+        self.assertTrue(probe.focused().editable)
+
+    def test_click_outside_the_box_does_not_dictate_even_if_it_keeps_focus(self):
+        self.assertFalse(self.whatsapp(pointed_at_box=False).focused().editable)
+
+    def test_inactive_window_under_the_pointer_is_ignored(self):
+        probe = self.whatsapp()
+        probe.foreground = False
+        self.assertFalse(probe.focused().editable)
+
+    def test_password_under_the_pointer_is_reported_as_password(self):
+        self.assertTrue(self.whatsapp(password=True).focused().password)
+
+    def test_focused_text_field_does_not_look_at_the_pointer(self):
+        probe = PointerProbe(FakeElement(50004, value=True, read_only=False), None)
+        probe._pointer_chain = Mock(side_effect=AssertionError("no hacía falta"))
+        self.assertTrue(probe.focused().editable)
+
+    def test_read_only_document_under_the_pointer_is_not_editable(self):
+        # La raíz del documento web: Document con Value, sólo lectura.
+        probe = PointerProbe(FakeElement(**self.BRIDGE),
+                             FakeElement(50030, focus=True, value=True, read_only=True))
+        self.assertFalse(probe.focused().editable)
 
 
 class ControlIntegrationTests(unittest.TestCase):

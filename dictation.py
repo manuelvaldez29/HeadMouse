@@ -317,6 +317,9 @@ class Dictation:
             if info and info.password:
                 return None  # nunca dictar contraseñas
             if self.clock() >= deadline or self._cancel.is_set():
+                # Sin el nombre del elemento: puede contener texto del usuario.
+                logger.info("Click sin campo de texto para dictar: %s",
+                            getattr(self.focus, "last", None) or (info and info.control_type))
                 return None
             time.sleep(.05)
 
@@ -447,16 +450,126 @@ class UIAFocusProbe:
         if element is None:
             return None
         try:
-            control = element.CurrentControlType
-            password = bool(element.CurrentIsPassword)
-            has_value = bool(element.GetCurrentPropertyValue(self.VALUE_AVAILABLE))
-            read_only = bool(element.GetCurrentPropertyValue(self.VALUE_READ_ONLY)) if has_value else False
-            name = element.CurrentName or ""
+            info = self._classify(element)
         except Exception:
             return None
+        self.last = self.describe(element)
+        if not info.editable and not info.password:
+            return self._focused_under_pointer() or info
+        return info
+
+    def _classify(self, element):
+        control = element.CurrentControlType
+        password = bool(element.CurrentIsPassword)
+        has_value = bool(element.GetCurrentPropertyValue(self.VALUE_AVAILABLE))
+        read_only = bool(element.GetCurrentPropertyValue(self.VALUE_READ_ONLY)) if has_value else False
+        name = element.CurrentName or ""
         editable = (control == self.EDIT and not read_only) or \
                    (control in (self.DOCUMENT, self.COMBOBOX) and has_value and not read_only)
         return FocusInfo(editable, password, self.NAMES.get(control, str(control)), name[:80])
+
+    def _focused_under_pointer(self):
+        """Campo con foco que GetFocusedElement no alcanza.
+
+        WhatsApp Desktop 2.2640 es WebView2 dentro de WinUI 3: con el foco ya en el
+        cuadro de mensaje (el palito parpadeando), GetFocusedElement se queda en el
+        puente de WinUI ('Microsoft.UI.Content.DesktopChildSiteBridge', un Pane) y no
+        entra al contenido web. El cuadro sí informa HasKeyboardFocus si se lo pide
+        por posición. Se acepta el primero con foco de teclado entre el elemento bajo
+        el puntero y sus ancestros, y sólo si esa ventana es la activa: justo después
+        del click es el mismo campo. Un click fuera del campo (p. ej. en un mensaje)
+        no lo encuentra aunque el cuadro conserve el foco.
+        """
+        try:
+            if not self._pointer_in_foreground():
+                return None
+            for element in self._pointer_chain(4):
+                if element.CurrentHasKeyboardFocus:
+                    info = self._classify(element)
+                    self.last = dict(self.describe(element), via="puntero")
+                    return info
+        except Exception:
+            pass
+        return None
+
+    def _cursor_point(self):
+        import ctypes
+        import ctypes.wintypes
+        import comtypes.client
+        point = ctypes.wintypes.POINT()
+        ctypes.windll.user32.GetCursorPos(ctypes.byref(point))
+        return comtypes.client.GetModule("UIAutomationCore.dll").tagPOINT(point.x, point.y)
+
+    def _pointer_in_foreground(self):
+        import ctypes
+        import ctypes.wintypes as w
+        user32 = ctypes.WinDLL("user32")  # instancia propia: no tocar los argtypes globales
+        user32.GetCursorPos.argtypes = [ctypes.POINTER(w.POINT)]
+        user32.WindowFromPoint.argtypes, user32.WindowFromPoint.restype = [w.POINT], w.HWND
+        user32.GetAncestor.argtypes, user32.GetAncestor.restype = [w.HWND, w.UINT], w.HWND
+        user32.GetForegroundWindow.restype = w.HWND
+        point = w.POINT()
+        user32.GetCursorPos(ctypes.byref(point))
+        hwnd, foreground = user32.WindowFromPoint(point), user32.GetForegroundWindow()
+        return bool(hwnd and foreground) and user32.GetAncestor(hwnd, 2) == user32.GetAncestor(foreground, 2)  # GA_ROOT
+
+    def _pointer_chain(self, limit):
+        element = self._automation.ElementFromPoint(self._cursor_point())
+        walker = self._automation.ControlViewWalker
+        for _ in range(limit):
+            if element is None:
+                return
+            yield element
+            try:
+                element = walker.GetParentElement(element)
+            except Exception:
+                return
+
+    TEXT_AVAILABLE = 30040
+
+    def describe(self, element):
+        """Rasgos técnicos del elemento, sin su nombre ni su texto (diagnóstico)."""
+        def read(getter):
+            try:
+                return getter()
+            except Exception:
+                return None
+        return dict(control=read(lambda: element.CurrentControlType),
+                    framework=read(lambda: element.CurrentFrameworkId),
+                    class_name=(read(lambda: element.CurrentClassName) or "")[:40],
+                    keyboard_focus=read(lambda: bool(element.CurrentHasKeyboardFocus)),
+                    value=read(lambda: bool(element.GetCurrentPropertyValue(self.VALUE_AVAILABLE))),
+                    read_only=read(lambda: bool(element.GetCurrentPropertyValue(self.VALUE_READ_ONLY))),
+                    text=read(lambda: bool(element.GetCurrentPropertyValue(self.TEXT_AVAILABLE))),
+                    password=read(lambda: bool(element.CurrentIsPassword)))
+
+    def under_cursor(self):
+        """Elemento bajo el puntero y sus ancestros (hasta 4), para el diagnóstico."""
+        return [self.describe(element) for element in self._pointer_chain(5)]
+
+
+def probe_focus(seconds):
+    """Imprime qué ve UI Automation (foco y elemento bajo el puntero) cada vez que cambia."""
+    probe = UIAFocusProbe()
+    probe.init_thread()
+    print(f"Durante {seconds:.0f} s: hacé click (con el mouse común) en el campo que falla, "
+          "con y sin el palito parpadeando. Ctrl+C para cortar.")
+    previous, end = None, time.monotonic() + seconds
+    while time.monotonic() < end:
+        info = probe.focused()
+        try:
+            under = probe.under_cursor()
+        except Exception as exc:
+            under = [f"<{type(exc).__name__}>"]
+        current = (info and (info.editable, info.password), probe.last if info else None, under)
+        if current != previous:
+            previous = current
+            print()
+            print(f"[{time.strftime('%H:%M:%S')}] ¿dictaría? {bool(info and info.editable and not info.password)}")
+            print("  foco:", probe.last if info else None)
+            for depth, element in enumerate(under):
+                print("  bajo el puntero" + " ↑" * depth + ":", element)
+        time.sleep(.3)
 
 
 class SoundDeviceRecorder:
@@ -661,6 +774,8 @@ def main(argv=None):
     parser.add_argument("--test", action="store_true", help="Grabar una frase y mostrar la transcripción")
     parser.add_argument("--model", choices=("tiny", "base", "small", "medium"), default=VoiceConfig().model)
     parser.add_argument("--language", default="es")
+    parser.add_argument("--probe-focus", type=float, metavar="SEGUNDOS",
+                        help="Mostrar qué campo ve UI Automation (diagnóstico de apps donde no dicta)")
     args = parser.parse_args(argv)
     configure_logging("INFO")
     if args.download_model:
@@ -688,7 +803,9 @@ def main(argv=None):
         print(f"Ruido {endpoint.noise:.4f} · umbral {endpoint.threshold:.4f} · "
               f"audio {len(endpoint.audio()) / SAMPLE_RATE:.1f} s · transcripción {time.monotonic() - started:.1f} s")
         print("Texto:", text or "(vacío)")
-    if not (args.download_model or args.test):
+    if args.probe_focus:
+        probe_focus(args.probe_focus)
+    if not (args.download_model or args.test or args.probe_focus):
         parser.print_help()
     return 0
 

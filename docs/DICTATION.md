@@ -70,6 +70,31 @@ hablar mueve boca, ojos y cejas, y abriría Inicio, haría clicks o scroll. El
 gesto de pausa (ambas cejas) **cancela el dictado** en lugar de pausar. F8 y
 "Detener control" también lo cancelan, y no se escribe nada después.
 
+## Cuando un campo no dicta
+
+Cada click que no encuentra un campo de texto deja en `data/logs/headmouse.log` una
+línea «Click sin campo de texto para dictar» con el tipo, el framework y la clase
+del elemento que tenía el foco (nunca su nombre ni su texto). Para ver en vivo qué
+reporta UI Automation al hacer click en una aplicación:
+
+```
+python dictation.py --probe-focus 30
+```
+
+Muestra el elemento con foco y el que está bajo el puntero (con cuatro ancestros)
+cada vez que cambian.
+
+**WebView2 dentro de WinUI 3 (WhatsApp Desktop 2.2640, 2026-10-28).** Con el cursor
+de texto ya parpadeando en el cuadro de mensaje, `GetFocusedElement` devuelve el
+puente de WinUI (`Microsoft.UI.Content.DesktopChildSiteBridge`, un Pane sin Value)
+y no entra al contenido web. El cuadro (Edit de framework Chrome, editable) sí
+informa `HasKeyboardFocus` cuando se lo busca por posición. Por eso, si el foco no
+es un campo de texto, `UIAFocusProbe` mira el elemento bajo el puntero y hasta tres
+ancestros y toma el primero con foco de teclado, sólo si esa ventana es la activa.
+Un click fuera del campo (un mensaje, el título del chat) no dicta aunque el cuadro
+conserve el foco, y las contraseñas siguen excluidas. En el diagnóstico, un foco
+hallado así aparece con `via: puntero`.
+
 ## Privacidad
 
 El audio existe solo en RAM durante el dictado. No se guardan audio ni texto.
