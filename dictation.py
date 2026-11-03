@@ -70,23 +70,35 @@ def model_path(model):
 # ══════════════════════════════════════════════════════════════════════════════
 
 class Endpointer:
-    """Detecta inicio y fin de habla por energía con piso de ruido adaptativo.
+    """Detecta inicio y fin de habla, por un detector de voz o por energía.
 
-    Los primeros `calibration_ms` estiman el ruido del ambiente. Hay habla
-    cuando la energía de 3 tramas seguidas de 30 ms supera max(piso, ruido ×
-    ratio). Termina tras `silence_s` de silencio, al llegar a `max_s`, o vence
-    si no hubo habla en `no_speech_s`. Se conserva un pre-roll para no cortar
-    la primera sílaba.
+    Con `detector` (SileroDetector) cada trama es voz o no según la red. Sin él,
+    los primeros `calibration_ms` estiman el ruido del ambiente y hay habla
+    cuando la energía supera max(piso, ruido × ratio). En los dos casos empieza
+    con 3 tramas seguidas de voz, termina tras `silence_s` sin voz, al llegar a
+    `max_s` o al pedirlo (`finish`), y vence si no hubo habla en `no_speech_s`.
+    Se conserva un pre-roll para no cortar la primera sílaba.
+
+    Por energía hace falta que la voz supere 3 veces el ruido (unos 10 dB): con
+    ventilador a 8 dB perdió la mitad de las frases y a 3 dB todas, y los golpes o
+    la vajilla nunca lo dejaban cortar. Silero las tomó todas (banco del 2026-11-03).
+    Límite conocido: una voz de fondo (tele, otra persona) también es habla para la
+    red y el silencio no llega; para eso están el gesto de terminar y el
+    reconocimiento de la voz del usuario. Medir la energía en paralelo no alcanzó.
     """
     FRAME_MS = 30
 
     def __init__(self, silence_s=1.2, max_s=20, no_speech_s=6, rate=SAMPLE_RATE,
-                 calibration_ms=300, ratio=3.0, floor=0.004, preroll_ms=300, onset_frames=3):
+                 calibration_ms=300, ratio=3.0, floor=0.004, preroll_ms=300, onset_frames=3,
+                 detector=None):
         self.rate, self.silence_s, self.max_s, self.no_speech_s = rate, silence_s, max_s, no_speech_s
-        self.frame = int(rate * self.FRAME_MS / 1000)
-        self.calibration_frames = max(1, calibration_ms // self.FRAME_MS)
+        self.detector = detector
+        self.frame = detector.frame if detector is not None else int(rate * self.FRAME_MS / 1000)
+        self.frame_ms = self.frame * 1000 / rate
+        self.calibration_frames = 0 if detector is not None else max(1, int(calibration_ms // self.frame_ms))
         self.ratio, self.floor, self.onset_frames = ratio, floor, onset_frames
-        self.preroll = int(preroll_ms / self.FRAME_MS)
+        self.preroll = int(preroll_ms / self.frame_ms)
+        self.end_reason = None  # silence, max, gesture o timeout: para el log, sin audio
         self.frames, self.levels = [], []
         self.noise = None
         self.state = "waiting"
@@ -98,6 +110,13 @@ class Endpointer:
     @property
     def threshold(self):
         return max(self.floor, (self.noise or 0) * self.ratio)
+
+    def finish(self):
+        """Terminar ya (gesto): con habla se transcribe lo dicho; sin habla, nada."""
+        if self.state == "speech":
+            self.state, self.end_reason = "done", "gesture"
+        elif self.state == "waiting":
+            self.state, self.end_reason = "timeout", "gesture"
 
     def feed(self, samples):
         """Agrega muestras float en [-1, 1]; devuelve el estado: waiting, speech, done o timeout."""
@@ -118,29 +137,31 @@ class Endpointer:
             if index == self.calibration_frames:
                 self.noise = sorted(self.levels)[len(self.levels) // 2]
             return
-        loud = level > self.threshold
-        elapsed = index * self.FRAME_MS / 1000
+        loud = self.detector.speech(chunk) if self.detector is not None else level > self.threshold
+        elapsed = index * self.frame_ms / 1000
         if self.state == "waiting":
             self._above = self._above + 1 if loud else 0
-            if not loud:  # el ruido de fondo se adapta solo en silencio
+            if not loud and self.detector is None:  # el ruido de fondo se adapta solo en silencio
                 self.noise = .95 * self.noise + .05 * level
             if self._above >= self.onset_frames:
                 self.state = "speech"
                 self.speech_start = max(0, index - self._above - self.preroll)
             elif elapsed >= self.no_speech_s:
-                self.state = "timeout"
+                self.state, self.end_reason = "timeout", "timeout"
             return
         self._silent = 0 if loud else self._silent + 1
-        speech_s = (index - self.speech_start) * self.FRAME_MS / 1000
-        if self._silent * self.FRAME_MS / 1000 >= self.silence_s or speech_s >= self.max_s:
-            self.state = "done"
+        speech_s = (index - self.speech_start) * self.frame_ms / 1000
+        if self._silent * self.frame_ms / 1000 >= self.silence_s:
+            self.state, self.end_reason = "done", "silence"
+        elif speech_s >= self.max_s:
+            self.state, self.end_reason = "done", "max"
 
     def audio(self):
         """Muestras desde el pre-roll hasta el final, sin el silencio de cierre."""
         if self.speech_start is None:
             return []
         end = len(self.frames) - min(self._silent, max(0, len(self.frames) - self.speech_start))
-        tail = int(150 / self.FRAME_MS)  # conservar 150 ms para no cortar la última sílaba
+        tail = int(150 / self.frame_ms)  # conservar 150 ms para no cortar la última sílaba
         return [v for chunk in self.frames[self.speech_start:min(len(self.frames), end + tail)] for v in chunk]
 
 
@@ -241,8 +262,9 @@ class Dictation:
     """
 
     def __init__(self, config: VoiceConfig, focus, recorder_factory, transcriber, typer,
-                 clock=time.monotonic, metrics=None, cue=None):
+                 clock=time.monotonic, metrics=None, cue=None, detector_factory=None):
         self.config, self.focus, self.recorder_factory = config, focus, recorder_factory
+        self.detector_factory = detector_factory  # None: detección por energía
         self.transcriber, self.typer, self.clock, self.metrics = transcriber, typer, clock, metrics
         self.cue = cue or (lambda kind: None)
         self.state, self.message, self.last_text = "idle", "", ""
@@ -251,6 +273,7 @@ class Dictation:
         self._request = None
         self._wake = threading.Event()
         self._cancel = threading.Event()
+        self._finish = threading.Event()
         self._closed = threading.Event()
         self._quiet_until = 0.
         self._thread = None
@@ -287,6 +310,12 @@ class Dictation:
         if self.state != "idle":
             self._cancel.set()
 
+    def finish(self):
+        """Gesto de click mientras escucha: terminar y transcribir sin esperar silencio.
+        Con ruido o voces de fondo el silencio puede no llegar nunca."""
+        if self.state == "listening":
+            self._finish.set()
+
     def snapshot(self):
         with self._lock:
             return dict(state=self.state, message=self.message, last_text=self.last_text)
@@ -302,6 +331,7 @@ class Dictation:
             self._request = (kind, self.clock())
             self._set("arming", "Buscando campo de texto…")
         self._cancel.clear()
+        self._finish.clear()
         self._wake.set()
 
     def _set(self, state, message=""):
@@ -360,16 +390,25 @@ class Dictation:
         started = self.clock()
         self.cue("start")
         with self._lock:
-            self._set("listening", "Escuchando… hablá. Decí «borrar» para corregir · ambas cejas cancelan.")
+            self._set("listening", "Escuchando… hablá. Guiño de click: terminar ya · "
+                                   "decí «borrar» para corregir · ambas cejas cancelan.")
         endpoint = Endpointer(self.config.silence_s, self.config.max_utterance_s,
-                              self.config.no_speech_timeout_s)
+                              self.config.no_speech_timeout_s,
+                              detector=self.detector_factory() if self.detector_factory else None)
         with self.recorder_factory() as recorder:
             while endpoint.state not in ("done", "timeout"):
                 if self._cancel.is_set():
                     break
+                if self._finish.is_set():
+                    endpoint.finish()
+                    break
                 block = recorder.read(timeout=.2)
                 if block is not None:
                     endpoint.feed(block)
+        # Sin audio ni texto: cómo se decidió el final, para leer en el log qué falla con ruido.
+        logger.info("Dictado: detector %s · fin %s · voz %.1f s", "neuronal" if endpoint.detector else "energía",
+                    endpoint.end_reason or ("cancel" if self._cancel.is_set() else "?"),
+                    len(endpoint.audio()) / SAMPLE_RATE)
         if self._cancel.is_set():
             self.cue("cancel")
             with self._lock:
@@ -380,7 +419,7 @@ class Dictation:
             self.cue("cancel")
             with self._lock:
                 self.message = "No se escuchó nada; dictado cerrado."
-            self._record(dict(result="no_speech", listen_s=self.clock() - started))
+            self._record(dict(result="no_speech", listen_s=self.clock() - started, end=endpoint.end_reason))
             return
         self.cue("end")
         audio = endpoint.audio()
@@ -600,6 +639,43 @@ def probe_focus(seconds):
         time.sleep(.3)
 
 
+class SileroDetector:
+    """Voz o no voz por trama de 32 ms con Silero VAD v6 (viene con faster-whisper).
+
+    Distingue habla de ventiladores, golpes, vajilla o música: lo que hace fallar
+    a la energía. No distingue la voz del usuario de otra persona hablando.
+    Histéresis como Silero: empieza a .5 y sigue mientras no baje de .35.
+    Una sesión ONNX se comparte; cada dictado arranca con estado nuevo.
+    """
+    frame = 512
+    CONTEXT = 64
+
+    def __init__(self, session, start=.5, keep=.35):
+        import numpy as np
+        self.np, self.session, self.start, self.keep = np, session, start, keep
+        self.h = np.zeros((1, 1, 128), np.float32)
+        self.c = np.zeros((1, 1, 128), np.float32)
+        self.context = np.zeros(self.CONTEXT, np.float32)
+        self.speaking = False
+
+    @staticmethod
+    def load_session():
+        from faster_whisper.vad import get_vad_model
+        return get_vad_model().session
+
+    def probability(self, chunk):
+        np = self.np
+        chunk = np.asarray(chunk, np.float32)
+        x = np.concatenate([self.context, chunk])[None, :]
+        out, self.h, self.c = self.session.run(None, {"input": x, "h": self.h, "c": self.c})
+        self.context = chunk[-self.CONTEXT:]
+        return float(np.asarray(out).reshape(-1)[0])
+
+    def speech(self, chunk):
+        self.speaking = self.probability(chunk) >= (self.keep if self.speaking else self.start)
+        return self.speaking
+
+
 class SoundDeviceRecorder:
     """Micrófono predeterminado a 16 kHz mono; remuestrea si el dispositivo no lo admite."""
 
@@ -789,7 +865,20 @@ def create_dictation(config: VoiceConfig, metrics=None):
         raise RuntimeError(f"Falta el modelo de voz '{config.model}'. "
                            "Preparalo en Configuración o con: python dictation.py --download-model")
     return Dictation(config, UIAFocusProbe(), SoundDeviceRecorder, WhisperTranscriber(config.model),
-                     SendInputTyper(), metrics=metrics, cue=sound_cue if config.sound_cues else None)
+                     SendInputTyper(), metrics=metrics, cue=sound_cue if config.sound_cues else None,
+                     detector_factory=detector_factory(config))
+
+
+def detector_factory(config):
+    """Silero si está configurado y disponible; si no, la detección por energía (None)."""
+    if config.detector != "neural":
+        return None
+    try:
+        session = SileroDetector.load_session()
+    except Exception:
+        logger.warning("Sin detector neuronal de voz (onnxruntime o el modelo VAD): se usa la energía", exc_info=True)
+        return None
+    return lambda: SileroDetector(session)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -816,7 +905,9 @@ def main(argv=None):
         print(f"Modelo listo en {time.monotonic() - loaded:.1f} s. Hablá después del tono.")
         sound_cue("start")
         config = VoiceConfig()
-        endpoint = Endpointer(config.silence_s, config.max_utterance_s, config.no_speech_timeout_s)
+        factory = detector_factory(config)
+        endpoint = Endpointer(config.silence_s, config.max_utterance_s, config.no_speech_timeout_s,
+                              detector=factory() if factory else None)
         with SoundDeviceRecorder() as recorder:
             while endpoint.state not in ("done", "timeout"):
                 block = recorder.read()
@@ -828,7 +919,8 @@ def main(argv=None):
             return 1
         started = time.monotonic()
         text = transcriber.transcribe(endpoint.audio(), args.language)
-        print(f"Ruido {endpoint.noise:.4f} · umbral {endpoint.threshold:.4f} · "
+        detection = "neuronal" if endpoint.detector else f"energía, ruido {endpoint.noise:.4f} umbral {endpoint.threshold:.4f}"
+        print(f"Detector {detection} · fin {endpoint.end_reason} · "
               f"audio {len(endpoint.audio()) / SAMPLE_RATE:.1f} s · transcripción {time.monotonic() - started:.1f} s")
         print("Texto:", text or "(vacío)")
     if args.probe_focus:

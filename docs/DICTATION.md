@@ -31,10 +31,10 @@ El instalador de Windows incluye el motor de dictado, pero no el modelo.
    elemento con foco. Se dicta solo si es un `Edit`, o un `Document`/`ComboBox`
    con ValuePattern editable. **Nunca si `IsPassword` es verdadero.**
 3. Suena un tono agudo y aparece el aviso flotante "Escuchando…", que no toma
-   el foco ni recibe clicks. `Endpointer` mide el ruido de fondo en los primeros
-   300 ms, detecta el habla por energía y termina tras `silence_s` (1,2 s) de
-   silencio, a los `max_utterance_s` (20 s), o cierra si no hubo habla en
-   `no_speech_timeout_s` (6 s).
+   el foco ni recibe clicks. `Endpointer` decide trama por trama si hay voz (ver
+   "Detección de voz" abajo). Termina tras `silence_s` (1,2 s) sin voz, a los
+   `max_utterance_s` (20 s) o con el **gesto de click** (terminar ya), y cierra
+   si no hubo habla en `no_speech_timeout_s` (6 s).
 4. Suena un tono grave y faster-whisper transcribe (CPU, int8, 8 hilos, greedy,
    filtro VAD, segmentos de no-habla descartados). Se filtran las frases que
    Whisper inventa ante el silencio ("Gracias por ver el video").
@@ -69,9 +69,43 @@ tildes y puntuación ("Borrá dos letras." funciona). Sin hablar, las acciones
 acciones".
 
 Mientras se dicta, y `after_dictation_ms` después, **solo se mueve el cursor**:
-hablar mueve boca, ojos y cejas, y abriría Inicio, haría clicks o scroll. El
-gesto de pausa (ambas cejas) **cancela el dictado** en lugar de pausar. F8 y
-"Detener control" también lo cancelan, y no se escribe nada después.
+hablar mueve boca, ojos y cejas, y abriría Inicio, haría clicks o scroll. Dos
+gestos sí cuentan mientras escucha:
+- El gesto de pausa (ambas cejas) **cancela el dictado** en lugar de pausar. F8
+  y "Detener control" también lo cancelan, y no se escribe nada después.
+- El gesto de click **termina ya y transcribe** lo dicho, sin esperar el
+  silencio (2026-11-03). Con otra persona o la tele hablando de fondo, el
+  silencio puede no llegar nunca.
+
+### Detección de voz (2026-11-03)
+
+`voice.detector` elige cómo se decide que hay voz. Se cambia en Configuración →
+Dictado por voz → "Detección de voz".
+- **`neural` (predeterminada):** Silero VAD v6, el modelo ONNX que viene con
+  faster-whisper (no se descarga nada más). Tramas de 32 ms, empieza a 0,5 y
+  sigue mientras no baje de 0,35.
+- **`energy`:** la anterior. Mide el ruido en los primeros 300 ms y considera
+  voz lo que supera 3 veces ese nivel (unos 10 dB).
+- Si Silero no se puede cargar, se usa `energy` y queda un aviso en el log.
+
+Banco del 2026-11-03: voces sintéticas de Windows (Helena, español) más ruido a
+distintas relaciones voz/ruido. La tabla muestra palabras bien transcriptas con
+Whisper `small`, 4 frases por caso:
+
+| Situación | Por volumen | Neuronal |
+|---|---|---|
+| Ventilador, voz 15 dB sobre el ruido | 97 % | 97 % |
+| Ventilador, 8 dB | 67 % (1 sin detectar) | 97 % |
+| Ventilador, 3 dB | 0 % (ninguna detectada) | 97 % |
+| Golpes y vajilla, 10 y 5 dB | 0 % (no corta nunca) | 97 % |
+| Tele con voces de fondo, 10 dB | 92 % | 0 % (no corta nunca) |
+
+Una voz de fondo también es habla para la red. Para ese caso está el gesto de
+terminar, y el pendiente de reconocer la voz del usuario. Medir la energía en
+paralelo para terminar no alcanzó: la tele también la supera en sus sílabas.
+
+Cada dictado deja en el log una línea "Dictado: detector … · fin … · voz … s",
+sin audio ni texto. El fin es `silence`, `max`, `gesture` o `timeout`.
 
 ## Cuando un campo no dicta
 

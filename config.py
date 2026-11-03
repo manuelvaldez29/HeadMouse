@@ -190,6 +190,7 @@ class VoiceConfig:
     sound_cues: bool = True
     commands: bool = True             # "borrar", "borrar palabra", "deshacer"… dichos solos
     after_dictation_ms: float = 600   # gestos bloqueados al terminar (cola del habla)
+    detector: str = "neural"          # "neural" (Silero) o "energy" (volumen, el de antes)
 
     def __post_init__(self):
         for name in ("enabled", "append_space", "sound_cues", "commands"):
@@ -197,6 +198,8 @@ class VoiceConfig:
                 raise ValueError(f"{name} debe ser true o false")
         if self.model not in WHISPER_MODELS:
             raise ValueError("Modelo de voz desconocido")
+        if self.detector not in ("neural", "energy"):
+            raise ValueError("Detector de voz desconocido")
         if not isinstance(self.language, str) or not 2 <= len(self.language) <= 5:
             raise ValueError("Idioma de voz inválido")
         if not isinstance(self.send_word, str) or len(self.send_word) > 30:

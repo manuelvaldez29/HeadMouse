@@ -1022,6 +1022,13 @@ class MainWindow(QMainWindow):
             self.voice_model.addItem(title,value)
         self.voice_model.setAccessibleName("Modelo de voz")
         form.addRow("Modelo de voz",self.voice_model)
+        self.voice_detector=QComboBox()
+        for title,value in (("Neuronal · recomendada con ruido","neural"),("Por volumen · la anterior","energy")):
+            self.voice_detector.addItem(title,value)
+        self.voice_detector.setAccessibleName("Cómo se detecta que empezaste y terminaste de hablar")
+        self.voice_detector.setToolTip("La neuronal distingue la voz de ventiladores, golpes o música. "
+                                       "Con otra persona o la tele hablando de fondo, terminá con un guiño de click.")
+        form.addRow("Detección de voz",self.voice_detector)
         self.voice_send=QComboBox()
         self.voice_send.setEditable(True)
         self.voice_send.addItems(["","enviar"])
@@ -1284,6 +1291,7 @@ class MainWindow(QMainWindow):
         settings["vision"]["capture_backend"]=self.capture_backend_combo.currentData()
         settings["voice"]["enabled"]=self.voice_check.isChecked()
         settings["voice"]["model"]=self.voice_model.currentData()
+        settings["voice"]["detector"]=self.voice_detector.currentData()
         settings["voice"]["send_word"]=self.voice_send.currentText().strip().lower()
         self.bridge.request("save_public_settings",settings=settings,method=public_method)
 
@@ -1612,6 +1620,7 @@ class MainWindow(QMainWindow):
             self.eye_dead_zone_y.setValue(eye["dead_zone"] if eye.get("dead_zone_y") is None else eye["dead_zone_y"])
             self.voice_check.setChecked(s["settings"]["voice"]["enabled"])
             self.voice_model.setCurrentIndex(max(0,self.voice_model.findData(s["settings"]["voice"]["model"])))
+            self.voice_detector.setCurrentIndex(max(0,self.voice_detector.findData(s["settings"]["voice"].get("detector","neural"))))
             self.voice_send.setCurrentText(s["settings"]["voice"]["send_word"])
             voice=s["settings"]["voice"]
             notes=["Con el dictado activo: hacé click en un campo de texto y decí solo el comando. "

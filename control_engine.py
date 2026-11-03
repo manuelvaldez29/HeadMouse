@@ -364,9 +364,12 @@ class ControlEngine:
         if self.dictation is not None and self.dictation.busy:
             self._release_held_mouse()
             # Hablar mueve boca, ojos y cejas: mientras se dicta solo se mueve el
-            # cursor, y el gesto de pausa cancela el dictado en lugar de pausar.
+            # cursor, el gesto de pausa cancela el dictado en lugar de pausar y el
+            # de click lo termina ya (con ruido de fondo el silencio puede no llegar).
             if any(ev.type == "PAUSE" for ev in actions):
                 self.dictation.cancel()
+            elif any(ev.type == EV_LEFT_CLICK for ev in actions) and hasattr(self.dictation, "finish"):
+                self.dictation.finish()
             actions = [ev for ev in actions if ev.type in (EV_CURSOR_MOVE, "CURSOR_ABSOLUTE")]
         toggle = next((ev for ev in actions if ev.type == "PAUSE"), None)
         if toggle is not None and fresh and self.output_allowed.is_set():
