@@ -18,7 +18,12 @@ def voice_check():
     if installed:  # CTranslate2 carga el modelo y transcribe 1 s de silencio
         from dictation import WhisperTranscriber
         WhisperTranscriber(model).transcribe(np.zeros(16000,dtype=np.float32))
+    import sherpa_onnx
+    from speaker import SpeakerModel,model_path as speaker_path
+    if speaker_path():  # huella de 1 s de un tono: 256 números
+        assert len(SpeakerModel().embed(np.sin(np.arange(16000,dtype=np.float32)/8))) == 256
     return dict(faster_whisper=faster_whisper.__version__,ctranslate2=ctranslate2.__version__,
+                sherpa_onnx=sherpa_onnx.__version__,speaker_model=bool(speaker_path()),
                 portaudio=sounddevice.get_portaudio_version()[1],ui_automation=True,
                 model_installed=installed,model_transcribed=installed)
 

@@ -3,3 +3,5 @@
 faster-whisper>=1.0,<2
 comtypes>=1.2
 sounddevice>=0.4
+# Huella de voz: el modelo (~26 MB) se prepara en Configuración o con python -c "import speaker; speaker.download_model()"
+sherpa-onnx==1.13.8

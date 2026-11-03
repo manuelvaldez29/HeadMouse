@@ -554,6 +554,9 @@ class MainWindow(QMainWindow):
         self.eyes_calibration_layout.setSpacing(4)
         self.calibration_tabs.addTab(self.nose_calibration_tab,"Nariz")
         self.calibration_tabs.addTab(self.eyes_calibration_tab,"Ojos")
+        self.voice_calibration_tab=QWidget()
+        self._voice_calibration_ui(QVBoxLayout(self.voice_calibration_tab))
+        self.calibration_tabs.addTab(self.voice_calibration_tab,"Voz")
         page.addWidget(self.calibration_tabs,1)
         # Con desplazamiento sólo al abrir "Más opciones"; la vista normal entra en una sola pantalla.
         scroll=QScrollArea()
@@ -713,7 +716,77 @@ class MainWindow(QMainWindow):
         self.ocular_gesture_layout.setSpacing(4)
         self.ocular_content.addWidget(gestures)
 
+    def _voice_calibration_ui(self,layout):
+        """Pestaña Voz: silencio de la sala, cuatro frases y la huella de voz."""
+        layout.setContentsMargins(0,8,0,0)
+        layout.setSpacing(8)
+        layout.addWidget(label("Como el entrenamiento de voz del celular: 3 segundos en silencio y 4 frases en voz alta. "
+                               "Mide tu sala y tu micrófono, y aprende tu voz para que el dictado ignore la tele u otras "
+                               "personas. No se guarda audio, sólo números.","Subtitle"))
+        self.voice_saved=label("Todavía no calibraste tu voz.","Subtitle")
+        layout.addWidget(self.voice_saved)
+        self.voice_instruction=label("Cuando estés listo, tocá «Calibrar voz».","CalibrationInstruction")
+        layout.addWidget(self.voice_instruction)
+        self.voice_phrase=label("","BigInstruction")
+        self.voice_phrase.setAccessibleName("Frase para leer en voz alta")
+        layout.addWidget(self.voice_phrase)
+        row=QHBoxLayout()
+        self.voice_progress=QProgressBar()
+        self.voice_progress.setRange(0,100)
+        self.voice_progress.setMaximumHeight(20)
+        row.addWidget(self.voice_progress,3)
+        self.voice_level=QProgressBar()
+        self.voice_level.setRange(0,100)
+        self.voice_level.setMaximumHeight(20)
+        self.voice_level.setFormat("micrófono")
+        self.voice_level.setAccessibleName("Nivel del micrófono")
+        row.addWidget(self.voice_level,1)
+        layout.addLayout(row)
+        self.voice_result=label("","Subtitle")
+        layout.addWidget(self.voice_result)
+        actions=QHBoxLayout()
+        self.voice_start=button("Calibrar voz",lambda:self.bridge.request("start_voice_calibration"),"CalibrationHero")
+        self.voice_cancel=button("Cancelar",lambda:self.bridge.request("cancel_voice_calibration"))
+        self.voice_save=button("Guardar en mi perfil",lambda:self.bridge.request("save_voice_calibration"),"CalibrationHero")
+        self.voice_speaker_button=button("Preparar reconocimiento de voz (≈ 26 MB, requiere Internet una vez)",
+                                         lambda:self.bridge.request("prepare_speaker_model"))
+        for widget in (self.voice_start,self.voice_cancel,self.voice_save):
+            actions.addWidget(widget)
+        actions.addStretch()
+        layout.addLayout(actions)
+        layout.addWidget(self.voice_speaker_button)
+        layout.addStretch()
+
+    def _present_voice_calibration(self,s):
+        wizard,saved=s.get("voice_wizard"),s.get("voice_calibration")
+        if saved:
+            when=saved.get("calibrated_at","")[:10]
+            self.voice_saved.setText(f"Última calibración {when}: voz {saved['snr_db']:+.0f} dB sobre el ruido · "
+                                     f"Whisper entendió {saved['accuracy']:.0%} · "
+                                     + ("huella de voz guardada ✓" if saved.get("voiceprint") else "sin huella de voz"))
+        state=(wizard or {}).get("state","ready")
+        running=state in ("silence","phrase","processing")
+        self.voice_instruction.setText((wizard or {}).get("message") or "Cuando estés listo, tocá «Calibrar voz».")
+        self.voice_phrase.setText(f"«{wizard['phrase']}»" if wizard and wizard.get("phrase") else "")
+        self.voice_progress.setValue(int(((wizard or {}).get("progress") or 0)*100))
+        self.voice_level.setValue(min(100,int(((wizard or {}).get("level") or 0)*1000)))
+        result=(wizard or {}).get("result")
+        if result:
+            self.voice_result.setText(f"Voz {result['snr_db']:+.0f} dB sobre el ruido · Whisper entendió "
+                                      f"{result['accuracy']:.0%} · "
+                                      + ("huella de voz lista ✓" if result.get("voiceprint") else "sin huella de voz")
+                                      + "\n" + "\n".join("• "+tip for tip in result.get("recommendations",[])))
+        elif not running:
+            self.voice_result.setText("")
+        self.voice_start.setEnabled(not running and bool(s.get("profile")))
+        self.voice_start.setText("Repetir calibración" if state in ("done","error","cancelled") or saved else "Calibrar voz")
+        self.voice_cancel.setVisible(running)
+        self.voice_save.setVisible(state=="done")
+        self.voice_speaker_button.setVisible(not (s.get("models") or {}).get("speaker",True))
+
     def calibration_tab_changed(self,index):
+        if index==2:
+            return  # Voz no cambia de método ni mueve la lista de gestos
         target=self.nose_calibration_layout if index==0 else self.ocular_gesture_layout
         target.addWidget(self.gesture_calibration_scroll,1)
         self.gesture_calibration_scroll.show()
@@ -1540,6 +1613,7 @@ class MainWindow(QMainWindow):
         self._present_status(s)
         self._present_dictation(s.get("dictation"))
         self._present_models(s.get("models") or {})
+        self._present_voice_calibration(s)
         enabled=s["control_enabled"]
         p=s["profile"]
         if enabled and s["settings"]["ui"]["tracking_method"] == "eye_absolute":

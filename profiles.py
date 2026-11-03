@@ -36,6 +36,9 @@ def validate_profile(data):
         raise ValueError("Estado de validación inválido")
     if type(data.get("schema_version", 1)) is not int or data.get("schema_version", 1) not in (1, 2):
         raise ValueError("Versión de perfil no soportada")
+    if "voice_calibration" in data:
+        from voice_calibration import validate_voice_calibration
+        validate_voice_calibration(data["voice_calibration"])
     if "tracking_calibration" in data:
         from tracking_calibration import TrackingCalibration
         TrackingCalibration.from_record(data["tracking_calibration"])

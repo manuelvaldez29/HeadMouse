@@ -13,7 +13,7 @@ from config import VoiceConfig, load_config
 from control_engine import ControlEngine
 from dictation import Dictation, Endpointer, FocusInfo, SAMPLE_RATE, SileroDetector, detector_factory
 from gesture_engine import GestureEvent
-from test_dictation import FakeFocus, FakeRecorder
+from test_dictation import FakeFocus
 
 
 class ScriptedDetector:
@@ -56,10 +56,19 @@ class NeuralEndpointerTests(unittest.TestCase):
         e.finish()
         self.assertEqual((e.state, e.end_reason), ("done", "gesture"))
         self.assertGreater(len(e.audio()), 0)
-        quiet = Endpointer(detector=ScriptedDetector([], tail=False))
-        quiet.feed(frames(5))
-        quiet.finish()
-        self.assertEqual((quiet.state, quiet.end_reason), ("timeout", "gesture"))
+
+    def test_finish_before_speaking_or_right_after_starting_is_ignored(self):
+        # 2026-11-03: un guiño suelto 1,5-2 s después del click cerraba con "no se escuchó nada".
+        quiet = Endpointer(no_speech_s=6, detector=ScriptedDetector([False] * 40 + [True] * 60, tail=False))
+        quiet.feed(frames(20))
+        self.assertFalse(quiet.finish())
+        self.assertEqual(quiet.state, "waiting")  # sigue esperando tu voz
+        quiet.feed(frames(25))                    # empezaste a hablar hace ~0,2 s
+        self.assertEqual(quiet.state, "speech")
+        self.assertFalse(quiet.finish())
+        quiet.feed(frames(20))                    # ya hablaste más de medio segundo
+        self.assertTrue(quiet.finish())
+        self.assertEqual((quiet.state, quiet.end_reason), ("done", "gesture"))
 
     def test_end_reasons_for_the_log(self):
         e = Endpointer(max_s=1, detector=ScriptedDetector([], tail=True))
@@ -92,13 +101,26 @@ class SileroDetectorTests(unittest.TestCase):
         self.assertIsNot(factory(), factory())  # estado nuevo en cada dictado
 
 
+class RealTimeRecorder:
+    """Silencio entregado a velocidad real (30 ms cada 30 ms), como un micrófono."""
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        pass
+
+    def read(self, timeout=.2):
+        time.sleep(.03)
+        return [0.] * 480
+
+
 class FinishGestureTests(unittest.TestCase):
     def test_finish_types_without_waiting_for_silence(self):
         typer, transcriber = Mock(), Mock()
         transcriber.transcribe.return_value = "hola"
-        endless = [0.] * (SAMPLE_RATE * 30)  # el silencio no llega nunca
         d = Dictation(VoiceConfig(enabled=True, after_dictation_ms=0), FakeFocus(FocusInfo(True)),
-                      lambda: FakeRecorder(endless), transcriber, typer,
+                      RealTimeRecorder, transcriber, typer,
                       detector_factory=lambda: ScriptedDetector([], tail=True))
         d.start()
         self.addCleanup(d.close)
@@ -106,7 +128,10 @@ class FinishGestureTests(unittest.TestCase):
         deadline = time.monotonic() + 3
         while d.state != "listening" and time.monotonic() < deadline:
             time.sleep(.01)
-        time.sleep(.1)
+        d.finish()   # guiño suelto apenas empieza: no cierra
+        time.sleep(.3)
+        self.assertEqual(d.state, "listening")
+        time.sleep(.6)  # ya habló más de medio segundo
         d.finish()
         while d.state != "idle" and time.monotonic() < deadline:
             time.sleep(.01)

@@ -75,7 +75,10 @@ gestos sí cuentan mientras escucha:
   y "Detener control" también lo cancelan, y no se escribe nada después.
 - El gesto de click **termina ya y transcribe** lo dicho, sin esperar el
   silencio (2026-11-03). Con otra persona o la tele hablando de fondo, el
-  silencio puede no llegar nunca.
+  silencio puede no llegar nunca. Antes de hablar, y en el primer medio segundo
+  de habla, el gesto se ignora (queda en el log). Un guiño suelto 1,5-2 s
+  después del click cerraba el dictado con "no se escuchó nada" antes de que
+  el usuario empezara.
 
 ### Detección de voz (2026-11-03)
 
@@ -100,9 +103,57 @@ Whisper `small`, 4 frases por caso:
 | Golpes y vajilla, 10 y 5 dB | 0 % (no corta nunca) | 97 % |
 | Tele con voces de fondo, 10 dB | 92 % | 0 % (no corta nunca) |
 
-Una voz de fondo también es habla para la red. Para ese caso está el gesto de
-terminar, y el pendiente de reconocer la voz del usuario. Medir la energía en
-paralelo para terminar no alcanzó: la tele también la supera en sus sílabas.
+Una voz de fondo también es habla para la red. Para eso están el gesto de
+terminar y la huella de voz (abajo). Medir la energía en paralelo para terminar
+no alcanzó: la tele también la supera en sus sílabas.
+
+### Calibración de voz y huella de voz (2026-11-03)
+
+En Calibración → **Voz**: 3 s en silencio y 4 frases en voz alta
+(`voice_calibration.PHRASES`). Tarda menos de un minuto y no guarda audio.
+Mide:
+- el ruido de la sala;
+- el nivel de la voz y la relación voz/ruido;
+- cuánta voz hubo durante el silencio (tele, gente);
+- cuánto entiende Whisper: palabras bien sobre el texto de cada frase.
+
+Con esas frases arma la **huella de voz** (`speaker.enroll`, WeSpeaker ResNet34
+por sherpa-onnx). Da recomendaciones (micrófono de auricular, supresión de ruido
+de Windows, hablar más lento, modelo `small`) y se guarda en el perfil como
+`voice_calibration`.
+
+**La huella sólo decide el final del dictado:** cuando sigue habiendo voz pero
+ya no es la del usuario, termina (`end_reason = speaker`) y recorta esa cola.
+Nunca borra palabras del medio.
+- Umbral: el p10 de las frases propias, dejando una afuera, menos 0,14 (entre
+  0,5 y 0,75). Además baja si al empezar el dictado el usuario suena peor: las
+  primeras ventanas siempre cuentan como suyas y se toma la mejor como
+  referencia, menos 0,12. Ante la duda no corta, y queda el guiño.
+- La huella mezcla cada frase tal cual y con el ruido de la sala 10 dB por
+  debajo (o ruido genérico si la sala estaba en silencio). Grabada sólo en
+  silencio, con un ventilador después confundía al usuario con otras voces.
+- Se compara cada 0,5 s una ventana de 1,5 s (~60 ms de CPU).
+- Se apaga con `voice.speaker_check: false`; requiere `voice.detector: neural`.
+
+El modelo (≈ 26 MB, SHA-256 verificado) se prepara desde la pestaña Voz o con
+`python -c "import speaker; speaker.download_model()"` y queda en
+`%LOCALAPPDATA%\HeadMouse\models\speaker`. Sin modelo, la calibración igual mide
+y recomienda, pero no guarda huella.
+
+Banco con el código real (voces sintéticas de Windows: Helena dicta, Zira es la
+tele, 6 frases por caso):
+
+| Situación | Sin huella | Con huella |
+|---|---|---|
+| Tele 10 dB por debajo, sigue 5 s | no corta (0/6) | corta 6/6, ninguno temprano |
+| Tele 6 dB por debajo | no corta (0/6) | corta 6/6, ninguno temprano |
+| Ventilador a 3 dB prendido después de calibrar | 6/6 por silencio | 6/6 por silencio, ninguno temprano |
+| Sala en silencio | 6/6 | 6/6 |
+
+De punta a punta (calibración real con Whisper, Silero y WeSpeaker y después
+dictado con la tele): la calibración entendió 100 %. La huella cortó 6/6 con la
+tele a 10 dB y 4/6 a 6 dB; las otras 2 no cortaron solas, ninguna antes de
+tiempo. Las voces sintéticas son muy constantes: falta validarlo con personas.
 
 Cada dictado deja en el log una línea "Dictado: detector … · fin … · voz … s",
 sin audio ni texto. El fin es `silence`, `max`, `gesture` o `timeout`.

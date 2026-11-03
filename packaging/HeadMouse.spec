@@ -15,15 +15,16 @@ for package in ('mediapipe','cv2'):
 # con onnxruntime, micrófono con sounddevice/PortAudio y foco con UI Automation (comtypes).
 # Se importan dentro de funciones: collect_all asegura DLL, datos (el VAD .onnx) y submódulos.
 # El modelo Whisper no se incluye: se descarga una vez desde Configuración.
-for package in ('faster_whisper','ctranslate2','onnxruntime','av','tokenizers','_sounddevice_data'):
+# Huella de voz (2026-11-03): sherpa-onnx; el modelo WeSpeaker se descarga desde Configuración.
+for package in ('faster_whisper','ctranslate2','onnxruntime','av','tokenizers','_sounddevice_data','sherpa_onnx'):
     d,b,h=collect_all(package);datas+=d;binaries+=b;hidden+=h
 for distribution in ('mediapipe','opencv-contrib-python','numpy','PySide6','PyAutoGUI',
                      'faster-whisper','ctranslate2','onnxruntime','av','tokenizers','huggingface-hub',
-                     'tqdm','sounddevice','comtypes'):
+                     'tqdm','sounddevice','comtypes','sherpa-onnx','sherpa-onnx-core'):
     datas+=copy_metadata(distribution)
 a=Analysis([str(root/'app.py')],pathex=[str(root)],binaries=binaries,datas=datas,
     hiddenimports=hidden+['PySide6.QtNetwork','PySide6.QtSvg','pyautogui._pyautogui_win',
-                          'dictation','sounddevice','comtypes.client','comtypes.stream'],
+                          'dictation','speaker','voice_calibration','sounddevice','comtypes.client','comtypes.stream'],
     excludes=['pytest','IPython','PySide6.QtWebEngineCore','PySide6.QtWebEngineWidgets','PySide6.QtPdf'],
     hooksconfig={'matplotlib': {'backends': ['Agg']}},
     noarchive=False)

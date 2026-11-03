@@ -33,6 +33,8 @@ class ApplicationController:
         self.dictation_factory = dictation_factory
         self.dictation = None
         self._voice_download = None
+        self._speaker_download = None
+        self.voice_wizard = None  # calibración de voz en curso (VoiceCalibration)
         self._models, self._models_checked = {}, -1e9
         self.data_dir = Path(data_dir) if data_dir else data_root()
         self.clock = clock
@@ -477,12 +479,71 @@ class ApplicationController:
                 self.dictation = self.dictation_factory(self.config.voice, self.metrics)
             else:
                 from dictation import create_dictation
-                self.dictation = create_dictation(self.config.voice, self.metrics)
+                self.dictation = create_dictation(self.config.voice, self.metrics, voiceprint=self._voiceprint())
             self.dictation.start()
-            return " Dictado por voz activo."
+            return " Dictado por voz activo." + ("" if self._voiceprint() else
+                                                 " Calibrá tu voz para que ignore otras voces.")
         except Exception as exc:
             self.dictation = None
             return f" Dictado no disponible: {exc}"
+
+    def _voiceprint(self):
+        return ((self.profile or {}).get("voice_calibration") or {}).get("voiceprint")
+
+    def start_voice_calibration(self):
+        """Silencio + 4 frases. Usa el micrófono: se apaga el control (y su dictado) antes."""
+        self._require_profile()
+        if self.voice_wizard and self.voice_wizard.state in ("silence", "phrase", "processing"):
+            raise ValueError("La calibración de voz ya está en curso")
+        from dictation import SoundDeviceRecorder, WhisperTranscriber, detector_factory, installed_model
+        if installed_model(self.config.voice.model) is None:
+            raise ValueError(f"Falta el modelo de voz '{self.config.voice.model}': preparalo en Configuración")
+        self.stop_control()
+        speaker_model = None
+        try:
+            from speaker import SpeakerModel, model_path
+            speaker_model = SpeakerModel() if model_path() else None
+        except Exception:
+            logging.getLogger(__name__).warning("Calibración de voz sin huella", exc_info=True)
+        from voice_calibration import VoiceCalibration
+        self.voice_wizard = VoiceCalibration(self.config.voice, SoundDeviceRecorder,
+                                             WhisperTranscriber(self.config.voice.model),
+                                             detector_factory(self.config.voice), speaker_model)
+        self.voice_wizard.start()
+        self.message = "Calibración de voz: seguí las indicaciones de la pestaña Voz."
+
+    def cancel_voice_calibration(self):
+        if self.voice_wizard:
+            self.voice_wizard.cancel()
+        self.message = "Calibración de voz cancelada."
+
+    def save_voice_calibration(self):
+        wizard = self.voice_wizard
+        if not wizard or wizard.state != "done" or not wizard.result:
+            raise ValueError("Todavía no hay una calibración de voz terminada")
+        self._require_profile()
+        candidate = dict(self.profile, voice_calibration=wizard.result)
+        self.profiles.store.save(candidate)
+        self.profile = self.profiles.store.load(self.profile["user_id"])
+        self.voice_wizard = None
+        self.message = ("Calibración de voz guardada" + (" con tu huella de voz." if wizard.result.get("voiceprint")
+                        else ". Sin huella: prepará el reconocimiento de voz en Configuración.")
+                        + " Se usa la próxima vez que inicies el control.")
+
+    def prepare_speaker_model(self):
+        """Modelo de reconocimiento de voz (≈ 26 MB), en segundo plano y verificado por SHA-256."""
+        if self._speaker_download and self._speaker_download.is_alive():
+            raise ValueError("La descarga del reconocimiento de voz ya está en curso")
+        def download():
+            try:
+                from speaker import download_model
+                download_model()
+                self.message = "Reconocimiento de voz listo. Calibrá tu voz en Calibración → Voz."
+            except Exception as exc:
+                self.message = f"No se pudo preparar el reconocimiento de voz: {exc}"
+        self.message = "Descargando el reconocimiento de voz (≈ 26 MB)… podés seguir usando la aplicación."
+        self._speaker_download = threading.Thread(target=download, name="SpeakerDownload", daemon=True)
+        self._speaker_download.start()
 
     def prepare_voice_model(self, model=None):
         """Descarga en segundo plano: puede tardar minutos y no debe frenar la GUI."""
@@ -1117,6 +1178,10 @@ class ApplicationController:
                     jitter=self.jitter_result, jitter_remaining=max(0, self.jitter.duration_s-(self.clock()-self.jitter.started)) if self.jitter else None,
                     metrics=self.metrics.snapshot() if self.metrics else {}, history=deepcopy(self.history),
                     dictation=self.dictation.snapshot() if self.dictation else None,
+                    voice_wizard=self.voice_wizard.snapshot() if self.voice_wizard else None,
+                    voice_calibration={k: v for k, v in ((self.profile or {}).get("voice_calibration") or {}).items()
+                                       if k != "voiceprint"} | {"voiceprint": bool(self._voiceprint())}
+                    if (self.profile or {}).get("voice_calibration") else None,
                     models=self._model_status())
 
     def _model_status(self):
@@ -1127,8 +1192,10 @@ class ApplicationController:
             from dictation import installed_model
             face = Path(self.config.vision.model_path)
             face = face if face.is_absolute() else face_model_path(face)
+            from speaker import model_path as speaker_model_path
             self._models = dict(face=face.is_file() and face.stat().st_size > 0,
-                                voice={m: installed_model(m) is not None for m in WHISPER_MODELS})
+                                voice={m: installed_model(m) is not None for m in WHISPER_MODELS},
+                                speaker=speaker_model_path() is not None)
             self._models_checked = now
         return self._models
 
@@ -1140,6 +1207,8 @@ class ApplicationController:
             self.state, self.message = "ERROR", str(message)
 
     def shutdown(self):
+        if self.voice_wizard:
+            self.voice_wizard.cancel()
         self.stop_camera()
         self.closed = True
         self.state = "CLOSED"

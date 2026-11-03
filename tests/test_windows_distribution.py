@@ -272,11 +272,11 @@ class DistributionVoiceTests(unittest.TestCase):
     def test_spec_bundles_the_dictation_engine_but_no_whisper_model(self):
         from app_paths import RESOURCE_ROOT
         spec=(RESOURCE_ROOT/'packaging'/'HeadMouse.spec').read_text(encoding='utf-8')
-        for package in ('faster_whisper','ctranslate2','onnxruntime','_sounddevice_data','comtypes.client'):
+        for package in ('faster_whisper','ctranslate2','onnxruntime','_sounddevice_data','comtypes.client','sherpa_onnx'):
             self.assertIn(f"'{package}'",spec)
         self.assertNotIn('models/whisper',spec)  # el modelo se descarga, no se distribuye
         lock=(RESOURCE_ROOT/'packaging'/'requirements-windows-py312-build.lock.txt').read_text(encoding='utf-8')
-        for pin in ('faster-whisper==','ctranslate2==','comtypes==','sounddevice=='):
+        for pin in ('faster-whisper==','ctranslate2==','comtypes==','sounddevice==','sherpa-onnx=='):
             self.assertIn(pin,lock)
 
     @unittest.skipUnless(__import__('importlib.util').util.find_spec('faster_whisper'),'sin requirements-voice.txt')

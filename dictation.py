@@ -90,9 +90,10 @@ class Endpointer:
 
     def __init__(self, silence_s=1.2, max_s=20, no_speech_s=6, rate=SAMPLE_RATE,
                  calibration_ms=300, ratio=3.0, floor=0.004, preroll_ms=300, onset_frames=3,
-                 detector=None):
+                 detector=None, speaker=None):
         self.rate, self.silence_s, self.max_s, self.no_speech_s = rate, silence_s, max_s, no_speech_s
         self.detector = detector
+        self.speaker = speaker  # SpeakerGate: termina cuando el usuario deja de hablar aunque siga otra voz
         self.frame = detector.frame if detector is not None else int(rate * self.FRAME_MS / 1000)
         self.frame_ms = self.frame * 1000 / rate
         self.calibration_frames = 0 if detector is not None else max(1, int(calibration_ms // self.frame_ms))
@@ -111,12 +112,21 @@ class Endpointer:
     def threshold(self):
         return max(self.floor, (self.noise or 0) * self.ratio)
 
+    FINISH_AFTER_S = .5  # habla mínima para que el gesto de terminar cuente
+
     def finish(self):
-        """Terminar ya (gesto): con habla se transcribe lo dicho; sin habla, nada."""
-        if self.state == "speech":
-            self.state, self.end_reason = "done", "gesture"
-        elif self.state == "waiting":
-            self.state, self.end_reason = "timeout", "gesture"
+        """Terminar ya (gesto) y transcribir lo dicho. Devuelve si terminó.
+
+        Antes de hablar, o en el primer medio segundo de habla, no hace nada: un
+        guiño suelto 1,5-2 s después del click cerraba el dictado con "no se
+        escuchó nada" antes de que el usuario empezara (log del 2026-11-03).
+        """
+        if self.state != "speech" or self.speech_start is None:
+            return False
+        if (len(self.frames) - self.speech_start - self.preroll) * self.frame_ms / 1000 < self.FINISH_AFTER_S:
+            return False
+        self.state, self.end_reason = "done", "gesture"
+        return True
 
     def feed(self, samples):
         """Agrega muestras float en [-1, 1]; devuelve el estado: waiting, speech, done o timeout."""
@@ -151,8 +161,16 @@ class Endpointer:
             return
         self._silent = 0 if loud else self._silent + 1
         speech_s = (index - self.speech_start) * self.frame_ms / 1000
+        if self.speaker is not None:
+            self.speaker.update(self.frames, self.speech_start)
+            others = self.speaker.silent_frames(index)
+        else:
+            others = None
         if self._silent * self.frame_ms / 1000 >= self.silence_s:
             self.state, self.end_reason = "done", "silence"
+        elif others is not None and others * self.frame_ms / 1000 >= self.silence_s:
+            # Sigue habiendo voz, pero no es la del usuario: termina y recorta esa cola.
+            self.state, self.end_reason, self._silent = "done", "speaker", others
         elif speech_s >= self.max_s:
             self.state, self.end_reason = "done", "max"
 
@@ -262,9 +280,10 @@ class Dictation:
     """
 
     def __init__(self, config: VoiceConfig, focus, recorder_factory, transcriber, typer,
-                 clock=time.monotonic, metrics=None, cue=None, detector_factory=None):
+                 clock=time.monotonic, metrics=None, cue=None, detector_factory=None, speaker_factory=None):
         self.config, self.focus, self.recorder_factory = config, focus, recorder_factory
         self.detector_factory = detector_factory  # None: detección por energía
+        self.speaker_factory = speaker_factory    # None: sin huella de voz
         self.transcriber, self.typer, self.clock, self.metrics = transcriber, typer, clock, metrics
         self.cue = cue or (lambda kind: None)
         self.state, self.message, self.last_text = "idle", "", ""
@@ -394,21 +413,27 @@ class Dictation:
                                    "decí «borrar» para corregir · ambas cejas cancelan.")
         endpoint = Endpointer(self.config.silence_s, self.config.max_utterance_s,
                               self.config.no_speech_timeout_s,
-                              detector=self.detector_factory() if self.detector_factory else None)
+                              detector=self.detector_factory() if self.detector_factory else None,
+                              speaker=self.speaker_factory() if self.speaker_factory else None)
         with self.recorder_factory() as recorder:
             while endpoint.state not in ("done", "timeout"):
                 if self._cancel.is_set():
                     break
                 if self._finish.is_set():
-                    endpoint.finish()
-                    break
+                    self._finish.clear()
+                    if endpoint.finish():
+                        break
+                    logger.info("Dictado: gesto de terminar ignorado (todavía no hablaste)")
                 block = recorder.read(timeout=.2)
                 if block is not None:
                     endpoint.feed(block)
         # Sin audio ni texto: cómo se decidió el final, para leer en el log qué falla con ruido.
-        logger.info("Dictado: detector %s · fin %s · voz %.1f s", "neuronal" if endpoint.detector else "energía",
+        gate = endpoint.speaker
+        logger.info("Dictado: detector %s · fin %s · voz %.1f s · huella %s", "neuronal" if endpoint.detector else "energía",
                     endpoint.end_reason or ("cancel" if self._cancel.is_set() else "?"),
-                    len(endpoint.audio()) / SAMPLE_RATE)
+                    len(endpoint.audio()) / SAMPLE_RATE,
+                    f"inicio {gate.start_score:.2f} mín {min(gate.scores):.2f} umbral {gate.threshold:.2f}"
+                    if gate and gate.scores else "sin datos" if gate else "no")
         if self._cancel.is_set():
             self.cue("cancel")
             with self._lock:
@@ -854,7 +879,7 @@ def sound_cue(kind):
         pass
 
 
-def create_dictation(config: VoiceConfig, metrics=None):
+def create_dictation(config: VoiceConfig, metrics=None, voiceprint=None):
     """Dictado real de Windows. Falla temprano si faltan dependencias o modelo."""
     missing = [name for name in ("faster_whisper", "comtypes", "sounddevice")
                if importlib.util.find_spec(name) is None]
@@ -866,7 +891,20 @@ def create_dictation(config: VoiceConfig, metrics=None):
                            "Preparalo en Configuración o con: python dictation.py --download-model")
     return Dictation(config, UIAFocusProbe(), SoundDeviceRecorder, WhisperTranscriber(config.model),
                      SendInputTyper(), metrics=metrics, cue=sound_cue if config.sound_cues else None,
-                     detector_factory=detector_factory(config))
+                     detector_factory=detector_factory(config), speaker_factory=speaker_factory(config, voiceprint))
+
+
+def speaker_factory(config, voiceprint):
+    """Huella de voz si hay calibración de voz, detector neuronal y modelo; si no, None."""
+    if not voiceprint or not config.speaker_check or config.detector != "neural":
+        return None
+    try:
+        from speaker import SpeakerGate, SpeakerModel
+        model = SpeakerModel()
+    except Exception:
+        logger.warning("Sin huella de voz (sherpa-onnx o el modelo): el dictado termina por silencio", exc_info=True)
+        return None
+    return lambda: SpeakerGate(model, voiceprint)
 
 
 def detector_factory(config):

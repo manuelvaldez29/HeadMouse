@@ -191,9 +191,10 @@ class VoiceConfig:
     commands: bool = True             # "borrar", "borrar palabra", "deshacer"… dichos solos
     after_dictation_ms: float = 600   # gestos bloqueados al terminar (cola del habla)
     detector: str = "neural"          # "neural" (Silero) o "energy" (volumen, el de antes)
+    speaker_check: bool = True        # con calibración de voz: terminar cuando deja de hablar el usuario
 
     def __post_init__(self):
-        for name in ("enabled", "append_space", "sound_cues", "commands"):
+        for name in ("enabled", "append_space", "sound_cues", "commands", "speaker_check"):
             if type(getattr(self, name)) is not bool:
                 raise ValueError(f"{name} debe ser true o false")
         if self.model not in WHISPER_MODELS:

@@ -19,7 +19,9 @@ class TwoMethodGUITests(unittest.TestCase):
         for selector in (self.window.home_method,self.window.tracking_combo):
             self.assertEqual(selector.count(),2)
             self.assertEqual([selector.itemText(i) for i in range(2)],["Nariz","Ojos"])
-        self.assertEqual(self.window.calibration_tabs.count(),2)
+        # Métodos de control: Nariz y Ojos. Voz (2026-11-03) es la calibración del dictado, no un método.
+        tabs=self.window.calibration_tabs
+        self.assertEqual([tabs.tabText(i) for i in range(tabs.count())],["Nariz","Ojos","Voz"])
         self.window.home_method.setCurrentIndex(1)
         self.window.home_method.activated.emit(1)
         self.wait(lambda:self.bridge.snapshot()["public_method"]=="eyes")
@@ -29,6 +31,25 @@ class TwoMethodGUITests(unittest.TestCase):
         self.assertEqual(self.bridge.snapshot()["profile"]["user_id"],"julian")
         self.assertFalse(hasattr(self.window,"eye_setup_dialog"))
         self.backend_factory.assert_not_called()
+
+    def test_voice_tab_shows_the_phrase_and_saving_without_changing_method(self):
+        self.select_calibrated();self.window.refresh()
+        method=self.bridge.snapshot()["public_method"]
+        self.window.calibration_tabs.setCurrentIndex(2)
+        self.app.processEvents()
+        self.assertEqual(self.bridge.snapshot()["public_method"],method)
+        s=dict(self.bridge.snapshot(),voice_wizard=dict(state="phrase",phrase="Hoy quiero escribir.",message="Leé:",
+                                                       progress=.3,level=.02,result=None))
+        self.window._present_voice_calibration(s)
+        self.assertIn("Hoy quiero escribir.",self.window.voice_phrase.text())
+        self.assertFalse(self.window.voice_start.isEnabled())
+        self.assertTrue(self.window.voice_save.isHidden())
+        s["voice_wizard"]=dict(state="done",phrase="",message="Listo.",progress=1,level=0,
+                               result=dict(snr_db=24,accuracy=.95,voiceprint={"x":1},recommendations=["Todo bien."]))
+        self.window._present_voice_calibration(s)
+        self.assertFalse(self.window.voice_save.isHidden())
+        self.assertIn("95%",self.window.voice_result.text())
+        self.assertIn("Todo bien.",self.window.voice_result.text())
 
     def test_fullscreen_calibration_receives_frames_by_qt_signal_from_one_vision(self):
         self.select_calibrated()
