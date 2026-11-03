@@ -73,7 +73,7 @@ class CalibrationGUIRegressionTests(unittest.TestCase):
                         attempts.add((snap["gesture_id"],snap["attempt"]))
                         self.assertIn(f"Intento {snap['attempt']}/3",window.wizard_status.text())
                 self.assertEqual(c.wizard.state,"validation")
-                self.assertEqual(len(attempts),18)
+                self.assertEqual(len(attempts),24)
                 self.assertIn("Probando",window.calibration_primary.text())
                 c.validate_calibration()  # reiniciar la prueba también funciona
                 snap=tick()

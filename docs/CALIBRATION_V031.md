@@ -42,8 +42,33 @@ gestos opcionales. La misma señal calibrada se usa al detectar y validar.
 Los perfiles anteriores conservan compatibilidad explícita; una señal ausente
 no se sustituye silenciosamente por otra con una escala distinta.
 
-`gesture_signals.py` registra los seis gestos: LEFT_WINK, RIGHT_WINK, LEFT_BROW,
-RIGHT_BROW, MOUTH_OPEN y BOTH_BROWS. Agregar una señal futura requiere declarar
+`gesture_signals.py` registra seis gestos obligatorios: LEFT_WINK, RIGHT_WINK,
+MOUTH_LEFT y MOUTH_RIGHT (labios a los costados, scroll, desde el 2026-11-02),
+MOUTH_OPEN y BOTH_BROWS. Registra además tres opcionales: un perfil sin su
+calibración sigue siendo válido y los tiene apagados.
+
+**Cejas separadas: LEFT_BROW y RIGHT_BROW.**
+- El 2026-11-02 se habían reemplazado por los labios; volvieron el 2026-11-03 como
+  gestos propios, con su evento (no `SCROLL_UP`, que es de los labios). Su acción
+  inicial también es scroll.
+- Arrancan tildadas en Calibración: quien no las quiera las destilda.
+- El árbitro de cejas vuelve a separar "una ceja" de "ambas cejas". Sin cejas
+  separadas habilitadas, ambas cejas decide al instante.
+
+**Besito: KISS.**
+- Señal: el ancho de la boca (comisuras 61-291 sobre la interocular 3D, dirección
+  −1), con `mouthPucker` ≥ 0,4 como control fijo.
+- La primera versión usaba sólo `mouthPucker`. En la calibración real marcó 0,85-0,93
+  con la cara relajada (labios cerrados o apretados) y 0,03-0,35 en otros momentos
+  de reposo, el mismo rango que el besito (0,8-1,0). Apretar los labios no angosta
+  la boca.
+- Es opt-in: se calibra sólo si se tilda en Calibración → Más opciones, y después el
+  perfil lo recuerda. Su acción inicial es doble click.
+- No se dispara con la boca abierta, con los labios corridos ni durante un guiño.
+- Un registro de besito con la señal vieja se descarta al cargar el perfil, sin
+  tocar su validación.
+
+Agregar una señal futura requiere declarar
 su extractor, canales y dirección, y conectar su identidad/instrucción/evento a
 la aplicación; no reescribir el ajuste ni la histéresis. Una prueba usa una señal
 nueva sin modificar el motor estadístico. Los guiños activan al disminuir;

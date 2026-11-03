@@ -25,13 +25,16 @@ class CalibrationSession:
         if self.source not in SOURCES:
             raise ValueError("Fuente de calibración inválida")
         previous=profile.get("gesture_calibrations",{})
-        availability={key:previous.get(key,{}).get("enabled",True) for key in GESTURE_SIGNALS}
+        # El besito (opt-in) se calibra sólo si se tilda; después el perfil lo recuerda.
+        # Así no alarga la calibración de quien no lo usa.
+        availability={key:previous.get(key,{}).get("enabled",not s.opt_in) for key,s in GESTURE_SIGNALS.items()}
         if enabled is not None:
             if not isinstance(enabled,dict) or set(enabled)-set(GESTURE_SIGNALS) or any(type(v) is not bool for v in enabled.values()):
                 raise ValueError("Disponibilidad de gestos inválida")
             availability.update(enabled)
         self.models={key:GestureCalibration(key,s.channels,s.directions,
-                                           self.source if s.brow else "GEOMETRIC",availability[key])
+                                           self.source if s.brow else "GEOMETRIC",
+                                           availability[key])
                      for key,s in GESTURE_SIGNALS.items()}
         for model in self.models.values():
             if not model.enabled: model.disable()
@@ -180,7 +183,7 @@ class CalibrationSession:
                 if rows:
                     model.neutral_statistics={channel:statistics([row[i] for row in rows])
                                               for i,channel in enumerate(model.channels)}
-            elif model.source=="GEOMETRIC" and len(spec.channels)==1:
+            elif model.source=="GEOMETRIC" and len(spec.channels)==1 and spec.legacy_keys:
                 thresholds[spec.legacy_keys[0]]=model.activation_threshold[spec.channels[0]]
         return dict(user_id=self.profile["user_id"],display_name=self.profile.get("display_name",self.profile["user_id"]),
                     calibrated_at=datetime.now(timezone.utc).isoformat(),calibration_version="0.3.1",
@@ -225,7 +228,9 @@ class CalibrationSession:
 
     def _relax_hint(self):
         return {"LEFT_WINK":"el ojo izquierdo","RIGHT_WINK":"el ojo derecho","MOUTH_LEFT":"los labios",
-                "MOUTH_RIGHT":"los labios","MOUTH_OPEN":"la boca","BOTH_BROWS":"las cejas"}.get(self.gesture_id,"la cara")
+                "MOUTH_RIGHT":"los labios","MOUTH_OPEN":"la boca","BOTH_BROWS":"las cejas",
+                "LEFT_BROW":"la ceja izquierda","RIGHT_BROW":"la ceja derecha",
+                "KISS":"los labios"}.get(self.gesture_id,"la cara")
 
     def _state_key(self):
         model=self.models.get(self.gesture_id)

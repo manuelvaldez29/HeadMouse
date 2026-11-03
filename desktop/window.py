@@ -10,18 +10,23 @@ from PySide6.QtWidgets import (QMainWindow, QWidget, QFrame, QVBoxLayout, QHBoxL
     QMessageBox, QFormLayout, QDoubleSpinBox, QSpinBox, QCheckBox, QProgressBar,
     QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView, QApplication, QLineEdit, QTabWidget)
 from action_mapping import ACTIONS, DEFAULT_MAPPING
+from gesture_signals import GESTURE_SIGNALS
 from gaze_source import SOURCE_LABELS as EYE_SOURCE_LABELS, eye_coordinates
 from desktop.widgets import (CameraPreview, ExperimentCanvas, CalibrationMeter, DictationOverlay, LineChart, MiniCameraWindow,
     GestureMeters, gesture_progress, CHART_SERIES, CHART_NEUTRAL, label, card)
 
 GESTURE_LABELS = dict(LEFT_WINK="Guiño izquierdo", RIGHT_WINK="Guiño derecho", MOUTH_LEFT="Labios a la izquierda",
-                      MOUTH_RIGHT="Labios a la derecha", BOTH_BROWS="Ambas cejas", MOUTH_OPEN="Boca abierta")
-CALIBRATION_ORDER = ("LEFT_WINK","RIGHT_WINK","MOUTH_LEFT","MOUTH_RIGHT","MOUTH_OPEN","BOTH_BROWS")  # = GESTURE_SIGNALS
+                      MOUTH_RIGHT="Labios a la derecha", LEFT_BROW="Ceja izquierda", RIGHT_BROW="Ceja derecha",
+                      BOTH_BROWS="Ambas cejas", MOUTH_OPEN="Boca abierta", KISS="Besito")
+CALIBRATION_ORDER = ("LEFT_WINK","RIGHT_WINK","MOUTH_LEFT","MOUTH_RIGHT","LEFT_BROW","RIGHT_BROW",
+                     "MOUTH_OPEN","BOTH_BROWS","KISS")  # = GESTURE_SIGNALS
 EVENT_GESTURE = dict(LEFT_CLICK="LEFT_WINK",RIGHT_CLICK="RIGHT_WINK",SCROLL_UP="MOUTH_LEFT",SCROLL_DOWN="MOUTH_RIGHT",
-                     MOUTH_OPEN="MOUTH_OPEN",BOTH_BROWS="BOTH_BROWS")
+                     MOUTH_OPEN="MOUTH_OPEN",BOTH_BROWS="BOTH_BROWS",KISS="KISS",
+                     LEFT_BROW="LEFT_BROW",RIGHT_BROW="RIGHT_BROW")
 SOURCE_LABELS = dict(GEOMETRIC="Geométrica",BLENDSHAPE="Blendshapes",HYBRID="Híbrida",GEOMETRIC_3D="Geométrica 3D")
 GESTURE_ROWS = (("Ojos izq/der",("LEFT_WINK","RIGHT_WINK")),("Labios izq/der",("MOUTH_LEFT","MOUTH_RIGHT")),
-                ("Ambas cejas",("BOTH_BROWS",)),("Boca",("MOUTH_OPEN",)))
+                ("Cejas izq/der",("LEFT_BROW","RIGHT_BROW")),
+                ("Ambas cejas",("BOTH_BROWS",)),("Boca",("MOUTH_OPEN",)),("Besito",("KISS",)))
 
 
 # Condiciones internas (ApplicationController.snapshot) → próximo paso en lenguaje simple.
@@ -626,12 +631,13 @@ class MainWindow(QMainWindow):
         options.setContentsMargins(16,12,16,12)
         self.calibration_options.hide()
         self.calibration_options.toggled_scroll=scroll  # para llevar la vista a las opciones al abrirlas
-        options.addWidget(label("Gestos disponibles: desmarcá los que no puedas hacer.","Subtitle"))
+        options.addWidget(label("Gestos disponibles: desmarcá los que no puedas hacer. "
+                                "El besito es opcional: tildalo para calibrarlo y usarlo.","Subtitle"))
         choices=QGridLayout()
         self.calibration_enabled={}
         for index,(key,title) in enumerate(GESTURE_LABELS.items()):
-            check=QCheckBox(title)
-            check.setChecked(True)
+            check=QCheckBox(title+(" (opcional)" if GESTURE_SIGNALS[key].opt_in else ""))
+            check.setChecked(not GESTURE_SIGNALS[key].opt_in)
             check.toggled.connect(lambda checked,gesture_id=key:self.calibration_availability(gesture_id,checked))
             self.calibration_enabled[key]=check
             choices.addWidget(check,index//3,index%3)
@@ -793,8 +799,8 @@ class MainWindow(QMainWindow):
         for key in CALIBRATION_ORDER:
             title=GESTURE_LABELS[key]
             label_text=quality.get(key,{}).get("label","PENDIENTE")
-            if not enabled.get(key,True):
-                icon,color,detail="—","#8192aa","no disponible"
+            if not enabled.get(key,not GESTURE_SIGNALS[key].opt_in):
+                icon,color,detail="—","#8192aa","opcional, sin tildar" if GESTURE_SIGNALS[key].opt_in else "no disponible"
             elif validating:
                 if key in recognized or wizard.get("state")=="validated":
                     icon,color,detail="✓","#8ce5cd","detectado"
@@ -1621,7 +1627,7 @@ class MainWindow(QMainWindow):
             for k,widget in self.mapping_fields.items(): widget.setCurrentIndex(widget.findData(s["settings"]["actions"]["bindings"][k]))
             self.calibration_source.setCurrentIndex(self.calibration_source.findData(s["settings"]["calibration"]["brow_signal_source"]))
             for key,check in self.calibration_enabled.items():
-                enabled=(p or {}).get("gesture_calibrations",{}).get(key,{}).get("enabled",True)
+                enabled=(p or {}).get("gesture_calibrations",{}).get(key,{}).get("enabled",not GESTURE_SIGNALS[key].opt_in)
                 check.blockSignals(True)
                 check.setChecked(enabled)
                 check.blockSignals(False)
@@ -1655,7 +1661,7 @@ class MainWindow(QMainWindow):
             extra=[t for t in (feedback if feedback not in (wizard["instruction"],wizard.get("error")) else "",
                                wizard.get("capture_message","")) if t]
             self.capture_feedback.setText("  ·  ".join(extra))
-            names={"LEFT_CLICK":"Guiño izq.","RIGHT_CLICK":"Guiño der.","SCROLL_UP":"Labios izq.","SCROLL_DOWN":"Labios der.","MOUTH_OPEN":"Boca","BOTH_BROWS":"Ambas cejas"}
+            names={"LEFT_CLICK":"Guiño izq.","RIGHT_CLICK":"Guiño der.","SCROLL_UP":"Labios izq.","SCROLL_DOWN":"Labios der.","MOUTH_OPEN":"Boca","BOTH_BROWS":"Ambas cejas","KISS":"Besito","LEFT_BROW":"Ceja izq.","RIGHT_BROW":"Ceja der."}
             self.validation_labels.setText("  ·  ".join(f"{title}: "+("NO DISPONIBLE" if not wizard.get("enabled",{}).get(EVENT_GESTURE[key],True) else "DETECTADO ✓" if key in wizard['recognized'] else "NO DETECTADO") for key,title in names.items()))
         else:
             self.calibration_source.setEnabled(True)

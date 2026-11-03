@@ -89,6 +89,29 @@ def head_pose(lms, width, height):
     return pitch, yaw, roll
 
 
+def mouth_width(lms, width=1.0, height=1.0):
+    """Distancia entre comisuras (61-291) sobre la interocular, en 3D si hay z.
+
+    El besito la achica: las comisuras se juntan al fruncir. Apretar los labios
+    no, y por eso es mejor señal que el blendshape mouthPucker, que con los labios
+    cerrados o apretados marca 0.8-0.9 sin besito (calibración del 2026-11-03).
+    """
+    corners = (61, 291)
+    has_3d = all(isinstance(getattr(lms[i], "z", None), (int, float))
+                 and not isinstance(getattr(lms[i], "z", None), bool)
+                 and math.isfinite(lms[i].z) for i in corners + EYE_LEFT + EYE_RIGHT + (NOSE_BRIDGE, SUBNASALE))
+    frame = face_frame(lms, width, height) if has_3d else None
+    if frame is not None:
+        point, _, _, _, iod = frame
+        return float(_norm(_sub(point(corners[0]), point(corners[1]))) / iod)
+    iod = math.hypot((lms[EYE_RIGHT[0]].x - lms[EYE_LEFT[0]].x) * width,
+                     (lms[EYE_RIGHT[0]].y - lms[EYE_LEFT[0]].y) * height)
+    if iod <= 1e-6:
+        return None
+    return float(math.hypot((lms[corners[1]].x - lms[corners[0]].x) * width,
+                            (lms[corners[1]].y - lms[corners[0]].y) * height) / iod)
+
+
 def mouth_shift(lms, width=1.0, height=1.0):
     """Desplazamiento lateral de los labios (izquierda, derecha del usuario >= 0)
     respecto al centro rígido entre ambos ojos, normalizado por la distancia

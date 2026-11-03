@@ -31,7 +31,7 @@ from dataclasses import replace
 from config import ROOT, VisionConfig
 from face_data import FaceData
 from gesture_signals import extract_blendshapes
-from face_geometry import brow_lift_3d, head_pose, mouth_shift
+from face_geometry import brow_lift_3d, head_pose, mouth_shift, mouth_width
 from eye_geometry import extract_gaze
 
 logger = logging.getLogger(__name__)
@@ -528,6 +528,7 @@ class VisionEngine(threading.Thread):
             mouth_open      = mouth_open,
             mouth_left      = mouth_left,
             mouth_right     = mouth_right,
+            mouth_width     = mouth_width(lms, width, height),
             face_scale      = scale,
             timestamp_ms    = timestamp_ms,
             blendshapes     = blendshapes,

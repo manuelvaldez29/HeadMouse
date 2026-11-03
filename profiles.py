@@ -96,9 +96,12 @@ def validate_profile(data):
         from adaptive_calibration import HysteresisGate
         from gesture_signals import GESTURE_SIGNALS, SOURCES
         records = data["gesture_calibrations"]
-        if not isinstance(records, dict) or set(records) != set(GESTURE_SIGNALS):
+        required = {key for key, spec in GESTURE_SIGNALS.items() if not spec.optional}
+        if not isinstance(records, dict) or not required <= set(records) or set(records) - set(GESTURE_SIGNALS):
             raise ValueError("La calibración necesita un estado por gesto registrado")
         for gesture_id, spec in GESTURE_SIGNALS.items():
+            if gesture_id not in records:
+                continue  # gesto opcional agregado después de esta calibración: apagado
             record = records[gesture_id]
             if not isinstance(record, dict) or record.get("gesture_id") != gesture_id or type(record.get("enabled")) is not bool:
                 raise ValueError("Identidad o disponibilidad de gesto inválida")
@@ -146,16 +149,6 @@ def replace_with_retry(source, target, attempts=10, delay_s=.05):
 LEGACY_THRESHOLD_KEYS = {"blink_left", "blink_right", "brow_left", "brow_right", "mouth_open"}
 
 
-def _migrate_bindings_dict(bindings):
-    if not isinstance(bindings, dict) or not ({"LEFT_BROW", "RIGHT_BROW"} & set(bindings)):
-        return False
-    left_act = bindings.pop("LEFT_BROW", "SCROLL_UP")
-    right_act = bindings.pop("RIGHT_BROW", "SCROLL_DOWN")
-    bindings.setdefault("MOUTH_LEFT", "SCROLL_UP" if left_act == "NONE" else left_act)
-    bindings.setdefault("MOUTH_RIGHT", "SCROLL_DOWN" if right_act == "NONE" else right_act)
-    return True
-
-
 def _migrate_gesture_block(block):
     if not isinstance(block, dict):
         return False
@@ -173,10 +166,10 @@ def _migrate_gesture_block(block):
             block["gesture_extremes"]["mouth_right_max"] = 0.18
             changed = True
     records = block.get("gesture_calibrations")
-    if isinstance(records, dict) and ({"LEFT_BROW", "RIGHT_BROW"} & set(records)):
+    # Perfil anterior a los labios: se agregan provisorios. Las cejas separadas se
+    # conservan (volvieron el 2026-11-03; quien no las quiera las destilda).
+    if isinstance(records, dict) and records and not {"MOUTH_LEFT", "MOUTH_RIGHT"} <= set(records):
         from adaptive_calibration import GestureCalibration
-        records.pop("LEFT_BROW", None)
-        records.pop("RIGHT_BROW", None)
         for gid, ch in (("MOUTH_LEFT", "mouth_left"), ("MOUTH_RIGHT", "mouth_right")):
             if gid not in records:
                 cal = GestureCalibration(gid, (ch,), (1,), "GEOMETRIC", enabled=True)
@@ -198,24 +191,35 @@ def _migrate_gesture_block(block):
     return changed
 
 
+def _drop_stale_optional(block):
+    """Un gesto opcional cuya señal cambió (el besito pasó del blendshape mouthPucker
+    al ancho de la boca, 2026-11-03) no se puede reusar: queda apagado, sin invalidar
+    el resto del perfil ni su validación."""
+    records = block.get("gesture_calibrations") if isinstance(block, dict) else None
+    if not isinstance(records, dict):
+        return
+    from gesture_signals import GESTURE_SIGNALS
+    for key, spec in GESTURE_SIGNALS.items():
+        record = records.get(key)
+        if spec.optional and isinstance(record, dict) and (
+                record.get("channels") != list(spec.channels) or record.get("directions") != list(spec.directions)):
+            del records[key]
+
+
 def migrate_legacy_lip_gestures(data):
     """Migra en memoria perfiles anteriores (cejas individuales → labios izq/der)."""
     if not isinstance(data, dict):
         return data
+    _drop_stale_optional(data)
+    for mode_block in (data.get("gesture_modes") or {}).values() if isinstance(data.get("gesture_modes"), dict) else ():
+        _drop_stale_optional(mode_block)
+    # Las acciones de los gestos nuevos las completa MappingConfig con sus valores iniciales.
     changed = _migrate_gesture_block(data)
-    settings = data.get("settings")
-    if isinstance(settings, dict):
-        if isinstance(settings.get("actions"), dict):
-            changed = _migrate_bindings_dict(settings["actions"].get("bindings")) or changed
-        if isinstance(settings.get("methods"), dict):
-            for method_cfg in settings["methods"].values():
-                if isinstance(method_cfg, dict) and isinstance(method_cfg.get("actions"), dict):
-                    changed = _migrate_bindings_dict(method_cfg["actions"].get("bindings")) or changed
     if isinstance(data.get("gesture_modes"), dict):
         for mode_block in data["gesture_modes"].values():
             changed = _migrate_gesture_block(mode_block) or changed
     if changed:
-        logger.info("Perfil '%s' migrado de cejas individuales a gestos de labios; requiere recalibrar gestos.",
+        logger.info("Perfil '%s' migrado: labios a los costados agregados como provisorios; requiere recalibrar gestos.",
                     data.get("user_id", "default"))
     return data
 

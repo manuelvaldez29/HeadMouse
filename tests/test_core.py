@@ -253,9 +253,13 @@ class CoreTests(unittest.TestCase):
             store.path("ivan").write_text(json.dumps(legacy_profile), encoding="utf-8")
             loaded = store.load("ivan")
             self.assertTrue(loaded["settings"]["voice"]["enabled"])
-            self.assertEqual(loaded["settings"]["actions"]["bindings"]["MOUTH_LEFT"], "SCROLL_UP")
-            self.assertEqual(loaded["settings"]["actions"]["bindings"]["MOUTH_RIGHT"], "SCROLL_DOWN")
-            self.assertNotIn("LEFT_BROW", loaded["gesture_calibrations"])
+            from config import load_config
+            bindings = load_config(overrides=loaded["settings"]).actions.bindings
+            self.assertEqual(bindings["MOUTH_LEFT"], "SCROLL_UP")
+            self.assertEqual(bindings["MOUTH_RIGHT"], "SCROLL_DOWN")
+            # Las cejas separadas se conservan (2026-11-03): siguen calibradas y con su acción.
+            self.assertIn("LEFT_BROW", loaded["gesture_calibrations"])
+            self.assertEqual(bindings["LEFT_BROW"], legacy_bindings["LEFT_BROW"])
             self.assertIn("MOUTH_LEFT", loaded["gesture_calibrations"])
             self.assertIn("MOUTH_RIGHT", loaded["gesture_calibrations"])
             self.assertFalse(loaded["validation"]["passed"])

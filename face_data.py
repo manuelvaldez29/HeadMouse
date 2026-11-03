@@ -16,6 +16,7 @@ class FaceData:
     mouth_open: float = 0.0
     mouth_left: float = 0.0
     mouth_right: float = 0.0
+    mouth_width: float | None = None  # comisuras / interocular: el besito la achica
     face_scale: float = 1.0
     timestamp_ms: int = 0
     detected_at: float = 0.0  # monotonic: final de extracción
@@ -59,7 +60,7 @@ class FaceData:
                   self.mouth_open, self.mouth_left, self.mouth_right,
                   self.face_scale, self.timestamp_ms,
                   self.detected_at, self.processing_ms)
-        optional = ((self.brow_left_3d, 10), (self.brow_right_3d, 10),
+        optional = ((self.brow_left_3d, 10), (self.brow_right_3d, 10), (self.mouth_width, 10),
                     (self.head_pitch, 180), (self.head_yaw, 180), (self.head_roll, 180))
         return (all(isinstance(v, (int, float)) and not isinstance(v, bool)
                     and math.isfinite(v) for v in values)

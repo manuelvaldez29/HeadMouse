@@ -100,6 +100,19 @@ class FaceGeometryTests(unittest.TestCase):
         self.assertTrue(face.valid())
         self.assertFalse(FaceData(True, timestamp_ms=1, head_pitch=float("nan")).valid())
 
+    def test_mouth_width_shrinks_with_a_kiss_and_ignores_pose(self):
+        neutral = fg.mouth_width(landmarks(), W, H)
+        self.assertAlmostEqual(neutral, 48 / 90, places=3)  # comisuras 48 mm, interocular 90 mm
+        for pose in ({"pitch": 20}, {"yaw": 25}, {"roll": 15}):
+            self.assertAlmostEqual(fg.mouth_width(landmarks(**pose), W, H), neutral, places=3)
+        kiss = landmarks()
+        for i, j in ((61, 291), (291, 61)):  # comisuras un 30 % más cerca: labios fruncidos
+            a, b = kiss[i], kiss[j]
+            kiss[i] = SimpleNamespace(x=a.x + .15 * (b.x - a.x), y=a.y, z=a.z)
+        self.assertLess(fg.mouth_width(kiss, W, H), .8 * neutral)
+        pts_2d = [SimpleNamespace(x=p.x, y=p.y) for p in landmarks()]
+        self.assertAlmostEqual(fg.mouth_width(pts_2d, W, H), neutral, places=2)
+
     def test_mouth_shift_detects_left_and_right_and_ignores_pose(self):
         self.assertEqual(fg.mouth_shift(landmarks(), W, H), (0.0, 0.0))
         for pose in ({"pitch": 20}, {"yaw": 25}, {"roll": 15}, {"pitch": -15, "yaw": -20, "roll": 10}):

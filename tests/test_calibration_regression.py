@@ -48,10 +48,11 @@ class CalibrationRegressionTests(unittest.TestCase):
                 completed=self.capture(holes)
                 s=self.session
                 self.assertEqual(s.state,"measured",s.snapshot())
-                for key in GESTURE_SIGNALS: self.assertEqual(completed[key],[1,2,3])
+                for key in GESTURE_SIGNALS:
+                    self.assertEqual(completed[key],[1,2,3] if s.models[key].enabled else [])
                 s.validate()
                 for _ in range(45): self.feed()
-                for key in GESTURE_SIGNALS:
+                for key in (k for k in GESTURE_SIGNALS if s.models[k].enabled):
                     self.assertFalse(s.validator.neutral)
                     # El humano sigue sosteniendo 1.2 s; no suelta al recibir el evento.
                     for _ in range(24): self.feed(ACTIVE[key])
@@ -72,12 +73,13 @@ class CalibrationRegressionTests(unittest.TestCase):
                     self.assertEqual(controller.state,"PREVIEW")
                     saved=manager.store.load("regression")
                     self.assertTrue(saved["validation"]["passed"])
-                    self.assertEqual(len(saved["validation"]["recognized"]),6)
+                    self.assertEqual(len(saved["validation"]["recognized"]),8)
 
     def test_valid_five_fps_waits_for_minimum_samples(self):
         completed=self.capture(step=200)
         self.assertEqual(self.session.state,"measured",self.session.snapshot())
-        for key in GESTURE_SIGNALS: self.assertEqual(completed[key],[1,2,3])
+        for key in GESTURE_SIGNALS:
+            self.assertEqual(completed[key],[1,2,3] if self.session.models[key].enabled else [])
 
     def test_isolated_loss_does_not_restart_baseline(self):
         self.config.calibration.measuring_s=1
@@ -167,7 +169,7 @@ class CalibrationRegressionTests(unittest.TestCase):
                 values.update(ACTIVE[s.gesture_id])
             self.feed(values)
         self.assertEqual(s.state,"measured",s.snapshot())
-        for model in s.models.values():
+        for model in (m for m in s.models.values() if m.enabled):
             self.assertEqual(len(model.active_samples),3)
             self.assertTrue(model.usable)
 

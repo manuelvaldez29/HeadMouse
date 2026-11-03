@@ -109,7 +109,7 @@ class AdaptiveCalibrationTests(unittest.TestCase):
         face=FaceData(True,eye_left_ratio=.1,eye_right_ratio=.2,brow_left_lift=.3,brow_right_lift=.4,
                       mouth_left=.15,mouth_right=.25,mouth_open=.5)
         expected={"LEFT_WINK":(.1,),"RIGHT_WINK":(.2,),"MOUTH_LEFT":(.15,),"MOUTH_RIGHT":(.25,),
-                  "MOUTH_OPEN":(.5,),"BOTH_BROWS":(.3,.4)}
+                  "LEFT_BROW":(.3,),"RIGHT_BROW":(.4,),"MOUTH_OPEN":(.5,),"BOTH_BROWS":(.3,.4),"KISS":None}  # sin blendshapes: ausente, nunca 0
         for key,signal in GESTURE_SIGNALS.items(): self.assertEqual(signal.extract(face),expected[key])
         self.assertIsNone(get_signal("BOTH_BROWS").extract(face,"BLENDSHAPE"))
         blends=(("browInnerUp",.4),("browOuterUpLeft",.8),("browOuterUpRight",.6),("browDownLeft",.2),("browDownRight",.1))
@@ -187,6 +187,7 @@ class AdaptiveCalibrationTests(unittest.TestCase):
                   "MOUTH_OPEN":{"mouth_open":.3},"BOTH_BROWS":{"brow_left_lift":.3,"brow_right_lift":.33}}
         records={}
         for key,spec in GESTURE_SIGNALS.items():
+            if spec.optional: continue  # como un perfil anterior al besito
             model=self.make_model(key)
             for _ in range(3): model.add_repetition([spec.extract(neutral)]*20,[spec.extract(replace(neutral,**variants[key]))]*20)
             model.fit(CalibrationConfig())

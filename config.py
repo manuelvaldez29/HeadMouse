@@ -256,6 +256,9 @@ class MappingConfig:
     bindings: dict = field(default_factory=lambda: DEFAULT_MAPPING.copy())
 
     def __post_init__(self):
+        # Perfiles guardados antes de un gesto nuevo (besito): toma su acción inicial.
+        if isinstance(self.bindings, dict):
+            self.bindings = {**{k: v for k, v in DEFAULT_MAPPING.items() if k not in self.bindings}, **self.bindings}
         ActionMapping(self.bindings)
 
 

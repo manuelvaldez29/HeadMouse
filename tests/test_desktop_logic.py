@@ -220,9 +220,9 @@ class DesktopLogicTests(unittest.TestCase):
         session=CalibrationSession({"user_id":"julian"},cc,lambda:now[0])
         session.start()
         values=[{}, {"eye_left_ratio":.02},{"eye_right_ratio":.03},
-                {"mouth_left":.25},{"mouth_right":.25},{"mouth_open":.3},
-                {"brow_left_lift":.3,"brow_right_lift":.33}]
-        for phase in range(7):
+                {"mouth_left":.25},{"mouth_right":.25},{"brow_left_lift":.4},{"brow_right_lift":.5},
+                {"mouth_open":.3},{"brow_left_lift":.3,"brow_right_lift":.33}]
+        for phase in range(9):
             count=0
             while session.phase==phase and session.state not in ("error","measured"):
                 count+=1
@@ -235,7 +235,7 @@ class DesktopLogicTests(unittest.TestCase):
                 session.update(face)
         self.assertEqual(session.state,"measured")
         self.assertEqual(session.candidate["neutral_nose_x"],.5)
-        for record in session.candidate["gesture_calibrations"].values():
+        for record in (r for r in session.candidate["gesture_calibrations"].values() if r["enabled"]):
             self.assertEqual(record["repetitions_valid"],3)
             self.assertEqual(record["quality_score"],1)
         with self.assertRaises(ValueError): session.result()
