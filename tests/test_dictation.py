@@ -164,6 +164,15 @@ class DictationTests(unittest.TestCase):
         audio = self.transcriber.transcribe.call_args.args[0]
         self.assertLess(len(audio) / SAMPLE_RATE, 2)
 
+    def test_changed_focus_discards_even_a_voice_editing_command(self):
+        first = FocusInfo(True, control_type="Edit", runtime_id=(1, 2))
+        second = FocusInfo(True, control_type="Edit", runtime_id=(1, 3))
+        d = self.make(FakeFocus(first, second), text="borrar todo")
+        d.start_now()
+        self.wait_idle(d)
+        self.transcriber.transcribe.assert_called_once()
+        self.assertEqual(self.typer.mock_calls, [])
+
     def test_send_word_presses_enter(self):
         d = self.make(FakeFocus(FocusInfo(True)), text="Ya llego, enviar", send_word="enviar")
         d.on_click()
@@ -370,13 +379,64 @@ class ModelLocationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             data, project = Path(temp) / "data", Path(temp) / "project"
             (project / "small").mkdir(parents=True)
-            (project / "small" / "model.bin").write_bytes(b"x")
+            for name in ("model.bin", "config.json", "tokenizer.json", "vocabulary.txt"):
+                (project / "small" / name).write_bytes(b"x")
             with patch.object(dictation, "MODEL_DIR", data), patch.object(dictation, "MODEL_DIRS", (data, project)):
                 self.assertEqual(dictation.model_path("small"), project / "small")
                 self.assertEqual(dictation.model_path("base"), data / "base")  # sin instalar: se baja a datos
                 (data / "small").mkdir(parents=True)
                 (data / "small" / "model.bin").write_bytes(b"x")
+                self.assertEqual(dictation.model_path("small"), project / "small")
+                for name in ("config.json", "tokenizer.json", "vocabulary.txt"):
+                    (data / "small" / name).write_bytes(b"x")
                 self.assertEqual(dictation.model_path("small"), data / "small")  # el de datos tiene prioridad
+
+
+class MicrophoneFailureTests(unittest.TestCase):
+    def test_selected_microphone_that_disappeared_does_not_open_default(self):
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        from dictation import SoundDeviceRecorder
+        audio = SimpleNamespace(InputStream=Mock())
+        with patch.dict("sys.modules", sounddevice=audio), patch("dictation.input_devices", return_value={}):
+            with self.assertRaisesRegex(RuntimeError, "elegido no está disponible"):
+                SoundDeviceRecorder("Mic USB · WASAPI").__enter__()
+        audio.InputStream.assert_not_called()
+
+    def test_portaudio_open_error_explains_windows_permissions(self):
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        from dictation import SoundDeviceRecorder
+
+        class PortAudioError(Exception):
+            pass
+
+        audio = SimpleNamespace(PortAudioError=PortAudioError,
+                                InputStream=Mock(side_effect=PortAudioError("device unavailable")),
+                                query_devices=Mock(return_value={"default_samplerate": 48000}))
+        with patch.dict("sys.modules", sounddevice=audio):
+            with self.assertRaisesRegex(RuntimeError, "permita el acceso"):
+                SoundDeviceRecorder().__enter__()
+
+    def test_microphone_that_stops_delivering_frames_closes_without_typing(self):
+        from unittest.mock import MagicMock
+        now = [0.]
+        recorder = MagicMock()
+        recorder.__enter__.return_value = recorder
+
+        def read(timeout):
+            now[0] += timeout
+            return None
+
+        recorder.read.side_effect = read
+        transcriber, typer = Mock(), Mock()
+        d = Dictation(VoiceConfig(enabled=True), FakeFocus(FocusInfo(True)), lambda: recorder,
+                      transcriber, typer, clock=lambda: now[0])
+        with self.assertRaisesRegex(RuntimeError, "dejó de enviar audio"):
+            d._session("now", 0)
+        recorder.__exit__.assert_called_once()
+        transcriber.transcribe.assert_not_called()
+        self.assertEqual(typer.mock_calls, [])
 
 
 class ControlIntegrationTests(unittest.TestCase):

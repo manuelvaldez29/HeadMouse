@@ -1,4 +1,4 @@
-"""HeadMouse 0.4.0 — aplicación Windows, tesis V0.2."""
+"""HeadMouse — aplicación Windows, tesis V0.2."""
 import argparse
 import sys
 from config import ROOT, configure_logging

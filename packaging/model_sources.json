@@ -1,0 +1,107 @@
+{
+  "whisper": {
+    "tiny": {
+      "repo": "Systran/faster-whisper-tiny",
+      "revision": "d90ca5fe260221311c53c58e660288d3deb8d356",
+      "license": "mit",
+      "files": {
+        "config.json": {
+          "bytes": 2249,
+          "git_blob": "3baa18e2b321a2f489614607852a729fcd516480"
+        },
+        "model.bin": {
+          "bytes": 75538270,
+          "sha256": "dcb76c6586fc06cbdac6dd21f14cfd129cc4cdd9dce19bf4ffa62e59cbe6e6d1"
+        },
+        "tokenizer.json": {
+          "bytes": 2203239,
+          "git_blob": "7818adb6de9fa3064d3ff81226fdd675be1f6344"
+        },
+        "vocabulary.txt": {
+          "bytes": 459861,
+          "git_blob": "c9074644d9d1205686f16d411564729461324b75"
+        }
+      }
+    },
+    "base": {
+      "repo": "Systran/faster-whisper-base",
+      "revision": "ebe41f70d5b6dfa9166e2c581c45c9c0cfc57b66",
+      "license": "mit",
+      "files": {
+        "config.json": {
+          "bytes": 2309,
+          "git_blob": "867cf1a0fece1394e01d55e287ba2f09a577c046"
+        },
+        "model.bin": {
+          "bytes": 145217532,
+          "sha256": "d01c3014881c9c6f3133c182f3d2887eb6ca1c789a7538c5c007196857a0a6a9"
+        },
+        "tokenizer.json": {
+          "bytes": 2203239,
+          "git_blob": "7818adb6de9fa3064d3ff81226fdd675be1f6344"
+        },
+        "vocabulary.txt": {
+          "bytes": 459861,
+          "git_blob": "c9074644d9d1205686f16d411564729461324b75"
+        }
+      }
+    },
+    "small": {
+      "repo": "Systran/faster-whisper-small",
+      "revision": "536b0662742c02347bc0e980a01041f333bce120",
+      "license": "mit",
+      "files": {
+        "config.json": {
+          "bytes": 2370,
+          "git_blob": "e5047537059bd8f182d9ca64c470201585015187"
+        },
+        "model.bin": {
+          "bytes": 483546902,
+          "sha256": "3e305921506d8872816023e4c273e75d2419fb89b24da97b4fe7bce14170d671"
+        },
+        "tokenizer.json": {
+          "bytes": 2203239,
+          "git_blob": "7818adb6de9fa3064d3ff81226fdd675be1f6344"
+        },
+        "vocabulary.txt": {
+          "bytes": 459861,
+          "git_blob": "c9074644d9d1205686f16d411564729461324b75"
+        }
+      }
+    },
+    "medium": {
+      "repo": "Systran/faster-whisper-medium",
+      "revision": "08e178d48790749d25932bbc082711ddcfdfbc4f",
+      "license": "mit",
+      "files": {
+        "config.json": {
+          "bytes": 2257,
+          "git_blob": "242aa06a480a7b5509375c645097e87af5136774"
+        },
+        "model.bin": {
+          "bytes": 1527906378,
+          "sha256": "9b45e1009dcc4ab601eff815b61d80e60ce3fd8c74c1a14f4a282258286b51ae"
+        },
+        "tokenizer.json": {
+          "bytes": 2203239,
+          "git_blob": "7818adb6de9fa3064d3ff81226fdd675be1f6344"
+        },
+        "vocabulary.txt": {
+          "bytes": 459861,
+          "git_blob": "c9074644d9d1205686f16d411564729461324b75"
+        }
+      }
+    }
+  },
+  "other": {
+    "face_landmarker.task": {
+      "url": "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task",
+      "sha256": "64184e229b263107bc2b804c6625db1341ff2bb731874b0bcc2fe6544e0bc9ff",
+      "bytes": 3758596
+    },
+    "speaker/wespeaker_en_voxceleb_resnet34.onnx": {
+      "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/wespeaker_en_voxceleb_resnet34.onnx",
+      "sha256": "5ef208a9da1453335308a6b6f4e6dfbd7e183a38b604de0a57664f45d257fe94"
+    }
+  }
+}

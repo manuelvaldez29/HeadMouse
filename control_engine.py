@@ -186,6 +186,8 @@ class ControlEngine:
         self._paused = not self._paused
         self._fraction = [0., 0.]
         if self._paused:
+            if self.dictation is not None:
+                self.dictation.cancel()
             self._release_held_mouse()
         state = "PAUSADO" if self._paused else "ACTIVO"
         logger.info(f"[ControlEngine] Control {state}.")

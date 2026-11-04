@@ -43,18 +43,25 @@ MODEL_DIRS = (MODEL_DIR, RESOURCE_ROOT / "models" / "whisper")
 _legacy_found = {}
 
 
+def _complete_model(directory):
+    return all(path.is_file() and path.stat().st_size for path in
+               (directory / name for name in ("model.bin", "config.json", "tokenizer.json"))) and any(
+        path.is_file() and path.stat().st_size for path in
+        (directory / name for name in ("vocabulary.txt", "vocabulary.json")))
+
+
 def installed_model(model):
     """Carpeta del modelo de voz instalado, o None.
 
     La GUI lo consulta cada 2 s desde el worker: las carpetas viejas (dentro de
     OneDrive) se revisan una sola vez; sólo la de descarga puede cambiar.
     """
-    if (MODEL_DIRS[0] / model / "model.bin").is_file():
+    if _complete_model(MODEL_DIRS[0] / model):
         return MODEL_DIRS[0] / model
     for directory in MODEL_DIRS[1:]:
         key = (directory, model)
         if key not in _legacy_found:
-            _legacy_found[key] = (directory / model / "model.bin").is_file()
+            _legacy_found[key] = _complete_model(directory / model)
         if _legacy_found[key]:
             return directory / model
     return None
@@ -269,6 +276,7 @@ class FocusInfo:
     password: bool = False
     control_type: str = ""
     name: str = ""
+    runtime_id: tuple | None = None
 
 
 class Dictation:
@@ -280,12 +288,14 @@ class Dictation:
     """
 
     def __init__(self, config: VoiceConfig, focus, recorder_factory, transcriber, typer,
-                 clock=time.monotonic, metrics=None, cue=None, detector_factory=None, speaker_factory=None):
+                 clock=time.monotonic, metrics=None, cue=None, detector_factory=None, speaker_factory=None,
+                 output_allowed=None):
         self.config, self.focus, self.recorder_factory = config, focus, recorder_factory
         self.detector_factory = detector_factory  # None: detección por energía
         self.speaker_factory = speaker_factory    # None: sin huella de voz
         self.transcriber, self.typer, self.clock, self.metrics = transcriber, typer, clock, metrics
         self.cue = cue or (lambda kind: None)
+        self.output_allowed = output_allowed or (lambda: True)
         self.state, self.message, self.last_text = "idle", "", ""
         self._last_typed = ""  # para "borrar": lo escrito por el último dictado
         self._lock = threading.Lock()
@@ -326,8 +336,9 @@ class Dictation:
         self._arm("now")
 
     def cancel(self):
-        if self.state != "idle":
-            self._cancel.set()
+        with self._lock:
+            if self.state != "idle":
+                self._cancel.set()
 
     def finish(self):
         """Gesto de click mientras escucha: terminar y transcribir sin esperar silencio.
@@ -347,10 +358,10 @@ class Dictation:
         with self._lock:
             if self.state != "idle":
                 return
+            self._cancel.clear()
+            self._finish.clear()
             self._request = (kind, self.clock())
             self._set("arming", "Buscando campo de texto…")
-        self._cancel.clear()
-        self._finish.clear()
         self._wake.set()
 
     def _set(self, state, message=""):
@@ -402,7 +413,7 @@ class Dictation:
 
     def _session(self, kind, since):
         info = self._wait_focus(kind, since)
-        if info is None or self._cancel.is_set():
+        if info is None or self._cancel.is_set() or not self.output_allowed():
             with self._lock:
                 self.message = "" if kind == "click" else "No hay un campo de texto con el foco."
             return
@@ -416,8 +427,10 @@ class Dictation:
                               detector=self.detector_factory() if self.detector_factory else None,
                               speaker=self.speaker_factory() if self.speaker_factory else None)
         with self.recorder_factory() as recorder:
+            last_audio = self.clock()
             while endpoint.state not in ("done", "timeout"):
-                if self._cancel.is_set():
+                if self._cancel.is_set() or not self.output_allowed():
+                    self._cancel.set()
                     break
                 if self._finish.is_set():
                     self._finish.clear()
@@ -426,7 +439,10 @@ class Dictation:
                     logger.info("Dictado: gesto de terminar ignorado (todavía no hablaste)")
                 block = recorder.read(timeout=.2)
                 if block is not None:
+                    last_audio = self.clock()
                     endpoint.feed(block)
+                elif self.clock() - last_audio >= 2:
+                    raise RuntimeError("El micrófono dejó de enviar audio. Revisá la conexión y los permisos de Windows.")
         # Sin audio ni texto: cómo se decidió el final, para leer en el log qué falla con ruido.
         gate = endpoint.speaker
         logger.info("Dictado: detector %s · fin %s · voz %.1f s · huella %s", "neuronal" if endpoint.detector else "energía",
@@ -452,7 +468,13 @@ class Dictation:
         with self._lock:
             self._set("transcribing", "Transcribiendo…")
         text = self.transcriber.transcribe(audio, self.config.language)
-        if self._cancel.is_set():
+        current = self.focus.focused() if not self._cancel.is_set() else None
+        same_field = current and current.editable and not current.password and (
+            current.runtime_id == info.runtime_id if info.runtime_id is not None else current == info
+        )
+        if self._cancel.is_set() or not self.output_allowed() or not same_field:
+            with self._lock:
+                self.message = "Dictado cancelado: el campo o el control ya no está disponible."
             self._record(dict(result="cancelled", listen_s=spoken_at - started))
             return
         command = parse_command(text) if self.config.commands else None
@@ -558,7 +580,11 @@ class UIAFocusProbe:
         name = element.CurrentName or ""
         editable = (control == self.EDIT and not read_only) or \
                    (control in (self.DOCUMENT, self.COMBOBOX) and has_value and not read_only)
-        return FocusInfo(editable, password, self.NAMES.get(control, str(control)), name[:80])
+        try:
+            runtime_id = tuple(element.GetRuntimeId()) or None
+        except Exception:
+            runtime_id = None
+        return FocusInfo(editable, password, self.NAMES.get(control, str(control)), name[:80], runtime_id)
 
     def _focused_under_pointer(self):
         """Campo con foco que GetFocusedElement no alcanza.
@@ -701,10 +727,26 @@ class SileroDetector:
         return self.speaking
 
 
+def input_devices():
+    """Map saved names to current PortAudio indices, without opening a stream."""
+    import sounddevice as sd
+    hosts = sd.query_hostapis()
+    devices = {}
+    ambiguous = set()
+    for index, device in enumerate(sd.query_devices()):
+        if device["max_input_channels"] <= 0:
+            continue
+        name = f"{device['name']} · {hosts[device['hostapi']]['name']}"
+        if name in devices:
+            ambiguous.add(name)
+        devices[name] = index
+    return {name: index for name, index in devices.items() if name not in ambiguous}
+
+
 class SoundDeviceRecorder:
     """Micrófono predeterminado a 16 kHz mono; remuestrea si el dispositivo no lo admite."""
 
-    def __init__(self, device=None):
+    def __init__(self, device=""):
         self.device = device
         self._queue = queue.Queue()
         self._stream = None
@@ -712,18 +754,29 @@ class SoundDeviceRecorder:
 
     def __enter__(self):
         import sounddevice as sd
+        device = input_devices().get(self.device) if self.device else None
+        if self.device and device is None:
+            raise RuntimeError("El micrófono elegido no está disponible. Elegí otro en Configuración.")
+
         def callback(data, frames, time_info, status):
             self._queue.put(data[:, 0].copy())
+
         try:
-            self._stream = sd.InputStream(samplerate=SAMPLE_RATE, channels=1, dtype="float32",
-                                          blocksize=480, device=self.device, callback=callback)
-            self._ratio = 1.
-        except Exception:
-            rate = int(sd.query_devices(self.device, "input")["default_samplerate"])
-            self._stream = sd.InputStream(samplerate=rate, channels=1, dtype="float32",
-                                          blocksize=int(rate * .03), device=self.device, callback=callback)
-            self._ratio = SAMPLE_RATE / rate
-        self._stream.start()
+            try:
+                self._stream = sd.InputStream(samplerate=SAMPLE_RATE, channels=1, dtype="float32",
+                                              blocksize=480, device=device, callback=callback)
+            except sd.PortAudioError:
+                rate = int(sd.query_devices(device, "input")["default_samplerate"])
+                self._stream = sd.InputStream(samplerate=rate, channels=1, dtype="float32",
+                                              blocksize=int(rate * .03), device=device, callback=callback)
+                self._ratio = SAMPLE_RATE / rate
+            self._stream.start()
+        except (sd.PortAudioError, ValueError) as exc:
+            if self._stream is not None:
+                self._stream.close()
+                self._stream = None
+            raise RuntimeError("No se pudo abrir el micrófono. Revisá que esté conectado, libre y que Windows "
+                               "permita el acceso a aplicaciones de escritorio en Configuración.") from exc
         return self
 
     def read(self, timeout=.2):
@@ -739,8 +792,10 @@ class SoundDeviceRecorder:
 
     def __exit__(self, *exc):
         if self._stream is not None:
-            self._stream.stop()
-            self._stream.close()
+            try:
+                self._stream.stop()
+            finally:
+                self._stream.close()
 
 
 class WhisperTranscriber:
@@ -763,8 +818,7 @@ class WhisperTranscriber:
                 from faster_whisper import WhisperModel
                 path = model_path(self.model_name) if self.directory is None else self.directory / self.model_name
                 if not path.is_dir():
-                    raise FileNotFoundError(f"Falta el modelo de voz: {path}. Ejecutar "
-                                            "python dictation.py --download-model durante la preparación.")
+                    raise FileNotFoundError(f"Falta el modelo de voz '{self.model_name}'. Preparalo en Configuración.")
                 self._model = WhisperModel(str(path), device="cpu", compute_type="int8",
                                            cpu_threads=min(8, os.cpu_count() or 4), local_files_only=True)
         return self._model
@@ -879,19 +933,20 @@ def sound_cue(kind):
         pass
 
 
-def create_dictation(config: VoiceConfig, metrics=None, voiceprint=None):
+def create_dictation(config: VoiceConfig, metrics=None, voiceprint=None, output_allowed=None):
     """Dictado real de Windows. Falla temprano si faltan dependencias o modelo."""
     missing = [name for name in ("faster_whisper", "comtypes", "sounddevice")
                if importlib.util.find_spec(name) is None]
     if missing:
         raise RuntimeError("Faltan dependencias de dictado: " + ", ".join(missing) +
-                           ". Instalar con: pip install -r requirements-voice.txt")
+                           ". Revisá la instalación de HeadMouse.")
     if installed_model(config.model) is None:
         raise RuntimeError(f"Falta el modelo de voz '{config.model}'. "
-                           "Preparalo en Configuración o con: python dictation.py --download-model")
-    return Dictation(config, UIAFocusProbe(), SoundDeviceRecorder, WhisperTranscriber(config.model),
+                           "Preparalo en Configuración.")
+    return Dictation(config, UIAFocusProbe(), lambda: SoundDeviceRecorder(config.microphone), WhisperTranscriber(config.model),
                      SendInputTyper(), metrics=metrics, cue=sound_cue if config.sound_cues else None,
-                     detector_factory=detector_factory(config), speaker_factory=speaker_factory(config, voiceprint))
+                     detector_factory=detector_factory(config), speaker_factory=speaker_factory(config, voiceprint),
+                     output_allowed=output_allowed)
 
 
 def speaker_factory(config, voiceprint):

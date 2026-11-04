@@ -1,3 +1,5 @@
+# Entorno de compilación Windows 0.5.0, CPython 3.12.6 x64.
+# HeadMouse.spec excluye los módulos Qt WebEngine y PDF del ejecutable.
 absl-py==2.5.1
 altgraph==0.17.5
 certifi==2026.10.23
@@ -62,5 +64,5 @@ tokenizers==0.23.3
 tqdm==4.70.1
 truststore==0.10.4
 typing_extensions==4.16.0
-sherpa-onnx==1.13.8
-sherpa-onnx-core==1.13.8
+sherpa-onnx==1.13.8
+sherpa-onnx-core==1.13.8

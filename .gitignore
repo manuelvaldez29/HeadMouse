@@ -1,5 +1,11 @@
-# Modelos MediaPipe (se descargan automáticamente)
+# Modelos de visión y voz (el manifiesto de descarga está en packaging/)
 models/
+*.onnx
+*.task
+*.bin
+*.safetensors
+*.pt
+*.pth
 
 # Calibración personal de cada usuario
 calibration.json
@@ -10,12 +16,27 @@ data/calibration/
 data/last_profile.json
 config.local.json
 data/logs/
+*.log
+
+# Credenciales y configuración privada
+.env
+.env.*
+!.env.example
+credentials*.json
+secrets.json
+secrets/
+.secrets/
+*.pem
+*.key
+*.p12
+*.pfx
 
 # Python
 __pycache__/
 *.pyc
-.venv/
+.venv*/
 venv/
+.pytest_cache/
 
 # IDEs
 .vscode/
@@ -25,5 +46,12 @@ venv/
 Thumbs.db
 desktop.ini
 .DS_Store
+
+# Compilación y archivos temporales
 build/
 dist/
+*.exe
+*.dll
+*.tmp
+*.part
+/tmp*/

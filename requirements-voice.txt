@@ -1,4 +1,6 @@
-# Dictado por voz local (opcional). El modelo se descarga una vez con:
+# Dependencias de dictado y calibración de voz para desarrollo.
+# El instalador Windows las incluye junto con los modelos verificados.
+# Desde el código fuente, se puede preparar un modelo con:
 #   python dictation.py --download-model
 faster-whisper>=1.0,<2
 comtypes>=1.2

@@ -6,7 +6,15 @@ detecta por silencio, el audio se transcribe en la computadora y el texto se
 escribe en ese campo. No hace falta nada más que la voz para escribir un
 mensaje o una búsqueda.
 
-## Preparación (una sola vez, con Internet)
+## Preparación
+
+HeadMouse 0.5.0 para Windows trae los modelos tiny, base, small y medium,
+Silero y WeSpeaker. En Configuración → Básico → Dictado por voz se elige el
+micrófono y se guarda la preferencia. Calibración → Voz permite medir el
+ambiente y guardar la huella. El dictado queda disponible al activar el
+control manualmente y habilitar el dictado en el perfil.
+
+Para desarrollo desde el código fuente:
 
 ```powershell
 python -m pip install -r requirements-voice.txt
@@ -20,7 +28,7 @@ voz". Después se marca **Dictado por voz** y se guarda la configuración. Desde
 (fuera del proyecto y de Git). Los ya descargados en `models/whisper/<modelo>` del
 proyecto se siguen usando sin copiarlos; esa carpeta se revisa una sola vez por
 ejecución. En uso normal se carga con `local_files_only` y no hay tráfico de red.
-El instalador de Windows incluye el motor de dictado, pero no el modelo.
+La descarga desde Configuración también permite recuperar un modelo faltante.
 
 ## Flujo
 

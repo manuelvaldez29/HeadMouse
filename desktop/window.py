@@ -3,8 +3,8 @@ import json
 import time
 from desktop.lifecycle import release_overlays
 from copy import deepcopy
-from PySide6.QtCore import Qt, QTimer, Slot
-from PySide6.QtGui import QShortcut, QKeySequence, QCursor
+from PySide6.QtCore import Qt, QTimer, Slot, QUrl
+from PySide6.QtGui import QShortcut, QKeySequence, QCursor, QDesktopServices
 from PySide6.QtWidgets import (QMainWindow, QWidget, QFrame, QVBoxLayout, QHBoxLayout,
     QGridLayout, QPushButton, QStackedWidget, QScrollArea, QComboBox, QInputDialog,
     QMessageBox, QFormLayout, QDoubleSpinBox, QSpinBox, QCheckBox, QProgressBar,
@@ -1089,6 +1089,16 @@ class MainWindow(QMainWindow):
         self.voice_check=QCheckBox("Al hacer click en un campo de texto, escuchar y escribir")
         self.voice_check.setAccessibleName("Dictado por voz")
         form.addRow(self.voice_check)
+        self.voice_microphone=QComboBox()
+        self.voice_microphone.setAccessibleName("Micrófono de dictado y calibración")
+        self.voice_microphone.addItem("Predeterminado de Windows","")
+        self._microphones=None
+        form.addRow("Micrófono",self.voice_microphone)
+        form.addRow(button("Buscar micrófonos",lambda:self.bridge.request("refresh_microphones")))
+        form.addRow(button("Permisos de micrófono en Windows",
+                           lambda:QDesktopServices.openUrl(QUrl("ms-settings:privacy-microphone"))))
+        self.microphone_status=label("El micrófono se abre al calibrar o dictar.","Subtitle")
+        form.addRow(self.microphone_status)
         self.voice_model=QComboBox()
         for title,value in (("Small · recomendado","small"),("Base · equipos lentos","base"),
                             ("Tiny · muy rápido, menos preciso","tiny"),("Medium · más preciso y lento","medium")):
@@ -1363,6 +1373,7 @@ class MainWindow(QMainWindow):
         settings["eye"]["dead_zone_y"]=self.eye_dead_zone_y.value() if self.eye_axis_zones.isChecked() else None
         settings["vision"]["capture_backend"]=self.capture_backend_combo.currentData()
         settings["voice"]["enabled"]=self.voice_check.isChecked()
+        settings["voice"]["microphone"]=self.voice_microphone.currentData()
         settings["voice"]["model"]=self.voice_model.currentData()
         settings["voice"]["detector"]=self.voice_detector.currentData()
         settings["voice"]["send_word"]=self.voice_send.currentText().strip().lower()
@@ -1613,6 +1624,7 @@ class MainWindow(QMainWindow):
         self._present_status(s)
         self._present_dictation(s.get("dictation"))
         self._present_models(s.get("models") or {})
+        self._present_microphones(s.get("microphones"))
         self._present_voice_calibration(s)
         enabled=s["control_enabled"]
         p=s["profile"]
@@ -1693,6 +1705,7 @@ class MainWindow(QMainWindow):
             self.eye_dead_zone_x.setValue(eye["dead_zone"] if eye.get("dead_zone_x") is None else eye["dead_zone_x"])
             self.eye_dead_zone_y.setValue(eye["dead_zone"] if eye.get("dead_zone_y") is None else eye["dead_zone_y"])
             self.voice_check.setChecked(s["settings"]["voice"]["enabled"])
+            self._select_microphone(s["settings"]["voice"].get("microphone",""))
             self.voice_model.setCurrentIndex(max(0,self.voice_model.findData(s["settings"]["voice"]["model"])))
             self.voice_detector.setCurrentIndex(max(0,self.voice_detector.findData(s["settings"]["voice"].get("detector","neural"))))
             self.voice_send.setCurrentText(s["settings"]["voice"]["send_word"])
@@ -1858,6 +1871,27 @@ class MainWindow(QMainWindow):
         if self.prepare_voice_button.text()!=text:
             self.prepare_voice_button.setText(text)
             self.prepare_voice_button.setEnabled(not voice)
+
+    def _select_microphone(self,name):
+        index=self.voice_microphone.findData(name)
+        if index<0:
+            self.voice_microphone.addItem(name+" · guardado",name)
+            index=self.voice_microphone.count()-1
+        self.voice_microphone.setCurrentIndex(index)
+
+    def _present_microphones(self,names):
+        if names is None or names==self._microphones:
+            return
+        current=self.voice_microphone.currentData()
+        self._microphones=names
+        self.voice_microphone.clear()
+        self.voice_microphone.addItem("Predeterminado de Windows","")
+        for name in names:
+            self.voice_microphone.addItem(name,name)
+        self._select_microphone(current)
+        self.microphone_status.setText(
+            "Elegí un micrófono y guardá la configuración." if names else
+            "No hay micrófonos disponibles. Conectá uno o revisá los permisos de Windows.")
 
     def _present_dictation(self,dictation):
         """Aviso flotante; al terminar muestra el resultado durante 2,5 s."""

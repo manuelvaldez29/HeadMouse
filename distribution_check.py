@@ -1,34 +1,53 @@
 """Verificación instalada con imagen sintética en RAM: sin webcam ni salida al SO."""
-import json
-from app_paths import data_root,face_model_path,VERSION
+import os
+import sys
+from app_paths import RESOURCE_ROOT,data_root,face_model_path,VERSION
 
 
 def voice_check():
-    """Motor de dictado completo sin grabar ni escribir: VAD con audio sintético,
-    UI Automation creado y PortAudio cargado. El modelo Whisper es opcional."""
+    """Load the voice stack without opening a microphone or sending input."""
     import numpy as np
     import ctranslate2,faster_whisper,sounddevice
     from faster_whisper.vad import get_speech_timestamps
-    from dictation import UIAFocusProbe,installed_model
-    from config import VoiceConfig
+    from dictation import UIAFocusProbe,WhisperTranscriber,installed_model
+    from config import VoiceConfig,WHISPER_MODELS
     assert get_speech_timestamps(np.zeros(16000,dtype=np.float32))==[]  # onnxruntime + silero_vad.onnx
     UIAFocusProbe().init_thread()                                        # comtypes genera UIAutomationCore
-    model=VoiceConfig().model
-    installed=installed_model(model) is not None
-    if installed:  # CTranslate2 carga el modelo y transcribe 1 s de silencio
-        from dictation import WhisperTranscriber
-        WhisperTranscriber(model).transcribe(np.zeros(16000,dtype=np.float32))
+    frozen=getattr(sys,"frozen",False)
+    fixture=os.environ.get("HEADMOUSE_VERIFY_AUDIO")
+    audio=np.zeros(16000,dtype=np.float32)
+    if fixture:
+        import wave
+        with wave.open(fixture,"rb") as wav:
+            assert (wav.getnchannels(),wav.getsampwidth(),wav.getframerate())==(1,2,16000)
+            audio=np.frombuffer(wav.readframes(wav.getnframes()),dtype="<i2").astype(np.float32)/32768
+    models={}
+    for model in WHISPER_MODELS if frozen else (VoiceConfig().model,):
+        directory=RESOURCE_ROOT/"models/whisper" if frozen else None
+        if frozen or installed_model(model) is not None:
+            result=WhisperTranscriber(model,directory).transcribe(audio)
+            models[model]=result
+    if fixture:
+        assert "prueba" in models[VoiceConfig().model].lower(), models
     import sherpa_onnx
-    from speaker import SpeakerModel,model_path as speaker_path
-    if speaker_path():  # huella de 1 s de un tono: 256 números
-        assert len(SpeakerModel().embed(np.sin(np.arange(16000,dtype=np.float32)/8))) == 256
+    from speaker import MODEL_NAME,SpeakerModel,model_path as speaker_path
+    speaker=RESOURCE_ROOT/"models/speaker"/MODEL_NAME if frozen else speaker_path()
+    if speaker:
+        assert speaker.is_file()
+        embedding=SpeakerModel(speaker).embed(audio if fixture else np.sin(np.arange(16000,dtype=np.float32)/8))
+        assert len(embedding)==256 and np.isfinite(embedding).all()
     return dict(faster_whisper=faster_whisper.__version__,ctranslate2=ctranslate2.__version__,
-                sherpa_onnx=sherpa_onnx.__version__,speaker_model=bool(speaker_path()),
+                sherpa_onnx=sherpa_onnx.__version__,speaker_model=bool(speaker),
                 portaudio=sounddevice.get_portaudio_version()[1],ui_automation=True,
-                model_installed=installed,model_transcribed=installed)
+                model_installed=bool(models),model_transcribed=bool(models),models=models,
+                microphone_opened=False,fixture_used=bool(fixture))
 
 
 def run():
+    def deny_network(event,args):
+        if event in ("socket.connect","socket.getaddrinfo"):
+            raise RuntimeError("La verificación de distribución debe funcionar sin red")
+    sys.addaudithook(deny_network)
     import cv2,numpy as np,pyautogui
     from PySide6.QtCore import qVersion
     from vision_engine import mp,mp_python,mp_vision
@@ -39,7 +58,8 @@ def run():
         result=detector.detect(mp.Image(image_format=mp.ImageFormat.SRGB,data=np.zeros((256,256,3),dtype=np.uint8)))
         assert not result.face_landmarks
     report=dict(result="passed",version=VERSION,qt=qVersion(),opencv=cv2.__version__,numpy=np.__version__,
-        facial_model=path.is_file(),camera_opened=False,physical_actions=0,voice=voice_check())
+        facial_model=path.is_file(),camera_opened=False,physical_actions=0,
+        python_network_blocked=True,voice=voice_check())
     from user_storage import write_json
     write_json(data_root()/"logs"/"distribution-check.json",report)
     return 0

@@ -85,6 +85,7 @@ class VoiceCalibration:
         self._thread = None
 
     def start(self):
+        self._set("silence", "Preparando micrófono…")
         self._thread = threading.Thread(target=self._run, name="VoiceCalibration", daemon=True)
         self._thread.start()
 
@@ -111,6 +112,9 @@ class VoiceCalibration:
 
     def _run(self):
         try:
+            if self._cancel.is_set():
+                self._set("cancelled", "Calibración cancelada.")
+                return
             with self.recorder_factory() as recorder:
                 noise, speech_share = self._silence(recorder)
                 if noise is None:
@@ -195,8 +199,11 @@ class VoiceCalibration:
                       model=self.config.model, voiceprint=voiceprint)
         result["recommendations"] = recommendations(result, self.config.model)
         with self._lock:
+            if self._cancel.is_set():
+                self.state, self.message = "cancelled", "Calibración de voz cancelada."
+                return
             self.result = result
-        self._set("done", "Listo. Revisá el resultado y guardalo en tu perfil.")
+            self.state, self.message = "done", "Listo. Revisá el resultado y guardalo en tu perfil."
 
 
 def validate_voice_calibration(record):

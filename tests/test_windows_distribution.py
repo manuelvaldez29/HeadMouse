@@ -173,9 +173,10 @@ class DistributionGUITests(unittest.TestCase):
     def test_authorized_start_requires_stability_and_lock_stops_immediately(self):
         self.select_calibrated();r=self.resident()
         r.preferences=r.store.save(True,True,False,self.controller.profile,confirmed=True)
-        with patch('desktop.resident.desktop_unlocked',return_value=True):
+        with patch('desktop.resident.desktop_unlocked',return_value=True), patch.object(self.controller,'_start_dictation') as voice:
             r.begin();self.backend_factory.assert_not_called();r.timer.start(50)
             self.wait(lambda:self.bridge.snapshot()['control_enabled'])
+            voice.assert_not_called()
             r.session_changed(False)
             self.assertTrue(self.controller.emergency.is_set())
             self.wait(lambda:not self.bridge.snapshot()['camera'])
@@ -269,12 +270,12 @@ class DistributionGUITests(unittest.TestCase):
 class DistributionVoiceTests(unittest.TestCase):
     """El dictado es parte del instalador (2026-11-02): no puede quedar afuera sin aviso."""
 
-    def test_spec_bundles_the_dictation_engine_but_no_whisper_model(self):
+    def test_spec_bundles_the_dictation_engine_and_models(self):
         from app_paths import RESOURCE_ROOT
         spec=(RESOURCE_ROOT/'packaging'/'HeadMouse.spec').read_text(encoding='utf-8')
         for package in ('faster_whisper','ctranslate2','onnxruntime','_sounddevice_data','comtypes.client','sherpa_onnx'):
             self.assertIn(f"'{package}'",spec)
-        self.assertNotIn('models/whisper',spec)  # el modelo se descarga, no se distribuye
+        self.assertIn('models/whisper',spec)
         lock=(RESOURCE_ROOT/'packaging'/'requirements-windows-py312-build.lock.txt').read_text(encoding='utf-8')
         for pin in ('faster-whisper==','ctranslate2==','comtypes==','sounddevice==','sherpa-onnx=='):
             self.assertIn(pin,lock)

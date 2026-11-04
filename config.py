@@ -178,7 +178,8 @@ WHISPER_MODELS = ("tiny", "base", "small", "medium")
 @dataclass
 class VoiceConfig:
     """Dictado local al enfocar un campo de texto con un click de HeadMouse."""
-    enabled: bool = False             # requiere preparar el modelo una vez
+    enabled: bool = False
+    microphone: str = ""              # vacío: dispositivo predeterminado
     model: str = "small"              # faster-whisper; "base" para equipos lentos
     language: str = "es"
     focus_window_ms: float = 800      # espera tras el click para que cambie el foco
@@ -199,6 +200,8 @@ class VoiceConfig:
                 raise ValueError(f"{name} debe ser true o false")
         if self.model not in WHISPER_MODELS:
             raise ValueError("Modelo de voz desconocido")
+        if not isinstance(self.microphone, str) or len(self.microphone) > 512:
+            raise ValueError("Micrófono inválido")
         if self.detector not in ("neural", "energy"):
             raise ValueError("Detector de voz desconocido")
         if not isinstance(self.language, str) or not 2 <= len(self.language) <= 5:

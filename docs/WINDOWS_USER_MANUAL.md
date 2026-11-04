@@ -1,4 +1,4 @@
-# HeadMouse 0.4.0 — Manual de usuario para Windows
+# HeadMouse 0.5.0 — Manual de usuario para Windows
 
 HeadMouse es un proyecto de tesis de Ingeniería en Informática de UNSTA. Permite
 controlar el puntero mediante Nariz u Ojos y realizar acciones faciales calibradas.
@@ -13,7 +13,7 @@ facial. No hace falta instalar Python ni usar una terminal. La primera versión
 se verificó en el equipo de desarrollo indicado en el informe de pruebas;
 la matriz completa de equipos y Windows 10/11 requiere pruebas adicionales.
 
-Abrir `HeadMouse-Setup-0.4.0-win64.exe` y seguir el asistente. Se instala para el
+Abrir `HeadMouse-Setup-0.5.0-win64.exe` y seguir el asistente. Se instala para el
 usuario actual en `%LOCALAPPDATA%\Programs\HeadMouse`. Crea acceso en Inicio,
 ofrece acceso de escritorio y registra un desinstalador. Abrir al finalizar es
 opcional; la instalación no habilita el control ni el inicio con Windows.
@@ -106,14 +106,41 @@ puede seguir el control si ya estaba autorizado. Sin esa preferencia, X termina
 la aplicación. Salir y Salir completamente siempre cierran cámara y aplicación.
 Si la bandeja no está disponible, la ventana permanece accesible.
 
+## Dictado y calibración de voz
+
+En Configuración → Básico → Dictado por voz, podés usar el micrófono
+predeterminado de Windows o buscar y elegir otro. Guardá la configuración.
+La aplicación incluye los cuatro modelos de Whisper y el reconocimiento de
+voz. Small es la opción recomendada. Base y Tiny consumen menos recursos.
+
+En Calibración → Voz, tocá Calibrar voz. Quedate en silencio tres segundos y
+leé las cuatro frases que aparecen. Guardá el resultado en tu perfil. Se
+guardan medidas de ruido, precisión y una huella que ayuda a detectar el final
+de tu frase aunque haya otras voces de fondo. El audio se procesa en memoria.
+
+Para dictar, marcá la casilla de Dictado por voz y guardá. Iniciá el control
+manualmente, hacé click con HeadMouse en un campo editable y hablá al ver
+«Escuchando…». También podés asignar la acción Dictar a un gesto. Un silencio
+termina la frase. El gesto de click termina el dictado después de empezar a
+hablar. Ambas cejas cancelan el dictado. Pausar desde la bandeja o pulsar F8
+interrumpe la escucha. El arranque automático del control sólo habilita Nariz u Ojos.
+
+Decí sólo «borrar», «borrar dos palabras», «borrar tres letras», «borrar todo»
+o «deshacer» para editar. La palabra final que presiona Enter se puede configurar
+en Configuración. Por defecto está vacía. La ayuda completa está en Gestos y acciones.
+
+Si falta el micrófono, está ocupado o se desconecta, revisá la conexión y usá
+Buscar micrófonos. El botón Permisos de micrófono en Windows abre la configuración
+de privacidad. Activá el acceso al micrófono para aplicaciones de escritorio
+si querés dictar. Podés seguir usando Nariz y Ojos con el dictado desmarcado.
+
 ## Datos, importación y actualización
 
 Los datos están en `%LOCALAPPDATA%\HeadMouse`: profiles, último perfil, métricas,
 experimentos, diagnósticos, logs y startup.json. No se guardan fotos ni vídeo.
-Los modelos faciales distribuidos son recursos de lectura; los modelos opcionales
-de voz se descargan dentro del directorio de datos. El dictado viene incluido;
-sólo hay que descargar una vez el modelo de voz desde Configuración (requiere
-Internet esa única vez; después funciona sin conexión).
+El programa usa los modelos incluidos en la instalación y procesa el dictado
+sin conexión. Las descargas gráficas quedan disponibles para reparar modelos
+faltantes.
 
 Desde el código fuente se copian los perfiles antiguos de data de forma verificable.
 En una instalación nueva, usar Importar perfiles anteriores en Inicio con Windows

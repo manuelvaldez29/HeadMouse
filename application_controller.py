@@ -35,6 +35,7 @@ class ApplicationController:
         self._voice_download = None
         self._speaker_download = None
         self.voice_wizard = None  # calibración de voz en curso (VoiceCalibration)
+        self.microphones = None
         self._models, self._models_checked = {}, -1e9
         self.data_dir = Path(data_dir) if data_dir else data_root()
         self.clock = clock
@@ -120,6 +121,8 @@ class ApplicationController:
         dictation = self.dictation
         if dictation is not None:
             dictation.cancel()  # nunca escribir texto después de F8 / Detener
+        if self.voice_wizard is not None:
+            self.voice_wizard.cancel()
 
     def _require_profile(self, calibrated=False, validated=False):
         if self.profile is None:
@@ -136,6 +139,7 @@ class ApplicationController:
 
     def select_profile(self, user_id):
         self.stop_camera()
+        self.voice_wizard = None
         self.profile = self.profiles.store.load(user_id)
         self.config = load_config(overrides=self.profile.get("settings", {}))
         self.state = "HOME"
@@ -389,7 +393,7 @@ class ApplicationController:
         if errors:
             raise RuntimeError("No se pudieron cerrar todos los recursos: " + "; ".join(str(e) for e in errors))
 
-    def activate_control(self, confirmed=False, screen_context=None):
+    def activate_control(self, confirmed=False, screen_context=None, automatic=False):
         if self.session_guard is not None and not self.session_guard():
             raise ValueError("La sesión de Windows está bloqueada o no permite controlar el escritorio")
         logging.getLogger(__name__).info("Activación solicitada: método=%s banco=%s confirmada=%s emergencia=%s cámara=%s acciones_validadas=%s",
@@ -401,6 +405,8 @@ class ApplicationController:
             raise ValueError("La activación fue cancelada o no está autorizada")
         if self.state in ("CALIBRATING", "EYE_CALIBRATING", "GAZE_CALIBRATING", "VERTICAL_DIAGNOSTIC", "JITTER") or (self.experiment and self.experiment.active):
             raise ValueError("Terminá o cancelá la medición antes de activar")
+        if self.voice_wizard and self.voice_wizard.state in ("silence", "phrase", "processing"):
+            raise ValueError("Terminá o cancelá la calibración de voz antes de activar")
         self.start_camera()
         if self.config.ui.tracking_method == "eye_absolute":
             self._check_absolute_context(screen_context)
@@ -419,7 +425,10 @@ class ApplicationController:
         if not self.control:
             backend = self.backend_factory() if self.backend_factory else None
             movement_only=self.config.ui.tracking_method!="nose" and not self._actions_ready()
-            voice_warning = self._start_dictation() if not movement_only else " Sólo movimiento; clics y acciones faciales pendientes."
+            if movement_only:
+                voice_warning = " Sólo movimiento; clics y acciones faciales pendientes."
+            elif not automatic:
+                voice_warning = self._start_dictation()
             bounds=None
             if self.config.ui.tracking_method=="eye_absolute":
                 from screen_mapping import screen_display
@@ -451,7 +460,7 @@ class ApplicationController:
             raise ValueError("No existe autorización automática vigente para el perfil actual")
         if self.session_guard is None or not self.session_guard():
             raise ValueError("No se pudo verificar la sesión desbloqueada de Windows")
-        self.activate_control(confirmed=True,screen_context=screen_context)
+        self.activate_control(confirmed=True,screen_context=screen_context,automatic=True)
 
     def resume_control(self, confirmed=False, screen_context=None):
         self.activate_control(confirmed,screen_context)
@@ -479,7 +488,8 @@ class ApplicationController:
                 self.dictation = self.dictation_factory(self.config.voice, self.metrics)
             else:
                 from dictation import create_dictation
-                self.dictation = create_dictation(self.config.voice, self.metrics, voiceprint=self._voiceprint())
+                self.dictation = create_dictation(self.config.voice, self.metrics, voiceprint=self._voiceprint(),
+                                                 output_allowed=self._dictation_allowed)
             self.dictation.start()
             return " Dictado por voz activo." + ("" if self._voiceprint() else
                                                  " Calibrá tu voz para que ignore otras voces.")
@@ -490,9 +500,23 @@ class ApplicationController:
     def _voiceprint(self):
         return ((self.profile or {}).get("voice_calibration") or {}).get("voiceprint")
 
+    def _dictation_allowed(self):
+        control = self.control
+        return (control is not None and self.state == "CONTROL" and control.output_allowed.is_set()
+                and not control.paused and not self.emergency.is_set()
+                and (self.session_guard is None or self.session_guard()))
+
+    def refresh_microphones(self):
+        from dictation import input_devices
+        self.microphones = sorted(input_devices())
+        if not self.microphones:
+            self.message = "No hay micrófonos disponibles. Conectá uno o revisá los permisos de Windows."
+
     def start_voice_calibration(self):
         """Silencio + 4 frases. Usa el micrófono: se apaga el control (y su dictado) antes."""
         self._require_profile()
+        if self.session_guard is not None and not self.session_guard():
+            raise ValueError("Desbloqueá Windows antes de calibrar el micrófono")
         if self.voice_wizard and self.voice_wizard.state in ("silence", "phrase", "processing"):
             raise ValueError("La calibración de voz ya está en curso")
         from dictation import SoundDeviceRecorder, WhisperTranscriber, detector_factory, installed_model
@@ -506,7 +530,8 @@ class ApplicationController:
         except Exception:
             logging.getLogger(__name__).warning("Calibración de voz sin huella", exc_info=True)
         from voice_calibration import VoiceCalibration
-        self.voice_wizard = VoiceCalibration(self.config.voice, SoundDeviceRecorder,
+        microphone = self.config.voice.microphone
+        self.voice_wizard = VoiceCalibration(self.config.voice, lambda: SoundDeviceRecorder(microphone),
                                              WhisperTranscriber(self.config.voice.model),
                                              detector_factory(self.config.voice), speaker_model)
         self.voice_wizard.start()
@@ -1178,6 +1203,7 @@ class ApplicationController:
                     jitter=self.jitter_result, jitter_remaining=max(0, self.jitter.duration_s-(self.clock()-self.jitter.started)) if self.jitter else None,
                     metrics=self.metrics.snapshot() if self.metrics else {}, history=deepcopy(self.history),
                     dictation=self.dictation.snapshot() if self.dictation else None,
+                    microphones=self.microphones,
                     voice_wizard=self.voice_wizard.snapshot() if self.voice_wizard else None,
                     voice_calibration={k: v for k, v in ((self.profile or {}).get("voice_calibration") or {}).items()
                                        if k != "voiceprint"} | {"voiceprint": bool(self._voiceprint())}

@@ -1,8 +1,8 @@
-# HeadMouse 0.4.0 — Distribución Windows, tesis V0.2
+# HeadMouse 0.5.0 — Distribución Windows, tesis V0.2
 
 ## Arquitectura y límites
 
-Base integrada: `tesis-v0.2`, `500032e`. No se repite el merge ocular. Se conservan
+Base integrada: `tesis-v0.2`, `9833bba`. Se conservan
 VisionEngine, GestureEngine, estrategias, modelos y calibradores. DesktopBridge
 sigue serializando las operaciones en el worker Qt. Los nuevos módulos son:
 
@@ -57,35 +57,34 @@ resultado y lo informa; nunca se promete global si falla el registro.
 
 Usar Windows x64 y el entorno de proyecto probado. Python no es un requisito
 del usuario final, sí del equipo de compilación. Dependencias de ejecución:
-requirements.txt; herramientas fijadas en requirements-build.txt. Preparar antes
-models/face_landmarker.task desde la fuente oficial documentada por el proyecto.
+requirements.txt y requirements-voice.txt; herramientas en requirements-build.txt.
 `packaging/requirements-windows-py312-build.lock.txt` registra las versiones exactas
 del entorno utilizado; es distinto del lock histórico para Python 3.14.4.
 
 ```powershell
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt -r requirements-voice.txt -r requirements-build.txt
-.\.venv\Scripts\python.exe main.py --download-model
-powershell -ExecutionPolicy Bypass -File packaging\build_windows.ps1 -Iscc "RUTA\ISCC.exe"
+python -m venv build\venv-windows
+.\build\venv-windows\Scripts\python.exe -m pip install -r packaging\requirements-windows-py312-build.lock.txt
+.\packaging\build_windows.ps1 -Python build\venv-windows\Scripts\python.exe -Iscc "RUTA\ISCC.exe"
 ```
 
-El modelo puede copiarse desde una instalación preparada; el inicio habitual no
-lo descarga. Si se descargó al directorio de datos, copiarlo a models para construir.
-No se incluye ningún perfil personal, logs o preferencias en el spec.
+El script valida o descarga los modelos fijados por revisión y hash en
+`packaging/model_sources.json`. `app_paths.VERSION` alimenta la interfaz, el
+recurso de versión de Windows y el instalador. El spec sólo recoge recursos
+enumerados. Los datos personales viven en AppData.
 
-PyInstaller genera dist/HeadMouse/HeadMouse.exe y _internal (debe distribuirse la
-carpeta entera). Inno Setup genera dist/installer/HeadMouse-Setup-0.4.0-win64.exe.
+PyInstaller genera dist/windows-0.5.0/HeadMouse/HeadMouse.exe y _internal
+(debe distribuirse la carpeta entera). Inno Setup genera
+dist/installer/HeadMouse-Setup-0.5.0-win64.exe.
 Incluye icono, recursos y Qt. Es onedir/windowed, sin consola. La compilación limpia
 el PATH para no tomar DLL de otras herramientas. No se distribuyen las ICU genéricas
 de Poppler: Qt usa la API del Windows objetivo. Esto se verifica ejecutando el binario.
 
-El dictado por voz se incluye (2026-11-02): el spec recoge faster-whisper,
-CTranslate2, onnxruntime (VAD Silero, con su .onnx), PyAV, tokenizers, sounddevice
-con PortAudio y comtypes (UI Automation). Suman unos 130 MB. No se incluye ningún
-modelo Whisper: se descarga una vez desde Configuración a
-`%LOCALAPPDATA%\HeadMouse\models\whisper`. Desde el código también se usan los
-modelos ya descargados en `models/whisper` del proyecto. `--verify-runtime` comprueba
-el motor congelado sin grabar ni escribir: VAD con audio sintético, UI Automation y
-PortAudio; si hay un modelo instalado, lo carga y transcribe un segundo de silencio.
+El dictado recoge faster-whisper, CTranslate2, ONNX Runtime, Silero, PyAV,
+tokenizers, sounddevice con PortAudio y comtypes. La huella usa sherpa-onnx
+y el modelo WeSpeaker. `--verify-runtime` carga los cuatro modelos incluidos
+desde `_internal`, transcribe audio de prueba y comprueba VAD, huella de voz,
+PortAudio y UI Automation sin grabar ni escribir. Ver el inventario
+`WINDOWS_DEPENDENCIES.md` para tamaños, origen y licencias.
 Los avisos sobre módulos opcionales en warn-HeadMouse.txt deben revisarse, no ignorar
 un import requerido.
 
@@ -102,9 +101,10 @@ sus condiciones al redistribuir fuera del contexto de tesis.
 
 ```powershell
 .\.venv\Scripts\python.exe -m unittest discover -s tests
-.\dist\HeadMouse\HeadMouse.exe --check
-.\dist\HeadMouse\HeadMouse.exe --verify-runtime
-.\dist\HeadMouse\HeadMouse.exe --check-resident
+.\dist\windows-0.5.0\HeadMouse\HeadMouse.exe --check
+.\dist\windows-0.5.0\HeadMouse\HeadMouse.exe --verify-runtime
+.\dist\windows-0.5.0\HeadMouse\HeadMouse.exe --check-resident
+.\.venv\Scripts\python.exe packaging/verify_installer.py --previous dist/installer/HeadMouse-Setup-0.4.0-win64.exe
 ```
 
 --check construye/cierra Qt sin cámara, residente ni autoactivación. --verify-runtime
@@ -119,6 +119,9 @@ sin PYTHONHOME/PYTHONPATH. Esto verifica autonomía del paquete en ese host, no
 equivale a una máquina limpia. Instalar, ejecutar, actualizar y desinstalar en una
 carpeta de ensayo; comparar bytes de perfiles y preferencias antes/después. El
 informe detalla las pruebas ejecutadas y las pendientes en otros sistemas.
+El verificador admite `--audio-fixture` para un WAV de prueba mono PCM16 a
+16 kHz. El manifiesto `dist/release-manifest-0.5.0.json` registra hashes de
+cada archivo del portable y del instalador.
 
 ## Fuentes técnicas
 

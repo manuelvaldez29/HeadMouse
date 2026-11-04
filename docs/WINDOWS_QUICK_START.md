@@ -1,6 +1,6 @@
 # HeadMouse — Guía rápida
 
-1. Ejecutar HeadMouse-Setup-0.4.0-win64.exe e instalar para el usuario actual.
+1. Ejecutar HeadMouse-Setup-0.5.0-win64.exe e instalar para el usuario actual.
 2. Abrir HeadMouse desde Inicio o el escritorio. No se necesita Python.
 3. Crear o elegir un perfil y seleccionar Nariz u Ojos.
 4. Entrar en Calibración y completar la medición y validación del método.
@@ -12,6 +12,12 @@
 9. Detener control o F8 apagan cámara y control. Ver estado en bandeja informa
    si F8 se pudo registrar globalmente; si no, mantener foco en HeadMouse.
 10. Salir termina la aplicación. Si se eligió bandeja, X sólo la minimiza.
+
+Para dictar, elegí el micrófono en Configuración → Básico → Dictado por voz.
+Marcá la opción y guardá. En Calibración → Voz, completá el silencio y las
+cuatro frases. Guardá el resultado. Al iniciar el control manualmente, hacé
+click con HeadMouse en un campo de texto y hablá cuando diga «Escuchando…».
+El instalador incluye los modelos para usar la voz sin conexión.
 
 Cambiar preferencias: Configuración → Básico → Inicio con Windows.
 Importar perfiles anteriores: botón de importación en esa misma sección.
