@@ -9,7 +9,7 @@ from PySide6.QtWidgets import (QMainWindow, QWidget, QFrame, QVBoxLayout, QHBoxL
     QGridLayout, QPushButton, QStackedWidget, QScrollArea, QComboBox, QInputDialog,
     QMessageBox, QFormLayout, QDoubleSpinBox, QSpinBox, QCheckBox, QProgressBar,
     QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView, QApplication, QLineEdit, QTabWidget)
-from action_mapping import ACTIONS, DEFAULT_MAPPING
+from action_mapping import ACTIONS, DEFAULT_MAPPING, capitalized, gesture_phrase
 from gesture_signals import GESTURE_SIGNALS
 from gaze_source import SOURCE_LABELS as EYE_SOURCE_LABELS, eye_coordinates
 from desktop.widgets import (CameraPreview, ExperimentCanvas, CalibrationMeter, DictationOverlay, LineChart, MiniCameraWindow,
@@ -48,6 +48,18 @@ CONDITION_STEPS = (
 )
 
 
+def gesture_hints(s):
+    """Qué gesto pausa y cuál hace click, según la asignación del perfil y los gestos habilitados."""
+    bindings=((s.get("settings") or {}).get("actions") or {}).get("bindings") or DEFAULT_MAPPING
+    gates=(s.get("diagnostic") or {}).get("gates") or {}
+    enabled={k for k,g in gates.items() if g.get("enabled")} if gates else None
+    hint=lambda action,short=False: gesture_phrase(bindings,action,enabled,short)
+    return dict(pause=hint("PAUSE"),pause_short=hint("PAUSE",True),click=hint("LEFT_CLICK"),click_short=hint("LEFT_CLICK",True))
+
+
+NO_PAUSE_GESTURE="No tenés un gesto calibrado para Pausar / reanudar: asignalo en Gestos y acciones. F8 o el botón rojo detienen."
+
+
 def status_message(s,event=None):
     """(texto, es_error) para la línea de estado: error > aviso reciente > próximo paso."""
     if s.get("state")=="ERROR":
@@ -55,12 +67,16 @@ def status_message(s,event=None):
     if event:
         return event[0],event[2]
     if s.get("control_enabled"):
+        g=gesture_hints(s)
         if not s.get("paused") and s.get("centering"):
             return "Buscando tu nariz: quedate quieto un momento y el centro queda donde estás.",False
         if not s.get("paused") and s.get("dragging"):
-            return "Arrastrando con click izquierdo: mové el cursor libremente y volvé a guiñar para soltar.",False
-        return (("Levantá ambas cejas para empezar a mover el cursor." if s.get("paused") else
-                 "Ambas cejas: pausar · F8 o el botón rojo: detener."),False)
+            return ("Arrastrando con click izquierdo: mové el cursor libremente y "
+                    +(f"{g['click']} de nuevo para soltar." if g["click"] else "detené con F8 para soltar.")),False
+        if not g["pause"]:
+            return NO_PAUSE_GESTURE,s.get("paused")
+        return ((f"{capitalized(g['pause'])} para empezar a mover el cursor." if s.get("paused") else
+                 f"{capitalized(g['pause_short'])}: pausar · F8 o el botón rojo: detener."),False)
     for condition in s.get("activation_conditions",[]):
         if condition.startswith("Iris") and not s.get("camera"):
             continue  # con la cámara apagada no se puede saber
@@ -389,16 +405,19 @@ class MainWindow(QMainWindow):
             self.home_action.style().polish(self.home_action)
         self.home_action.setEnabled(action is not None)
         p=s.get("profile")
+        g=gesture_hints(s)
         if s["control_enabled"]:
             state="EN PAUSA" if s["paused"] else "ACTIVO"
-            hint=("Levantá ambas cejas para empezar a mover el cursor." if s["paused"] else
-                  "Ambas cejas: pausar · Guiños: click · F8 o el botón rojo: detener.")
+            hint=(NO_PAUSE_GESTURE if not g["pause"] else
+                  f"{capitalized(g['pause'])} para empezar a mover el cursor." if s["paused"] else
+                  f"{capitalized(g['pause_short'])}: pausar"+(f" · {capitalized(g['click_short'])}: click" if g["click_short"] else "")
+                  +" · F8 o el botón rojo: detener.")
         elif s["state"]=="CAMERA_STARTING":
             state,hint="Iniciando",s["message"]+" · Detener/F8 cancela el inicio."
         elif p and p.get("status")!="draft" and p.get("validation",{}).get("passed"):
             state="Listo"
-            hint=("Arranca en pausa: después de iniciar, levantá ambas cejas para mover el cursor. "
-                  "Si el centro quedó corrido, pausá, quedate quieto un segundo y reanudá.")
+            hint=("Al iniciar se busca tu nariz: quedate quieto un momento y el centro queda donde estás. "
+                  +(f"Para pausar o reanudar: {g['pause']}." if g["pause"] else NO_PAUSE_GESTURE))
         elif p and p.get("status")=="draft":
             state,hint="Falta calibrar","Son unos minutos: tres repeticiones cómodas de cada gesto."
         elif p:
@@ -982,7 +1001,10 @@ class MainWindow(QMainWindow):
         wanted=(s.get("control_enabled") and s["settings"]["ui"]["tracking_method"]=="nose"
                 and self.mini_camera_check.isChecked())
         if wanted:
-            self.mini_camera.present(s,self.screen())
+            g=gesture_hints(s)
+            hints=dict(hint_paused=f"{capitalized(g['pause_short'])} para activar" if g["pause_short"] else "Sin gesto de pausa: F8 detiene",
+                       hint_dragging=f"{capitalized(g['click_short'])} para soltar" if g["click_short"] else "F8 para soltar")
+            self.mini_camera.present(dict(s,**hints),self.screen())
         elif self.mini_camera.isVisible():
             self.mini_camera.hide()
 
@@ -1112,7 +1134,7 @@ class MainWindow(QMainWindow):
             self.voice_detector.addItem(title,value)
         self.voice_detector.setAccessibleName("Cómo se detecta que empezaste y terminaste de hablar")
         self.voice_detector.setToolTip("La neuronal distingue la voz de ventiladores, golpes o música. "
-                                       "Con otra persona o la tele hablando de fondo, terminá con un guiño de click.")
+                                       "Con otra persona o la tele hablando de fondo, terminá con tu gesto de click.")
         form.addRow("Detección de voz",self.voice_detector)
         self.voice_send=QComboBox()
         self.voice_send.setEditable(True)
@@ -1716,7 +1738,10 @@ class MainWindow(QMainWindow):
                    "Dentro de una frase más larga se escribe como texto normal."]
             if voice["send_word"]:
                 notes.append(f"«{voice['send_word']}» al final de una frase: escribe el texto y presiona Enter.")
-            notes.append("Ambas cejas cancelan el dictado. Sin hablar: asigná «Borrar letra» o «Borrar palabra» a un gesto arriba.")
+            g=gesture_hints(s)
+            notes.append((f"{capitalized(g['pause_short'])} cancela el dictado" if g["pause_short"] else "F8 cancela el dictado")
+                         +(f" y {g['click_short']} lo termina ya" if g["click_short"] else "")
+                         +". Sin hablar: asigná «Borrar letra» o «Borrar palabra» a un gesto arriba.")
             if not voice["enabled"]:
                 notes.insert(0,"El dictado está apagado: activalo en Configuración → Dictado por voz.")
             if not voice["commands"]:
@@ -1835,7 +1860,7 @@ class MainWindow(QMainWindow):
                 f"Desplazamiento normalizado: {d['normalized_dx']:+.4f} / {d['normalized_dy']:+.4f}   |   FPS: {s['fps']:.0f}   |   Latencia: {s['processing_ms']:.1f} ms\n"
                 f"Centro X / Y vigente: {d.get('neutral_x',0):.4f} / {d.get('neutral_y',0):.4f}   (calibrado: "
                 f"{d.get('calibrated_neutral',(0,0))[0]:.4f} / {d.get('calibrated_neutral',(0,0))[1]:.4f})   |   "
-                +("tracking ocular: neutral independiente\n" if s["settings"]["ui"]["tracking_method"]=="eye" else "ambas cejas recentran\n")
+                +("tracking ocular: neutral independiente\n" if s["settings"]["ui"]["tracking_method"]=="eye" else "el gesto de pausa recentra\n")
                 +gesture_threshold_lines(d)+"\n"
                 f"Zona muerta: {s['settings']['gesture']['dead_zone']:.3f}   |   Suavizado: {s['settings']['gesture']['smoothing_alpha']:.2f}")
         if s["jitter_remaining"] is not None:

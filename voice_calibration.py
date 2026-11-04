@@ -58,7 +58,7 @@ def recommendations(result, model_name):
                     "micrófono → Efectos de voz (supresión de ruido).")
     if result["speech_in_silence"] > .2:
         tips.append("Durante el silencio se escuchó voz (tele o gente hablando). La huella de voz corta el "
-                    "dictado cuando dejás de hablar; si no corta, terminá con el guiño de click.")
+                    "dictado cuando dejás de hablar; si no corta, terminá con tu gesto de click.")
     if result["accuracy"] < .8:
         tips.append(f"Whisper entendió el {result['accuracy']:.0%} de las palabras. Hablá un poco más lento"
                     + (" o probá el modelo «small», más preciso." if model_name in ("tiny", "base") else "."))

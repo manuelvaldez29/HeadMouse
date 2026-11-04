@@ -631,13 +631,15 @@ class MiniCameraWindow(QWidget):
         else:
             kind = "active"
         detected = bool(snapshot.get("detected", True))
-        key = (kind, detected)
+        # La ventana pasa el gesto que tiene asignado cada perfil (hint_paused, hint_dragging).
+        custom = snapshot.get("hint_" + kind)
+        key = (kind, detected, custom)
         if key == self._status_key:
             return
         self._status_key = key
         self.state_kind = kind
         spec = self.STATE_SPECS[kind]
-        hint = spec["hint"] if detected else spec["hint_no_face"]
+        hint = (custom or spec["hint"]) if detected else spec["hint_no_face"]
         hint_color = spec["hint_color"] if detected else "#ffb4bf"
         self.status_badge.setText(spec["badge"])
         self.status_badge.setStyleSheet(spec["badge_css"])

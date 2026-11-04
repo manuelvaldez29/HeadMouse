@@ -289,13 +289,15 @@ class Dictation:
 
     def __init__(self, config: VoiceConfig, focus, recorder_factory, transcriber, typer,
                  clock=time.monotonic, metrics=None, cue=None, detector_factory=None, speaker_factory=None,
-                 output_allowed=None):
+                 output_allowed=None, hints=None):
         self.config, self.focus, self.recorder_factory = config, focus, recorder_factory
         self.detector_factory = detector_factory  # None: detección por energía
         self.speaker_factory = speaker_factory    # None: sin huella de voz
         self.transcriber, self.typer, self.clock, self.metrics = transcriber, typer, clock, metrics
         self.cue = cue or (lambda kind: None)
         self.output_allowed = output_allowed or (lambda: True)
+        # Gestos del perfil para el aviso "Escuchando…": terminar (click) y cancelar (pausa).
+        self.hints = dict(dict(finish="tu gesto de click", cancel="tu gesto de pausa"), **(hints or {}))
         self.state, self.message, self.last_text = "idle", "", ""
         self._last_typed = ""  # para "borrar": lo escrito por el último dictado
         self._lock = threading.Lock()
@@ -420,8 +422,11 @@ class Dictation:
         started = self.clock()
         self.cue("start")
         with self._lock:
-            self._set("listening", "Escuchando… hablá. Guiño de click: terminar ya · "
-                                   "decí «borrar» para corregir · ambas cejas cancelan.")
+            h = self.hints
+            self._set("listening", "Escuchando… hablá. "
+                      + (f"{h['finish'][:1].upper() + h['finish'][1:]}: terminar ya · " if h["finish"] else "")
+                      + "decí «borrar» para corregir · "
+                      + (f"{h['cancel']}: cancelar." if h["cancel"] else "F8: cancelar."))
         endpoint = Endpointer(self.config.silence_s, self.config.max_utterance_s,
                               self.config.no_speech_timeout_s,
                               detector=self.detector_factory() if self.detector_factory else None,
@@ -933,7 +938,7 @@ def sound_cue(kind):
         pass
 
 
-def create_dictation(config: VoiceConfig, metrics=None, voiceprint=None, output_allowed=None):
+def create_dictation(config: VoiceConfig, metrics=None, voiceprint=None, output_allowed=None, hints=None):
     """Dictado real de Windows. Falla temprano si faltan dependencias o modelo."""
     missing = [name for name in ("faster_whisper", "comtypes", "sounddevice")
                if importlib.util.find_spec(name) is None]
@@ -946,7 +951,7 @@ def create_dictation(config: VoiceConfig, metrics=None, voiceprint=None, output_
     return Dictation(config, UIAFocusProbe(), lambda: SoundDeviceRecorder(config.microphone), WhisperTranscriber(config.model),
                      SendInputTyper(), metrics=metrics, cue=sound_cue if config.sound_cues else None,
                      detector_factory=detector_factory(config), speaker_factory=speaker_factory(config, voiceprint),
-                     output_allowed=output_allowed)
+                     output_allowed=output_allowed, hints=hints)
 
 
 def speaker_factory(config, voiceprint):

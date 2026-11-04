@@ -493,8 +493,13 @@ class ApplicationController:
                 self.dictation = self.dictation_factory(self.config.voice, self.metrics)
             else:
                 from dictation import create_dictation
+                from action_mapping import gesture_phrase
+                enabled = getattr(self.gesture, "enabled_gestures", None)
+                bindings = self.config.actions.bindings
                 self.dictation = create_dictation(self.config.voice, self.metrics, voiceprint=self._voiceprint(),
-                                                 output_allowed=self._dictation_allowed)
+                                                 output_allowed=self._dictation_allowed,
+                                                 hints=dict(finish=gesture_phrase(bindings, "LEFT_CLICK", enabled, True),
+                                                            cancel=gesture_phrase(bindings, "PAUSE", enabled, True)))
             self.dictation.start()
             return " Dictado por voz activo." + ("" if self._voiceprint() else
                                                  " Calibrá tu voz para que ignore otras voces.")

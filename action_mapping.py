@@ -32,3 +32,30 @@ class ActionMapping:
         if identity not in self.mapping:
             raise ValueError(f"Gesto desconocido: {identity}")
         return replace(event, type=self.mapping[identity], gesture=identity)
+
+
+# Cómo nombrar cada gesto en los mensajes: (indicación, nombre corto). Los mensajes
+# salen de la asignación de cada perfil (2026-11-04: con el besito para pausar, la
+# mini cámara y el inicio seguían diciendo "ambas cejas").
+GESTURE_PHRASES = {
+    "LEFT_WINK": ("guiñá el ojo izquierdo", "guiño izq."),
+    "RIGHT_WINK": ("guiñá el ojo derecho", "guiño der."),
+    "MOUTH_LEFT": ("llevá los labios a la izquierda", "labios izq."),
+    "MOUTH_RIGHT": ("llevá los labios a la derecha", "labios der."),
+    "LEFT_BROW": ("levantá la ceja izquierda", "ceja izq."),
+    "RIGHT_BROW": ("levantá la ceja derecha", "ceja der."),
+    "MOUTH_OPEN": ("abrí la boca", "boca abierta"),
+    "BOTH_BROWS": ("levantá ambas cejas", "ambas cejas"),
+    "KISS": ("tirá un besito", "besito"),
+}
+
+
+def gesture_phrase(bindings, action, enabled=None, short=False):
+    """«tirá un besito», «levantá ambas cejas o tirá un besito»… o None si ningún gesto
+    habilitado hace esa acción. `enabled` None: no se sabe, se toman todos."""
+    keys = [k for k in GESTURE_PHRASES if (bindings or {}).get(k) == action and (enabled is None or k in enabled)]
+    return " o ".join(GESTURE_PHRASES[k][1 if short else 0] for k in keys) if keys else None
+
+
+def capitalized(text):
+    return text[:1].upper() + text[1:] if text else text

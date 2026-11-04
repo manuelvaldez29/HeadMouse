@@ -122,11 +122,19 @@ class MiniCameraTests(unittest.TestCase):
         window.refresh()
         self.assertEqual(window.mini_camera.state_kind, "dragging")
         self.assertIn("ARRASTRANDO", window.mini_camera.status_badge.text())
-        self.assertIn("Guiñá", window.mini_camera.status_hint.text())
+        self.assertIn("Guiño izq. para soltar", window.mini_camera.status_hint.text())
 
         bridge.data = self.snapshot(control_enabled=True, paused=True, detected=False)
         window.refresh()
         self.assertIn("Sin rostro", window.mini_camera.status_hint.text())
+
+        # 2026-11-04: con el besito asignado a pausar, la mini cámara decía "ambas cejas".
+        paused = self.snapshot(control_enabled=True, paused=True)
+        paused["settings"]["actions"]["bindings"] = dict(paused["settings"]["actions"]["bindings"],
+                                                         KISS="PAUSE", BOTH_BROWS="NONE")
+        bridge.data = paused
+        window.refresh()
+        self.assertEqual(window.mini_camera.status_hint.text(), "Besito para activar")
 
     @unittest.skipUnless(__import__("sys").platform == "win32", "comprobación nativa de Windows")
     def test_windows_keeps_mini_camera_visible_when_minimized(self):
