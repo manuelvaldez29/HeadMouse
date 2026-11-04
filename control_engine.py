@@ -111,6 +111,7 @@ class ControlEngine:
         self.last_recenter = None   # resultado del último recentrado, para la GUI
         self._pinned_since = None   # cursor apretado contra un borde (centro mal ubicado)
         self._paused_at_ms = None   # cuándo se pausó con ambas cejas: el recentrado mira desde ahí
+        self._centering = None      # al iniciar: buscando la nariz para fijar el centro (begin_centering)
         self._pinned_retry = 0.
         self._last_cursor = None
         self._fraction = [0., 0.]
@@ -181,6 +182,48 @@ class ControlEngine:
         self._release_held_mouse()
         logger.info("[ControlEngine] Detenido.")
 
+    CENTERING_TIMEOUT_S = 4.0
+
+    def begin_centering(self):
+        """Al iniciar el control, el centro pasa a ser la postura actual, no la de la calibración.
+
+        Sentarse distinto que al calibrar dejaba la nariz arriba o abajo de la zona
+        quieta y el cursor se iba solo hasta pausar y reanudar (2026-11-04). Hasta
+        `CENTERING_TIMEOUT_S` el cursor y los gestos esperan, y se fija el centro en el
+        primer tramo quieto (0,3 s). Si no hubo, sigue con el de la calibración.
+        """
+        strategy = getattr(getattr(self.gesture, "strategy", None), "name", "nose")
+        if (strategy != "nose" or not getattr(self.gesture.config, "auto_recenter", False)
+                or not hasattr(self.gesture, "recenter")):
+            return False
+        self._centering = dict(started=self._clock(), since=None, tried=0.)
+        return True
+
+    @property
+    def centering(self) -> bool:
+        return self._centering is not None
+
+    def _center_on_start(self, fd, fresh, now, actions):
+        c = self._centering
+        if fresh and c["since"] is None:
+            c["since"] = fd.timestamp_ms
+        if fresh and c["since"] is not None and now - c["tried"] >= .1:
+            c["tried"] = now
+            result = self.gesture.recenter(fd.timestamp_ms, guard_ms=0, since_ms=c["since"], window_ms=500,
+                                           search_ms=4000, min_samples=5)
+            if result.get("ok"):
+                self._centering, self.last_recenter = None, dict(result, startup=True)
+                logger.info("[ControlEngine] Centro al iniciar: %s", self.last_recenter)
+                return [ev for ev in actions if ev.type == "PAUSE"]
+        if now - c["started"] >= self.CENTERING_TIMEOUT_S:
+            self._centering = None
+            self.last_recenter = dict(ok=False, startup=True,
+                                      reason="no hubo un momento con la cabeza quieta al iniciar; queda el de la calibración")
+            logger.info("[ControlEngine] Centro al iniciar: %s", self.last_recenter)
+            return actions
+        # Buscando: ni cursor ni gestos (la persona se está acomodando); la pausa sí.
+        return [ev for ev in actions if ev.type == "PAUSE"]
+
     def toggle_pause(self):
         """Pausa o reanuda el control manualmente."""
         self._paused = not self._paused
@@ -188,6 +231,7 @@ class ControlEngine:
         if self._paused:
             if self.dictation is not None:
                 self.dictation.cancel()
+            self._centering = None  # al reanudar con las cejas se recentra igual
             self._release_held_mouse()
         state = "PAUSADO" if self._paused else "ACTIVO"
         logger.info(f"[ControlEngine] Control {state}.")
@@ -363,6 +407,8 @@ class ControlEngine:
         actions = [self.mapping.resolve(ev) for ev in events]
         if self.movement_only:
             actions = [ev for ev in actions if ev.type in (EV_CURSOR_MOVE,"CURSOR_ABSOLUTE")]
+        if self._centering is not None and not self.paused:
+            actions = self._center_on_start(fd, fresh, now, actions)
         if self.dictation is not None and self.dictation.busy:
             self._release_held_mouse()
             # Hablar mueve boca, ojos y cejas: mientras se dicta solo se mueve el

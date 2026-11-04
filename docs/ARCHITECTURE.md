@@ -212,6 +212,14 @@ experimental futura. No están implementadas.
   con 5 cuadros, sólo las cejas descalifican un cuadro (mueven la nariz) y el reposo
   de cada gesto se mide sin los cuadros en que ese gesto estaba activo. Si falla, el
   resultado registra `frames` y `still_ms` (el tramo quieto más largo encontrado).
+- Centro al iniciar (2026-11-04): con "Iniciar HeadMouse" en modo Nariz,
+  `ControlEngine.begin_centering` busca la nariz antes de mover el cursor. Hasta 4 s
+  el cursor y los gestos esperan (la pausa sí funciona). En el primer tramo quieto
+  de 0,3 s desde que arrancó, el centro (y el reposo de los gestos) pasa a ser esa
+  postura, con el mismo `recenter` que al reanudar. Sentarse distinto que al
+  calibrar dejaba la nariz arriba o abajo de la zona quieta y el cursor se iba solo
+  hasta pausar y reanudar. Sin un momento quieto queda el centro de la
+  calibración, con aviso. No se usa en modo Ojos ni con `auto_recenter: false`.
 - Recentrado automático (`auto_recenter`): al reanudar con ambas cejas, el
   neutral de la nariz pasa a ser la mediana del segundo quieto más reciente de
   los 4 s previos. Se excluyen el propio gesto (decisión de cejas + hold +

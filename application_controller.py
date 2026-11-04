@@ -444,6 +444,7 @@ class ApplicationController:
                     self.stop_control()
                     raise ValueError("La resolución del backend cambió: recalibrá con una sola pantalla")
             self.control.toggle_pause()
+            self.control.begin_centering()
         if self.emergency.is_set():
             self.stop_control()
             return
@@ -469,7 +470,11 @@ class ApplicationController:
     def _report_recenter(self, result):
         if not result:
             return
-        if not result["ok"]:
+        if result.get("startup"):
+            self.message = ("Centro en tu nariz: el cursor queda quieto donde estás ahora." if result["ok"] and not result.get("far")
+                            else "Centro en tu nariz, pero estás lejos de la postura calibrada: si los gestos fallan, recalibrá."
+                            if result["ok"] else f"Centro de la calibración: {result['reason']}.")
+        elif not result["ok"]:
             self.message = f"Centro sin cambios: {result['reason']}."
         elif result.get("pinned"):
             self.message = "Centro ajustado solo: el cursor estaba trabado contra el borde con la cabeza quieta."
@@ -1184,6 +1189,7 @@ class ApplicationController:
                     control_enabled=bool(self.control and not self.emergency.is_set()),
                     paused=self.control.paused if self.control else True,
                     dragging=bool(self.control and self.control.dragging and not self.emergency.is_set()),
+                    centering=bool(self.control and getattr(self.control, "centering", False)),
                     gesture=self.last_gesture, action=self.last_action, cursor=self.cursor,
                     diagnostic=self.gesture.diagnostic() if self.gesture else {},
                     wizard=self.wizard.snapshot() if self.wizard else None,

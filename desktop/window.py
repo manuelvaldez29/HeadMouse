@@ -55,6 +55,8 @@ def status_message(s,event=None):
     if event:
         return event[0],event[2]
     if s.get("control_enabled"):
+        if not s.get("paused") and s.get("centering"):
+            return "Buscando tu nariz: quedate quieto un momento y el centro queda donde estás.",False
         if not s.get("paused") and s.get("dragging"):
             return "Arrastrando con click izquierdo: mové el cursor libremente y volvé a guiñar para soltar.",False
         return (("Levantá ambas cejas para empezar a mover el cursor." if s.get("paused") else
