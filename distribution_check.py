@@ -57,9 +57,20 @@ def run():
     with mp_vision.FaceLandmarker.create_from_options(options) as detector:
         result=detector.detect(mp.Image(image_format=mp.ImageFormat.SRGB,data=np.zeros((256,256,3),dtype=np.uint8)))
         assert not result.face_landmarks
+    from tempfile import TemporaryDirectory
+    from keyboard_dictionary import Dictionary,base_words
+    assert {"días","niño"}.issubset(base_words())
+    with TemporaryDirectory(prefix="headmouse-keyboard-check-") as root:
+        dictionary=Dictionary(root,"synthetic")
+        try:
+            dictionary.learn("HeadMouse",["Buenos","días"])
+            assert dictionary.suggest("Hea",[])[0]==("HeadMouse",False)
+            assert dictionary.suggest("",["Buenos","días"])[0]==("HeadMouse",False)
+        finally:
+            dictionary.close()
     report=dict(result="passed",version=VERSION,qt=qVersion(),opencv=cv2.__version__,numpy=np.__version__,
         facial_model=path.is_file(),camera_opened=False,physical_actions=0,
-        python_network_blocked=True,voice=voice_check())
+        python_network_blocked=True,voice=voice_check(),keyboard=dict(sqlite=True,spanish_base=True))
     from user_storage import write_json
     write_json(data_root()/"logs"/"distribution-check.json",report)
     return 0

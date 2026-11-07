@@ -32,12 +32,15 @@ class ApplicationController:
         self.backend_factory = backend_factory
         self.dictation_factory = dictation_factory
         self.dictation = None
+        self.keyboard_visible = threading.Event()
         self._voice_download = None
         self._speaker_download = None
         self.voice_wizard = None  # calibración de voz en curso (VoiceCalibration)
         self.microphones = None
         self._models, self._models_checked = {}, -1e9
         self.data_dir = Path(data_dir) if data_dir else data_root()
+        from startup_preferences import StartupPreferences
+        self.startup_store = StartupPreferences(self.data_dir / "startup.json")
         self.clock = clock
         self.emergency = threading.Event()
         self._pending_stop_reason = None  # motivo de una parada pedida desde otro hilo
@@ -82,16 +85,27 @@ class ApplicationController:
         return self.data_dir / "last_profile.json"
 
     def _remember_profile(self):
+        if not self.profile:return
         from profiles import replace_with_retry
         try:
+            if not self.startup_store.load()["remember_profile"]:
+                return
             self.data_dir.mkdir(parents=True, exist_ok=True)
             temporary = self._last_profile_path.with_suffix(".tmp")
             temporary.write_text(json.dumps({"user_id": self.profile["user_id"]}), encoding="utf-8")
             replace_with_retry(temporary, self._last_profile_path)
-        except OSError:
+        except (OSError, ValueError):
             pass  # recordarlo es una comodidad, nunca un error para el usuario
 
+    def remember_current_profile(self):
+        self._remember_profile()
+
     def _restore_last_profile(self):
+        try:
+            if not self.startup_store.load()["remember_profile"]:
+                return
+        except (OSError, ValueError):
+            return  # configuración dañada: esperar una selección explícita
         try:
             user_id = json.loads(self._last_profile_path.read_text(encoding="utf-8"))["user_id"]
         except (OSError, ValueError, KeyError, TypeError):
@@ -455,9 +469,8 @@ class ApplicationController:
         if self.control and not self.control.paused:self.control.toggle_pause()
 
     def activate_startup_control(self, screen_context=None):
-        from startup_preferences import StartupPreferences
-        store=StartupPreferences(self.data_dir/"startup.json")
-        if not self.profile or not store.authorized(store.load(),self.profile):
+        store=self.startup_store
+        if not self.profile or store.registration()!="on" or not store.authorized(store.load(),self.profile):
             raise ValueError("No existe autorización automática vigente para el perfil actual")
         if self.session_guard is None or not self.session_guard():
             raise ValueError("No se pudo verificar la sesión desbloqueada de Windows")
@@ -500,6 +513,8 @@ class ApplicationController:
                                                  output_allowed=self._dictation_allowed,
                                                  hints=dict(finish=gesture_phrase(bindings, "LEFT_CLICK", enabled, True),
                                                             cancel=gesture_phrase(bindings, "PAUSE", enabled, True)))
+                self.dictation.click_allowed = lambda: (
+                    not self.config.keyboard.auto_open and not self.keyboard_visible.is_set())
             self.dictation.start()
             return " Dictado por voz activo." + ("" if self._voiceprint() else
                                                  " Calibrá tu voz para que ignore otras voces.")

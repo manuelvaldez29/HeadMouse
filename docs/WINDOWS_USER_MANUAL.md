@@ -1,4 +1,4 @@
-# HeadMouse 0.5.0 — Manual de usuario para Windows
+# HeadMouse 0.5.1 — Manual de usuario para Windows
 
 HeadMouse es un proyecto de tesis de Ingeniería en Informática de UNSTA. Permite
 controlar el puntero mediante Nariz u Ojos y realizar acciones faciales calibradas.
@@ -13,7 +13,7 @@ facial. No hace falta instalar Python ni usar una terminal. La primera versión
 se verificó en el equipo de desarrollo indicado en el informe de pruebas;
 la matriz completa de equipos y Windows 10/11 requiere pruebas adicionales.
 
-Abrir `HeadMouse-Setup-0.5.0-win64.exe` y seguir el asistente. Se instala para el
+Abrir `HeadMouse-Setup-0.5.1-win64.exe` y seguir el asistente. Se instala para el
 usuario actual en `%LOCALAPPDATA%\Programs\HeadMouse`. Crea acceso en Inicio,
 ofrece acceso de escritorio y registra un desinstalador. Abrir al finalizar es
 opcional; la instalación no habilita el control ni el inicio con Windows.
@@ -71,12 +71,13 @@ PyAutoGUI permanece activo. El mouse y teclado físicos siguen disponibles.
 ## Inicio con Windows
 
 Después de guardar la primera calibración válida aparece una pregunta, una vez
-por equipo/usuario. Ahora no conserva ambas opciones apagadas. También se puede
-cambiar en Configuración → Básico → Inicio con Windows:
+por equipo/usuario. Elegí Sí, iniciar automáticamente, o No, iniciar manualmente. También se puede
+cambiar en Configuración → Básico → Inicio y accesibilidad:
 
 - Iniciar HeadMouse automáticamente con Windows.
 - Activar automáticamente el seguimiento.
-- Perfil de inicio.
+- Recordar el último perfil elegido.
+- Perfil para activación automática.
 - Iniciar minimizado en la bandeja del sistema.
 
 Guardar preferencias modifica sólo la entrada HeadMouse del inicio del usuario.
@@ -85,7 +86,7 @@ confirmación explícita: autoriza movimiento y únicamente las acciones validad
 de ese perfil. Se aplica al próximo inicio de sesión, no empieza a mover el
 puntero al guardar estas preferencias.
 
-Con sólo apertura automática se carga el perfil elegido y se prepara la cámara,
+Con sólo apertura automática se recupera el último perfil si habilitaste recordarlo y se prepara la cámara,
 pero el control permanece desactivado. Con activación autorizada se comprueba
 el perfil, cámara, contexto y al menos diez frames faciales estables durante
 700 ms antes de solicitar activación. El controlador vuelve a validar la
@@ -97,6 +98,11 @@ y suspensión revocan salida y cierran captura; al regresar, sólo una autorizac
 vigente permite repetir las comprobaciones. Detener manualmente impide reanudación
 automática durante esa ejecución.
 
+El estado de inicio se consulta en el registro de Windows. Si movés la carpeta
+portable, abrí HeadMouse desde la nueva ubicación, marcá la opción y guardá.
+Para iniciar el control con el teclado, poné HeadMouse en foco y presioná
+Ctrl+Mayús+Intro. Elegí Sí con Tab y confirmá con Espacio.
+
 ## Bandeja y cierre
 
 El menú de bandeja permite Abrir, Ver estado, Activar, Pausar, Detener,
@@ -105,6 +111,38 @@ bandeja disponible, X oculta la ventana y conserva el estado indicado en bandeja
 puede seguir el control si ya estaba autorizado. Sin esa preferencia, X termina
 la aplicación. Salir y Salir completamente siempre cierran cámara y aplicación.
 Si la bandeja no está disponible, la ventana permanece accesible.
+
+## Teclado virtual y diccionario personal
+
+Con el control activo, seleccioná un campo editable con Nariz u Ojos. HeadMouse
+muestra el teclado sin quitarle el foco al campo. También podés abrirlo desde la
+bandeja o con Ctrl+Alt+K si Windows permite registrar el atajo. Elegí las teclas
+con el clic configurado de HeadMouse. Las pestañas ABC, ?123, símbolos, acentos
+y emoji permiten escribir sin mantener teclas presionadas. F8 oculta el teclado
+y detiene el control.
+
+En Configuración → Básico → Teclado virtual y escritura podés ajustar la
+apertura automática, tamaño, posición y visibilidad del micrófono. El botón
+Dictar usa el módulo de voz del perfil cuando lo seleccionás. Durante la
+escucha podés terminar con tu gesto de clic o cancelar con el gesto de pausa
+o F8. Con la apertura automática del teclado desactivada, el dictado anterior
+por clic sigue disponible cuando el teclado está oculto.
+
+En Predicción y aprendizaje de palabras podés activar el aprendizaje local
+por perfil. El teclado aprende al terminar una palabra, no cada letra. Las
+tres sugerencias combinan el vocabulario personal, su uso reciente, el contexto
+de hasta dos palabras y una lista base en español. Las correcciones se marcan
+con ✓ y sólo se aplican al elegirlas. Administrar diccionario personal permite
+eliminar una palabra o borrar todo. Desactivar el aprendizaje conserva lo
+aprendido hasta que decidas borrarlo.
+
+HeadMouse sólo aprende de sus propias teclas y en campos que identifican
+el foco y permiten verificar el cursor. Los campos de contraseña, los
+identificados como sensibles y los no verificables quedan en modo privado.
+El diccionario guarda frecuencias y combinaciones cortas en SQLite bajo
+`%LOCALAPPDATA%\HeadMouse\keyboard`, fuera de la instalación. El dictado
+no alimenta el diccionario. En aplicaciones que no exponen bien el foco,
+la apertura manual permite escritura directa sin aprendizaje.
 
 ## Dictado y calibración de voz
 
@@ -143,7 +181,7 @@ sin conexión. Las descargas gráficas quedan disponibles para reparar modelos
 faltantes.
 
 Desde el código fuente se copian los perfiles antiguos de data de forma verificable.
-En una instalación nueva, usar Importar perfiles anteriores en Inicio con Windows
+En una instalación nueva, usar Importar perfiles anteriores en Inicio y accesibilidad
 y elegir la carpeta anterior de HeadMouse o data. Los originales no se borran.
 Si ya existe un perfil diferente con el mismo identificador, se conserva el
 existente y la copia en migration-conflicts; revisar antes de reemplazar manualmente.
@@ -151,6 +189,32 @@ existente y la copia en migration-conflicts; revisar antes de reemplazar manualm
 Para actualizar, cerrar HeadMouse y ejecutar el nuevo instalador. Conserva los
 datos del usuario. No copiar perfiles dentro de la carpeta de programa. Se puede
 hacer una copia de seguridad de la carpeta de datos con la aplicación cerrada.
+
+## Prueba guiada después de actualizar
+
+1. Cerrá HeadMouse y conservá una copia de `%LOCALAPPDATA%\HeadMouse` antes de
+   actualizar. Abrí el instalador v0.5.1 y mantené la carpeta de la instalación
+   anterior. Los perfiles, las calibraciones y el diccionario están fuera de
+   esa carpeta.
+2. Abrí HeadMouse, elegí tu perfil y revisá Nariz y Ojos por separado. Confirmá
+   que aparece la calibración guardada. En Diagnóstico revisá la cámara y los
+   gestos. Activá el control sólo al confirmar y comprobá que F8 lo detiene.
+3. Abrí un documento temporal en Bloc de notas. Con el control activo, enfocá
+   el campo y probá ABC, números, símbolos, Ñ, tildes, Enter y retroceso.
+   Si habilitaste el aprendizaje, escribí `HeadMouse ` y después `Hea`.
+   Elegí la sugerencia y comprobá el texto. El Bloc clásico usa la lectura
+   acotada de la línea cuando Windows no ofrece un patrón de cursor.
+4. Probá por separado un formulario del navegador y un borrador de WhatsApp
+   Web. Comprobá que el foco no cambia y que un campo de contraseña no muestra
+   sugerencias ni permite dictar. El comportamiento depende de lo que el
+   campo expone a Windows.
+5. Si querés usar voz, activá el dictado del perfil y seleccioná Dictar en
+   el teclado. Probá una frase inocua, cancelá con tu gesto de pausa y
+   comprobá que el indicador de escucha se apaga.
+6. Si elegís iniciar con Windows, verificá la opción en Inicio y
+   accesibilidad. En el próximo inicio de sesión comprobá que se abre con el
+   perfil esperado y que el control espera confirmación cuando sólo elegiste
+   la apertura automática.
 
 ## Desinstalar y resolver problemas
 

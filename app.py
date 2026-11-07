@@ -50,6 +50,12 @@ def main(argv=None):
     register_emergency_handler(bridge.controller.emergency_stop)
     application.aboutToQuit.connect(bridge.finish_shutdown)
     window=MainWindow(bridge)
+    keyboard=None
+    if sys.platform=="win32":
+        from desktop.keyboard import VirtualKeyboard
+        keyboard=window.virtual_keyboard=VirtualKeyboard(bridge)
+        keyboard.service.error.connect(window.show_error)
+        window.owned_overlays+=(keyboard,)
     resident=None
     if not args.check:
         from desktop.resident import Resident
@@ -64,12 +70,13 @@ def main(argv=None):
         QTimer.singleShot(800,window.exit_application)
     elif args.check:
         QTimer.singleShot(600,window.close)
-    elif resident.preferences["minimized"] and resident.tray_available:
+    elif args.autostart and resident.controls._registered and resident.preferences["minimized"] and resident.tray_available:
         window.hide()
     try:
         return application.exec()
     finally:
         if resident:resident.close()
+        if keyboard:keyboard.service.close()
         # El worker termina antes de destruir widgets, y QApplication sigue viva.
         bridge.finish_shutdown()
         from desktop.lifecycle import dispose_window

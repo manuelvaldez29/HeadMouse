@@ -1,0 +1,248 @@
+from pathlib import Path
+from dataclasses import asdict
+import tempfile
+import unittest
+from unittest.mock import Mock, patch
+
+from keyboard_dictionary import Dictionary
+from keyboard_input import KeyboardSession, KeyboardTyper, Target, WindowsKeyboardFocus
+
+
+class Buffer:
+    """Campo y cursor simulados. Sólo el adaptador de Windows usa SendInput."""
+    def __init__(self, text="", cursor=None):
+        self.text = text
+        self.cursor = len(text) if cursor is None else cursor
+
+    def caret(self,suffix):
+        left = self.text[:self.cursor]
+        if not left.endswith(suffix):
+            return None
+        return left[-1:], self.text[self.cursor:self.cursor+1]
+
+    def write(self,text,backspaces=0):
+        left = self.cursor - backspaces
+        self.text = self.text[:left] + text + self.text[self.cursor:]
+        self.cursor = left + len(text)
+
+    def special(self,name,modifiers=()):
+        if name=="⌫":
+            self.write("",1)
+        elif name=="Enter":
+            self.write("\n")
+
+
+class VirtualKeyboardTests(unittest.TestCase):
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.root = Path(temp.name)
+        self.dictionary = Dictionary(self.root,"perfil_A")
+        self.addCleanup(lambda: self.dictionary.close())
+        self.session = KeyboardSession()
+        self.session.set_target(Target(1,(1,2),True,False))
+        self.buffer = Buffer()
+        self.settings = dict(suggestions=True, learning=True, corrections=False)
+        self.allowed = lambda: True
+
+    def type(self,text):
+        for char in text:
+            self.session.insert(char,self.buffer,self.buffer,self.dictionary,self.settings,self.allowed)
+
+    def predict(self,prefix="",context=()):
+        return [word for word,_ in self.dictionary.suggest(prefix,context)]
+
+    def choose(self,word):
+        return self.session.choose(word,self.buffer,self.buffer,self.dictionary,self.settings,self.allowed)
+
+    def test_learns_whole_words_and_context_including_accent_and_case(self):
+        self.type("Buenos días señor Ñandú HeadMouse")
+        self.assertNotIn("HeadMouse",self.dictionary.words())
+        self.type(" ")
+        self.assertEqual(set(self.dictionary.words()),{"Buenos","días","señor","Ñandú","HeadMouse"})
+        self.assertEqual(self.predict("hea")[0],"HeadMouse")
+        self.assertEqual(self.predict("",["buenos"])[0],"días")
+        self.assertEqual(self.predict("",["Buenos","días"])[0],"señor")
+        self.assertEqual(self.predict("ñ")[0],"Ñandú")
+
+    def test_frequency_then_recency_and_reopen_are_per_profile(self):
+        self.dictionary.learn("PersonalViejo",[])
+        self.dictionary.learn("PersonalViejo",[])
+        self.dictionary.learn("PersonalNuevo",[])
+        self.assertEqual(self.predict("Personal")[0],"PersonalViejo")
+        self.dictionary.close()
+        self.dictionary=Dictionary(self.root,"perfil_A")
+        self.assertEqual(self.predict("Personal")[0],"PersonalViejo")
+        other=Dictionary(self.root,"perfil_a")
+        try:self.assertEqual(other.words(),[])
+        finally:other.close()
+        now=[0.]
+        self.dictionary.clock=lambda:now[0]
+        self.dictionary.learn("TerminoViejo",[])
+        now[0]=100*3600
+        self.dictionary.learn("TerminoNuevo",[])
+        self.assertEqual(self.predict("termino")[0],"TerminoNuevo")
+
+    def test_completion_replaces_only_verified_prefix_and_preserves_existing_space(self):
+        self.dictionary.learn("HeadMouse",[])
+        self.buffer=Buffer("Texto: ",6)
+        self.type("hea")
+        self.assertTrue(self.choose("HeadMouse"))
+        self.assertEqual(self.buffer.text,"Texto:HeadMouse ")
+        self.session.reset()
+        self.buffer=Buffer()
+        self.type("Hea")
+        self.assertTrue(self.choose("HeadMouse"))
+        self.assertEqual(self.buffer.text,"HeadMouse ")
+
+    def test_completion_rejects_changed_caret_or_retracted_authorization(self):
+        self.dictionary.learn("HeadMouse",[])
+        self.type("Hea")
+        self.buffer.cursor=0
+        self.assertFalse(self.choose("HeadMouse"))
+        self.assertEqual(self.buffer.text,"Hea")
+        self.buffer=Buffer()
+        self.type("Hea")
+        self.allowed=lambda:False
+        self.assertFalse(self.choose("HeadMouse"))
+        self.type("z")
+        self.assertEqual(self.buffer.text,"Hea")
+
+    def test_completion_rechecks_caret_after_focus_guard(self):
+        self.dictionary.learn("HeadMouse",[])
+        self.type("hea")
+        def focus_same_but_caret_moved():
+            self.buffer.cursor=0
+            return True
+        self.allowed=focus_same_but_caret_moved
+        self.assertFalse(self.choose("HeadMouse"))
+        self.assertEqual(self.buffer.text,"hea")
+
+    def test_classic_edit_reads_bounded_caret_and_never_reads_private_fields(self):
+        import ctypes
+        focus=WindowsKeyboardFocus.__new__(WindowsKeyboardFocus)
+        focus.can_read=True
+        focus.element=Mock(CurrentNativeWindowHandle=123)
+        focus.element.GetCurrentPattern.side_effect=RuntimeError("TextPattern ausente")
+        focus.user32=Mock()
+        def class_name(hwnd,buffer,length):
+            buffer.value="Edit"
+            return 4
+        focus.user32.GetClassNameW.side_effect=class_name
+        def message(hwnd,code,*args):
+            if code==0xB0:return 3 | (3 << 16)
+            if code in (0xC9,0xBB):return 0
+            if code==0xC4:
+                buffer=(ctypes.c_wchar*5).from_address(args[1])
+                self.assertEqual(ord(buffer[0]),4)
+                buffer[:4]="Hea "
+                return 4
+            self.fail(f"Mensaje inesperado: {code}")
+        focus._edit_message=Mock(side_effect=message)
+        self.assertEqual(focus.caret("Hea"),("a"," "))
+        self.assertIsNone(focus.caret("Hola"))
+        focus._edit_message.reset_mock()
+        focus.can_read=False
+        self.assertIsNone(focus.caret(""))
+        focus._edit_message.assert_not_called()
+
+    def test_password_and_manual_unverified_fields_never_learn_or_query_text(self):
+        for target in (Target(1,(2,),True,True),Target(2,None,False,True,unknown=True)):
+            self.session.set_target(target)
+            self.buffer=Buffer()
+            self.buffer.caret=Mock(side_effect=AssertionError("Campo privado leído"))
+            self.type("ClaveSecreta ")
+            self.assertEqual(self.session.suggestions(self.dictionary,self.settings),[])
+            self.assertEqual(self.dictionary.words(),[])
+
+    def test_learning_off_corrections_explicit_and_delete(self):
+        self.settings.update(learning=False, corrections=True)
+        self.type("Holaa ")
+        self.assertEqual(self.dictionary.words(),[])
+        self.type("dia")
+        self.assertIn(("día",True),self.session.suggestions(self.dictionary,self.settings))
+        self.assertEqual(self.buffer.text,"Holaa dia")
+        self.assertTrue(self.choose("día"))
+        self.assertEqual(self.buffer.text,"Holaa día ")
+        self.dictionary.learn("Buenos",[])
+        self.dictionary.learn("Ñandú",["Buenos"])
+        self.dictionary.delete("ÑANDÚ")
+        self.assertNotIn("Ñandú",self.dictionary.words())
+        self.dictionary.clear()
+        self.assertEqual(self.dictionary.words(),[])
+
+    def test_backspace_enter_and_target_change(self):
+        self.type("aa")
+        self.session.special("⌫",(),self.buffer,self.buffer,self.dictionary,self.settings,self.allowed)
+        self.type("ño")
+        self.session.special("Enter",(),self.buffer,self.buffer,self.dictionary,self.settings,self.allowed)
+        self.assertEqual(self.buffer.text,"año\n")
+        self.assertIn("año",self.dictionary.words())
+        self.type("Pendiente")
+        self.session.set_target(Target(2,(3,),True,False))
+        self.buffer=Buffer()
+        self.type(" ")
+        self.assertNotIn("Pendiente",self.dictionary.words())
+
+    @unittest.skipUnless(__import__("sys").platform=="win32","Requiere Win32")
+    def test_native_batches_preserve_unicode_and_release_modifiers(self):
+        typer=KeyboardTyper()
+        typer._send=Mock()
+        typer.write("Ñá🙂",backspaces=1)
+        batch=typer._send.call_args.args[0]
+        self.assertEqual([event.u.ki.wScan for event in batch[2::2]], [0xD1,0xE1,0xD83D,0xDE42])
+        self.assertEqual(len(batch),10)
+        typer.special("←",("Ctrl","Alt"))
+        batch=typer._send.call_args.args[0]
+        self.assertEqual([event.u.ki.wVk for event in batch],[0x11,0x12,0x25,0x25,0x12,0x11])
+        self.assertEqual([event.u.ki.dwFlags for event in batch],[0,0,1,3,2,2])
+
+    def test_panel_auto_open_modes_manual_fallback_and_mic_request(self):
+        from threading import Event
+        from types import SimpleNamespace
+        from PySide6.QtCore import Qt
+        from PySide6.QtTest import QTest
+        from PySide6.QtWidgets import QApplication
+        from config import KeyboardConfig
+        from desktop.keyboard import VirtualKeyboard
+        from desktop.keyboard_service import KeyboardService
+
+        app = QApplication.instance() or QApplication([])
+        settings = asdict(KeyboardConfig())
+        voice = Mock(busy=False,state="idle")
+        controller = SimpleNamespace(profile={"user_id":"test"}, dictation=voice, data_dir=self.root,
+                                     _dictation_allowed=lambda:True, keyboard_visible=Event())
+        bridge = SimpleNamespace(controller=controller, snapshot=lambda:dict(
+            profile=controller.profile, settings={"keyboard":settings}))
+        focus = Mock()
+        focus.focused.return_value = Target(1,(4,),True,False)
+        focus.caret.side_effect = self.buffer.caret
+        with patch("desktop.keyboard.KeyboardService",side_effect=lambda b,p:KeyboardService(
+                b,p,focus_factory=lambda:focus,typer_factory=lambda:self.buffer)):
+            panel=VirtualKeyboard(bridge)
+        self.addCleanup(panel.close)
+        def wait_for(condition):
+            for _ in range(60):
+                if condition():
+                    return
+                QTest.qWait(20)
+            self.fail("El teclado no llegó al estado esperado")
+        wait_for(panel.isVisible)
+        voice.start_now.assert_not_called()
+        for mode,key in (("ABC","ñ"),("?123","7"),("=\\<","€"),("Acentos","á")):
+            QTest.mouseClick(panel.page_buttons[mode],Qt.MouseButton.LeftButton)
+            item=next(b for b in panel.letter_buttons if b.text()==key)
+            QTest.mouseClick(item,Qt.MouseButton.LeftButton)
+        wait_for(lambda:self.buffer.text=="ñ7€á")
+        QTest.mouseClick(panel.mic,Qt.MouseButton.LeftButton)
+        wait_for(lambda:voice.start_now.called)
+        voice.start_now.assert_called_once_with(expected_runtime=(4,))
+        focus.focused.return_value=Target(2,(5,),False,True)
+        wait_for(lambda:not panel.isVisible())
+        settings["auto_open"]=False
+        focus.focused.return_value=Target(3,None,False,True,unknown=True)
+        panel.toggle()
+        wait_for(panel.isVisible)
+        self.assertTrue(panel.state["usable"])
+        self.assertEqual(panel.state["predictions"],[])
+        self.assertFalse(panel.mic.isEnabled())

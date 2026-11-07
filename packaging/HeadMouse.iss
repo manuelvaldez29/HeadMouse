@@ -48,12 +48,5 @@ Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueName: 
 [Run]
 Filename: "{app}\HeadMouse.exe"; Description: "Abrir HeadMouse"; Flags: nowait postinstall skipifsilent unchecked
 ; No se elimina %LOCALAPPDATA%\HeadMouse: conserva perfiles y preferencias.
-[Code]
-procedure CurStepChanged(CurStep: TSetupStep);
-var PreviousCommand: String;
-begin
-  if (CurStep = ssPostInstall) and RegQueryStringValue(HKCU,
-    'Software\Microsoft\Windows\CurrentVersion\Run', 'HeadMouse', PreviousCommand) then
-    RegWriteStringValue(HKCU, 'Software\Microsoft\Windows\CurrentVersion\Run',
-      'HeadMouse', '"' + ExpandConstant('{app}\HeadMouse.exe') + '" --autostart');
-end;
+; Una actualización en la misma carpeta conserva Run. Si cambia la ruta,
+; el usuario puede elegir la nueva ubicación desde Inicio y accesibilidad.

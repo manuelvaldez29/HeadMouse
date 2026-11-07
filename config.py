@@ -270,6 +270,24 @@ class MappingConfig:
 
 
 @dataclass
+class KeyboardConfig:
+    auto_open: bool = True
+    size: str = "normal"
+    position: str = "bottom"
+    microphone: bool = True
+    suggestions: bool = True
+    learning: bool = False
+    corrections: bool = False
+
+    def __post_init__(self):
+        if any(type(getattr(self, name)) is not bool for name in
+               ("auto_open", "microphone", "suggestions", "learning", "corrections")):
+            raise ValueError("Opciones de teclado inválidas")
+        if self.size not in ("compact", "normal", "large") or self.position not in ("bottom", "top"):
+            raise ValueError("Tamaño o posición del teclado inválidos")
+
+
+@dataclass
 class AppConfig:
     vision: VisionConfig = field(default_factory=VisionConfig)
     gesture: GestureConfig = field(default_factory=GestureConfig)
@@ -278,6 +296,7 @@ class AppConfig:
     ui: UIConfig = field(default_factory=UIConfig)
     actions: MappingConfig = field(default_factory=MappingConfig)
     voice: VoiceConfig = field(default_factory=VoiceConfig)
+    keyboard: KeyboardConfig = field(default_factory=KeyboardConfig)
     eye: EyeTrackingConfig = field(default_factory=EyeTrackingConfig)
     absolute: AbsoluteTrackingConfig = field(default_factory=lambda: AbsoluteTrackingConfig())
     methods: dict = field(default_factory=dict)
@@ -321,7 +340,7 @@ class AbsoluteTrackingConfig:
 
 SECTIONS = dict(vision=VisionConfig, gesture=GestureConfig, control=ControlConfig,
                 calibration=CalibrationConfig, ui=UIConfig, actions=MappingConfig, voice=VoiceConfig,
-                eye=EyeTrackingConfig, absolute=AbsoluteTrackingConfig)
+                eye=EyeTrackingConfig, absolute=AbsoluteTrackingConfig, keyboard=KeyboardConfig)
 METHOD_SECTIONS = ("gesture", "control", "calibration", "actions", "eye", "absolute")
 
 

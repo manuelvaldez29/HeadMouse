@@ -10,6 +10,7 @@ models/
 # Calibración personal de cada usuario
 calibration.json
 data/profiles/
+data/keyboard/
 data/metrics/
 data/experiments/
 data/calibration/

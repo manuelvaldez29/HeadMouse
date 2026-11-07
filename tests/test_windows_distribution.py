@@ -61,6 +61,40 @@ class DistributionStorageTests(unittest.TestCase):
         write_json(self.store.path,dict(DEFAULTS,activate=True))
         with self.assertRaises(ValueError):self.store.load()
 
+    def test_registry_is_authoritative_and_portable_can_be_registered_again(self):
+        old=[r"C:\Portable anterior\HeadMouse.exe","--autostart"]
+        new=[r"D:\Portable nuevo\HeadMouse.exe","--autostart"]
+        with patch("startup_preferences.launch_command",return_value=old):
+            self.store.save(True,False,False)
+            self.assertEqual(self.store.registration(),"on")
+        with patch("startup_preferences.launch_command",return_value=new):
+            self.assertEqual(self.store.registration(),"other")
+            self.store.save(True,False,False)
+            self.assertEqual(self.store.registration(),"on")
+            self.registry.disabled_by_windows=lambda:True
+            self.assertEqual(self.store.registration(),"disabled")
+            self.registry.value=None
+            self.assertEqual(self.store.registration(),"off")
+            self.assertTrue(self.store.load()["enabled"])
+
+    def test_explicit_save_recovers_corrupt_preferences_without_control(self):
+        self.store.path.write_text("{",encoding="utf-8")
+        result=self.store.save(False,False,False,remember_profile=False)
+        self.assertEqual(self.store.load(),result)
+        self.assertFalse(result["remember_profile"])
+        self.assertIsNone(result["authorization"])
+
+    def test_last_profile_can_be_restored_or_forgotten(self):
+        from application_controller import ApplicationController
+        from profile_manager import ProfileManager
+        from profiles import ProfileStore
+        manager=ProfileManager(ProfileStore(self.root/"profiles"))
+        manager.store.save(self.profile)
+        write_json(self.root/"last_profile.json",dict(user_id=self.profile["user_id"]))
+        self.assertEqual(ApplicationController(manager,data_dir=self.root).profile["user_id"],self.profile["user_id"])
+        self.store.save(False,False,False,remember_profile=False)
+        self.assertIsNone(ApplicationController(manager,data_dir=self.root).profile)
+
     def test_migration_copies_and_preserves_all_original_banks_without_overwrite(self):
         from profiles import ProfileStore
         old=self.root/"legacy";new=self.root/"user"
@@ -248,7 +282,13 @@ class DistributionGUITests(unittest.TestCase):
 
     def test_first_valid_save_offers_startup_once_and_now_no_is_persistent(self):
         self.select_calibrated();r=self.resident()
-        with patch('desktop.resident.QDialog.exec',return_value=0):r.offer_startup()
+        with patch('desktop.resident.QMessageBox') as box:
+            dialog=box.return_value
+            dialog.addButton.side_effect=[Mock(),Mock()]
+            def choose_no():
+                dialog.clickedButton.return_value=dialog.setDefaultButton.call_args.args[0]
+            dialog.exec.side_effect=choose_no
+            r.offer_startup()
         self.assertTrue(r.store.load()['prompted'])
         self.assertFalse(r.store.load()['enabled']);self.assertFalse(r.store.load()['activate'])
         self.controller._saved_calibrations=1
@@ -256,10 +296,31 @@ class DistributionGUITests(unittest.TestCase):
             r.tick();self.app.processEvents();prompt.assert_not_called()
         self.backend_factory.assert_not_called()
 
+    def test_accepting_first_prompt_registers_only_application_opening(self):
+        self.select_calibrated();r=self.resident()
+        with patch('desktop.resident.QMessageBox') as box:
+            yes,no=Mock(),Mock()
+            dialog=box.return_value
+            dialog.addButton.side_effect=[yes,no]
+            dialog.clickedButton.return_value=yes
+            r.offer_startup()
+        self.assertEqual(r.store.registration(),"on")
+        self.assertFalse(r.store.load()["activate"])
+        self.backend_factory.assert_not_called()
+
+    def test_removed_registration_blocks_start_even_when_json_is_enabled(self):
+        self.select_calibrated();r=self.resident()
+        r.preferences=r.store.save(True,True,False,self.controller.profile,confirmed=True)
+        r.store.registry.value=None
+        r.begin()
+        self.assertFalse(r.pending)
+        self.backend_factory.assert_not_called()
+
     def test_rejected_calibration_and_manual_stop_do_not_arm_automatic_control(self):
         self.select_calibrated();r=self.resident()
-        self.controller.wizard=Mock();self.controller.wizard.result.side_effect=ValueError('Rechazada')
-        with self.assertRaises(ValueError):self.controller.save_calibration()
+        wizard=Mock();wizard.result.side_effect=ValueError('Rechazada')
+        with patch.object(self.controller,'wizard',wizard),self.assertRaises(ValueError):
+            self.controller.save_calibration()
         self.assertEqual(self.controller._saved_calibrations,0)
         r.preferences=r.store.save(True,True,False,self.controller.profile,confirmed=True)
         r.disarm()

@@ -4,7 +4,7 @@ from pathlib import Path
 import sys
 
 RESOURCE_ROOT = Path(__file__).resolve().parent
-VERSION = "0.5.0"
+VERSION = "0.5.1"
 
 
 def data_root():

@@ -14,7 +14,7 @@ COMMANDS = {"create_profile", "select_profile", "rename_profile", "delete_profil
             "save_calibration", "start_experiment", "experiment_input", "cancel_experiment",
             "start_jitter", "prepare_model", "refresh_metrics", "shutdown", "set_calibration_gesture", "prepare_voice_model",
             "start_voice_calibration", "cancel_voice_calibration", "save_voice_calibration", "prepare_speaker_model",
-            "refresh_microphones"}
+            "refresh_microphones", "remember_current_profile"}
 CAMERA_COMMANDS = {"start_camera", "start_calibration", "validate_calibration", "repeat_calibration",
     "start_vertical_diagnostic",
     "start_eye_calibration", "start_gaze_calibration", "start_diagnostic", "activate_control", "start_jitter", "start_experiment"}
@@ -131,7 +131,14 @@ class ControllerWorker(QObject):
             return
         try:
             if self.pending_camera:
-                if not self.controller.poll_camera_startup():
+                try:
+                    ready = self.controller.poll_camera_startup()
+                except InterruptedError:
+                    self.pending_camera = None
+                    self.controller.stop_camera()
+                    self.publish()
+                    return
+                if not ready:
                     self.publish()
                     return
                 name,kwargs = self.pending_camera

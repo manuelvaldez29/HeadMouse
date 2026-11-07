@@ -54,6 +54,10 @@ a=Analysis([str(root/'app.py')],pathex=[str(root)],binaries=binaries,datas=datas
     noarchive=False)
 # Qt usa la API ICU de Windows. No distribuir una icuuc.dll de otra herramienta.
 a.binaries=[row for row in a.binaries if Path(row[0]).name.lower() not in ('icuuc.dll','icuin.dll','icudt.dll')]
+# Cachés incidentales bajo los directorios de licencias y bibliotecas de enlace de C/C++.
+# El código Python está en PYZ; las DLL de sherpa-onnx siguen en el paquete.
+a.datas=[row for row in a.datas if "__pycache__" not in Path(row[0]).parts and
+         Path(row[0]).suffix.lower() not in (".pyc",".pyo",".lib")]
 pyz=PYZ(a.pure)
 exe=EXE(pyz,a.scripts,[],exclude_binaries=True,name='HeadMouse',debug=False,
     bootloader_ignore_signals=False,strip=False,upx=False,console=False,

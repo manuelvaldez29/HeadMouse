@@ -291,6 +291,7 @@ class Dictation:
                  clock=time.monotonic, metrics=None, cue=None, detector_factory=None, speaker_factory=None,
                  output_allowed=None, hints=None):
         self.config, self.focus, self.recorder_factory = config, focus, recorder_factory
+        self.click_allowed = lambda: True
         self.detector_factory = detector_factory  # None: detección por energía
         self.speaker_factory = speaker_factory    # None: sin huella de voz
         self.transcriber, self.typer, self.clock, self.metrics = transcriber, typer, clock, metrics
@@ -331,11 +332,12 @@ class Dictation:
 
     def on_click(self):
         """Click ejecutado por HeadMouse: dictar si el foco queda en un campo de texto."""
-        self._arm("click")
+        if self.click_allowed():
+            self._arm("click")
 
-    def start_now(self):
+    def start_now(self, expected_runtime=None):
         """Acción DICTATE: dictar en el campo que ya tiene el foco."""
-        self._arm("now")
+        self._arm("now", expected_runtime)
 
     def cancel(self):
         with self._lock:
@@ -354,7 +356,7 @@ class Dictation:
 
     # ── Hilo de trabajo ────────────────────────────────────────────────────────
 
-    def _arm(self, kind):
+    def _arm(self, kind, expected_runtime=None):
         if not self.config.enabled or self._closed.is_set():
             return
         with self._lock:
@@ -362,7 +364,7 @@ class Dictation:
                 return
             self._cancel.clear()
             self._finish.clear()
-            self._request = (kind, self.clock())
+            self._request = (kind, self.clock(), expected_runtime)
             self._set("arming", "Buscando campo de texto…")
         self._wake.set()
 
@@ -413,8 +415,12 @@ class Dictation:
                 return None
             time.sleep(.05)
 
-    def _session(self, kind, since):
+    def _session(self, kind, since, expected_runtime=None):
         info = self._wait_focus(kind, since)
+        if expected_runtime is not None and (info is None or info.runtime_id != expected_runtime):
+            with self._lock:
+                self.message = "El campo cambió antes de iniciar el dictado."
+            return
         if info is None or self._cancel.is_set() or not self.output_allowed():
             with self._lock:
                 self.message = "" if kind == "click" else "No hay un campo de texto con el foco."

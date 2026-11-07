@@ -51,6 +51,22 @@ class RuntimeStabilityTests(unittest.TestCase):
         c.emergency_stop.assert_called_once()
         c.fail.assert_called_once_with("snapshot failure")
 
+    def test_cancelled_camera_startup_stops_without_running_pending_action(self):
+        from desktop.bridge import ControllerWorker,Mailbox
+        c=Mock()
+        c.poll_camera_startup.side_effect=InterruptedError("Inicio de cámara cancelado")
+        c.snapshot.return_value={"state":"HOME","camera":False}
+        mailbox=Mailbox()
+        worker=ControllerWorker(c,mailbox)
+        worker.pending_camera=("activate_control",{"confirmed":True})
+        worker.tick()
+        self.assertIsNone(worker.pending_camera)
+        c.stop_camera.assert_called_once()
+        c.activate_control.assert_not_called()
+        c.step.assert_not_called()
+        c.fail.assert_not_called()
+        self.assertEqual(mailbox.get()["state"],"HOME")
+
     def test_shutdown_failure_does_not_emit_finished_or_destroy_worker(self):
         from desktop.bridge import ControllerWorker,Mailbox
         from unittest.mock import patch

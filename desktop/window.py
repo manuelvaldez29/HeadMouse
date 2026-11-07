@@ -249,6 +249,10 @@ class MainWindow(QMainWindow):
             shortcut=QShortcut(QKeySequence(key),self)
             shortcut.setContext(Qt.ShortcutContext.ApplicationShortcut)
             shortcut.activated.connect(self.stop_immediately)
+        confirm_shortcut=QShortcut(QKeySequence("Ctrl+Shift+Return"),self)
+        confirm_shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
+        confirm_shortcut.activated.connect(self.activate)
+        self.activate_button.setToolTip("Ctrl+Mayús+Intro para abrir la confirmación con HeadMouse en foco")
         self.bridge.error.connect(self.show_error)
         signal=getattr(self.bridge,"snapshot_ready",None)
         if signal is not None:signal.connect(self.update_live_preview)
@@ -1151,6 +1155,34 @@ class MainWindow(QMainWindow):
         self.mini_camera_settings_check=QCheckBox("Mini cámara al controlar con la nariz (se aplica al instante)")
         form.addRow(self.mini_camera_settings_check)
 
+        section(form,"Teclado virtual y escritura")
+        self.keyboard_checks={}
+        for key,title in (
+            ("auto_open","Abrir al enfocar un campo editable"),
+            ("microphone","Mostrar el botón de dictado"),
+        ):
+            self.keyboard_checks[key]=QCheckBox(title)
+            form.addRow(self.keyboard_checks[key])
+        self.keyboard_size=QComboBox()
+        for title,key in (("Compacto","compact"),("Normal","normal"),("Grande","large")):
+            self.keyboard_size.addItem(title,key)
+        form.addRow("Tamaño",self.keyboard_size)
+        self.keyboard_position=QComboBox()
+        self.keyboard_position.addItem("Abajo","bottom")
+        self.keyboard_position.addItem("Arriba","top")
+        form.addRow("Posición",self.keyboard_position)
+        form.addRow(label("Distribución: Español (Ñ). Abrí el teclado con Ctrl+Alt+K o desde la bandeja.","Subtitle"))
+        form.addRow(button("Mostrar u ocultar teclado",self.toggle_keyboard))
+        section(form,"Predicción y aprendizaje de palabras")
+        for key,title in (
+            ("suggestions","Mostrar sugerencias de palabras"),
+            ("learning","Aprender palabras completas en este perfil"),
+            ("corrections","Sugerir correcciones ortográficas (requieren aceptar)"),
+        ):
+            self.keyboard_checks[key]=QCheckBox(title)
+            form.addRow(self.keyboard_checks[key])
+        form.addRow(button("Administrar diccionario personal",self.manage_keyboard_dictionary))
+
         # ── Gestos y scroll ──
         form,_=tab("Gestos y scroll","Cuánto hay que sostener cada gesto y cuánto esperar antes de repetirlo. "
                                      "Cambiarlos invalida la prueba de gestos del método editado.")
@@ -1359,6 +1391,8 @@ class MainWindow(QMainWindow):
         resident=getattr(self,"resident",None)
         if resident:resident.disarm()
         self.bridge.stop()
+        keyboard=getattr(self,"virtual_keyboard",None)
+        if keyboard:keyboard.hide_keyboard()
         self.bridge.request("stop_camera")
         self._gaze_preview=False
         self._vertical_preview=False
@@ -1401,7 +1435,19 @@ class MainWindow(QMainWindow):
         settings["voice"]["model"]=self.voice_model.currentData()
         settings["voice"]["detector"]=self.voice_detector.currentData()
         settings["voice"]["send_word"]=self.voice_send.currentText().strip().lower()
+        settings["keyboard"]={key:check.isChecked() for key,check in self.keyboard_checks.items()}
+        settings["keyboard"].update(size=self.keyboard_size.currentData(),position=self.keyboard_position.currentData())
         self.bridge.request("save_public_settings",settings=settings,method=public_method)
+
+    def toggle_keyboard(self):
+        keyboard=getattr(self,"virtual_keyboard",None)
+        if keyboard:keyboard.toggle()
+        else:self.show_error("El teclado virtual está disponible en Windows.")
+
+    def manage_keyboard_dictionary(self):
+        keyboard=getattr(self,"virtual_keyboard",None)
+        if keyboard:keyboard.manage(self)
+        else:self.show_error("El teclado virtual está disponible en Windows.")
 
     def usb_camera_preset(self):
         self.capture_backend_combo.setCurrentIndex(self.capture_backend_combo.findData("dshow"))
@@ -1598,10 +1644,19 @@ class MainWindow(QMainWindow):
                 self.sessions.setItem(row,col,item)
 
     def activate(self):
-        if QMessageBox.question(self,"Activar control","HeadMouse comenzará a controlar el puntero del sistema.",
+        if QMessageBox.question(self,"Activar control","HeadMouse comenzará a controlar el puntero del sistema. Usá Tab para elegir Sí o No y Espacio para confirmar.",
                                 QMessageBox.StandardButton.Yes|QMessageBox.StandardButton.No,
                                 QMessageBox.StandardButton.No)==QMessageBox.StandardButton.Yes:
             self.bridge.activate(screen_context=self.screen_context())
+
+    def absolute_context_matches(self,s):
+        from screen_mapping import same_context, capture_host_id
+        saved=(s.get("profile") or {}).get("absolute_calibration",{}).get("context",{})
+        try:
+            context=dict(self.screen_context(),capture_host=capture_host_id(),**(s.get("capture_context") or {}))
+            return same_context(saved,context)
+        except ValueError:
+            return False
 
     def show_error(self,message):
         # Mensaje en la línea de estado (sin diálogos repetidos durante errores de captura).
@@ -1653,14 +1708,7 @@ class MainWindow(QMainWindow):
         enabled=s["control_enabled"]
         p=s["profile"]
         if enabled and s["settings"]["ui"]["tracking_method"] == "eye_absolute":
-            from screen_mapping import same_context, capture_host_id
-            saved = (p or {}).get("absolute_calibration", {}).get("context", {})
-            try:
-                context=dict(self.screen_context(), capture_host=capture_host_id(), **(s.get("capture_context") or {}))
-                compatible=same_context(saved,context)
-            except ValueError:
-                compatible=False
-            if not compatible:
+            if not self.absolute_context_matches(s):
                 reason="Cambió el equipo, pantalla, DPI o cámara: control detenido; revisá la calibración de Ojos"
                 self.bridge.stop(reason=reason)
                 self.show_error(reason)
@@ -1733,6 +1781,12 @@ class MainWindow(QMainWindow):
             self.voice_model.setCurrentIndex(max(0,self.voice_model.findData(s["settings"]["voice"]["model"])))
             self.voice_detector.setCurrentIndex(max(0,self.voice_detector.findData(s["settings"]["voice"].get("detector","neural"))))
             self.voice_send.setCurrentText(s["settings"]["voice"]["send_word"])
+            keyboard=s["settings"].get("keyboard")
+            if keyboard:
+                for key,check in self.keyboard_checks.items():
+                    check.setChecked(keyboard[key])
+                self.keyboard_size.setCurrentIndex(self.keyboard_size.findData(keyboard["size"]))
+                self.keyboard_position.setCurrentIndex(self.keyboard_position.findData(keyboard["position"]))
             voice=s["settings"]["voice"]
             notes=["Con el dictado activo: hacé click en un campo de texto y decí solo el comando. "
                    "Dentro de una frase más larga se escribe como texto normal."]

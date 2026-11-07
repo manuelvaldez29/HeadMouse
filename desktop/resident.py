@@ -1,10 +1,10 @@
 """Preferencias, bandeja y arranque consentido; conserva las pantallas originales."""
 import logging
 import time
-from PySide6.QtCore import QTimer,Signal
-from PySide6.QtGui import QAction,QIcon
-from PySide6.QtWidgets import (QApplication,QCheckBox,QComboBox,QDialog,QDialogButtonBox,
-    QFormLayout,QGroupBox,QLabel,QMessageBox,QPushButton,QSystemTrayIcon,QMenu,QVBoxLayout,QFileDialog)
+from PySide6.QtCore import QTimer,Signal,QUrl
+from PySide6.QtGui import QAction,QIcon,QDesktopServices
+from PySide6.QtWidgets import (QApplication,QCheckBox,QComboBox,
+    QFormLayout,QGroupBox,QLabel,QMessageBox,QPushButton,QSystemTrayIcon,QMenu,QFileDialog)
 from app_paths import RESOURCE_ROOT
 from startup_preferences import StartupPreferences,prepared
 from startup_safety import StableStartup
@@ -14,15 +14,21 @@ from desktop.windows_session import WindowsSession,desktop_unlocked
 class StartupControls(QGroupBox):
     saved=Signal()
     def __init__(self,resident):
-        super().__init__("Inicio con Windows")
+        super().__init__("Inicio y accesibilidad")
         self.resident=resident;form=QFormLayout(self)
         self.enabled=QCheckBox("Iniciar HeadMouse automáticamente con Windows")
         self.activate=QCheckBox("Activar automáticamente el seguimiento")
         self.minimized=QCheckBox("Iniciar minimizado en la bandeja del sistema")
+        self.remember=QCheckBox("Recordar el último perfil elegido")
         self.profiles=QComboBox();self.profiles.setAccessibleName("Perfil de inicio")
-        for w in (self.enabled,self.activate,self.minimized):form.addRow(w)
-        form.addRow("Perfil de inicio",self.profiles)
-        self.note=QLabel("Ambas opciones de inicio están apagadas inicialmente. Si elegís bandeja, X minimiza; Salir termina la aplicación.")
+        self.registration=QLabel();self.registration.setWordWrap(True)
+        form.addRow(self.enabled);form.addRow(self.registration)
+        windows=QPushButton("Abrir aplicaciones de inicio de Windows")
+        windows.clicked.connect(lambda:QDesktopServices.openUrl(QUrl("ms-settings:startupapps")))
+        form.addRow(windows)
+        for w in (self.remember,self.minimized,self.activate):form.addRow(w)
+        form.addRow("Perfil para activación automática",self.profiles)
+        self.note=QLabel("Ctrl+Mayús+Intro abre la confirmación de control con HeadMouse en foco. Tab y Espacio permiten elegir y confirmar.")
         self.note.setWordWrap(True);form.addRow(self.note)
         save=QPushButton("Guardar preferencias de inicio");save.clicked.connect(self.save);form.addRow(save)
         migrate=QPushButton("Importar perfiles anteriores…");migrate.clicked.connect(self.import_profiles);form.addRow(migrate)
@@ -32,8 +38,27 @@ class StartupControls(QGroupBox):
 
     def restore(self):
         p=self.resident.preferences
-        self.enabled.setChecked(p["enabled"]);self.activate.setChecked(p["activate"]);self.minimized.setChecked(p["minimized"])
+        self.refresh_registration(force=True)
+        self.activate.setChecked(p["activate"] and self.enabled.isChecked());self.minimized.setChecked(p["minimized"])
+        self.remember.setChecked(p["remember_profile"])
         self.refresh_profiles();self.update_availability()
+
+    def refresh_registration(self,force=False):
+        try:
+            state=self.resident.store.registration()
+        except OSError:
+            state="unavailable"
+        checked=state=="on"
+        if force or self.enabled.isChecked()==getattr(self,"_registered",False):
+            self.enabled.setChecked(checked)
+        self._registered=checked
+        self.registration.setText({
+            "off":"Inicio con Windows desactivado.",
+            "on":"Inicio registrado en Windows para esta instalación.",
+            "other":"Windows tiene registrada otra ubicación de HeadMouse. Marcá la opción y guardá para usar esta ruta.",
+            "disabled":"Windows deshabilitó este inicio. Revisá Aplicaciones de inicio de Windows.",
+            "unavailable":"No se pudo consultar el registro de Windows.",
+        }[state])
 
     def refresh_profiles(self):
         entries=self.resident.bridge.snapshot().get("profiles",[])
@@ -65,8 +90,12 @@ class StartupControls(QGroupBox):
                     "Autorizo que este perfil controle el puntero y sus acciones validadas al iniciar sesión, sólo con calibración compatible y seguimiento estable. F8 o Detener lo detienen. ¿Autorizar?",
                     QMessageBox.StandardButton.Yes|QMessageBox.StandardButton.No,QMessageBox.StandardButton.No)
                 if answer!=QMessageBox.StandardButton.Yes:return False
-            self.resident.preferences=self.resident.store.save(self.enabled.isChecked(),activate,self.minimized.isChecked(),profile,confirmed=activate)
+            self.resident.preferences=self.resident.store.save(
+                self.enabled.isChecked(),activate,self.minimized.isChecked(),profile,confirmed=activate,
+                remember_profile=self.remember.isChecked())
             self.resident.disarm()
+            self.resident.bridge.request("remember_current_profile")
+            self.restore()
             self.note.setText("Preferencias guardadas. Se aplicarán al próximo inicio de sesión. X minimiza sólo si elegiste bandeja; Salir termina completamente.")
             self.saved.emit()
             return True
@@ -94,6 +123,7 @@ class Resident:
     def __init__(self,window,store=None,autostart=False,native=True):
         self.window=window;self.bridge=window.bridge;window.resident=self
         self.store=store or StartupPreferences();self.quitting=False;self.pending=False
+        self.bridge.controller.startup_store=self.store
         self.manual_stop=False;self.rearm=False;self.gate=StableStartup();self.started=0.;self.stage=None
         try:self.preferences=self.store.load()
         except (OSError,ValueError) as exc:
@@ -104,6 +134,7 @@ class Resident:
         window.setWindowIcon(QIcon(str(RESOURCE_ROOT/"assets"/"headmouse.ico")))
         self.tray=QSystemTrayIcon(window.windowIcon(),window);self.menu=QMenu(window)
         for title,action in (("Abrir HeadMouse",self.show),("Ver estado",self.status),
+            ("Mostrar u ocultar teclado",window.toggle_keyboard),
             ("Activar seguimiento",self.activate),("Pausar seguimiento",lambda:self.bridge.request("pause_control")),
             ("Detener seguimiento",window.stop_immediately),("Abrir Configuración",self.settings),
             ("Salir completamente",window.exit_application)):
@@ -111,13 +142,14 @@ class Resident:
         self.tray.setContextMenu(self.menu);self.tray.activated.connect(lambda reason:self.show() if reason==QSystemTrayIcon.ActivationReason.DoubleClick else None)
         self.tray_available=QSystemTrayIcon.isSystemTrayAvailable()
         if self.tray_available:self.tray.show()
-        self.native=WindowsSession(window,window.stop_immediately,self.session_changed) if native else None
+        self.native=WindowsSession(window,window.stop_immediately,self.session_changed,
+                                   window.toggle_keyboard if getattr(window,"virtual_keyboard",None) else None) if native else None
         if self.native:
             QApplication.instance().installNativeEventFilter(self.native)
             self.bridge.controller.session_guard=desktop_unlocked
         self.timer=QTimer(window);self.timer.setInterval(100);self.timer.timeout.connect(self.tick);self.timer.start()
-        self.last_revision=0;self.prompt_open=False
-        if autostart and self.preferences["enabled"]:QTimer.singleShot(0,self.begin)
+        self.last_revision=0;self.prompt_open=False;self.next_registry_check=0.;self.start_profile_id=None
+        if autostart:QTimer.singleShot(0,self.begin)
 
     def minimize_on_close(self):return not self.quitting and self.tray_available and self.preferences["minimized"]
     def show(self):self.window.showNormal();self.window.raise_();self.window.activateWindow()
@@ -134,7 +166,7 @@ class Resident:
 
     def session_changed(self,available):
         if not available:
-            self.rearm=bool(self.preferences["activate"] and not self.manual_stop)
+            self.rearm=bool((self.rearm or self.pending or self.preferences["activate"]) and not self.manual_stop)
             self.pending=False;self.gate.reset()
             self.bridge.stop(reason="Sesión bloqueada o suspendida: cámara y control detenidos")
             self.bridge.request("stop_camera")
@@ -146,20 +178,30 @@ class Resident:
         try:
             self.preferences=self.store.load()
             p=self.preferences
-            if not p["enabled"] or not p.get("profile_id"):return
+            if self.store.registration()!="on":return
             if not desktop_unlocked():
                 self.rearm=True;return  # El aviso de energía puede preceder al desbloqueo real.
-            profile=self.bridge.controller.profiles.store.load(p["profile_id"])
-            if p["activate"] and not self.store.authorized(p,profile):raise ValueError("El perfil cambió o falta autorización; revisá Inicio con Windows")
+            profile=self.bridge.controller.profile if p["remember_profile"] else None
+            if p["activate"]:
+                profile=self.bridge.controller.profiles.store.load(p["profile_id"])
+                if not self.store.authorized(p,profile):raise ValueError("El perfil cambió o falta autorización; revisá Inicio y accesibilidad")
+            if not profile:
+                self.window.show_error("HeadMouse se abrió con Windows. Elegí un perfil para verificar el seguimiento.")
+                self.show()
+                return
+            self.start_profile_id=profile["user_id"]
             self.manual_stop=False;self.pending=True;self.started=time.monotonic();self.stage="profile";self.gate.reset()
             self.rearm=False
-            self.bridge.request("select_profile",user_id=p["profile_id"])
+            self.bridge.request("select_profile",user_id=self.start_profile_id)
         except (OSError,ValueError) as exc:self.pending=False;self.window.show_error("Inicio automático detenido: "+str(exc));self.show()
 
     def tick(self):
         if self.quitting:return
         s=self.bridge.snapshot()
         if not s:return
+        if time.monotonic()>=self.next_registry_check:
+            self.next_registry_check=time.monotonic()+2
+            self.controls.refresh_registration()
         self.controls.refresh_profiles()
         self.tray.setToolTip("HeadMouse · "+("pausado" if s.get("paused") else "activo") if s.get("control_enabled") else "HeadMouse · control desactivado")
         revision=s.get("calibration_saved_revision",0)
@@ -175,10 +217,10 @@ class Resident:
             self.window.show_error("Inicio automático detenido: cámara o seguimiento no preparados. Revisá Diagnóstico.");self.show();return
         if not desktop_unlocked():self.session_changed(False);return
         if self.stage=="profile":
-            if (s.get("profile") or {}).get("user_id")==self.preferences["profile_id"] and s.get("state")=="HOME":
+            if (s.get("profile") or {}).get("user_id")==self.start_profile_id and s.get("state")=="HOME":
                 self.stage="camera";self.bridge.request("start_camera")
             return
-        if (s.get("profile") or {}).get("user_id")!=self.preferences["profile_id"]:
+        if (s.get("profile") or {}).get("user_id")!=self.start_profile_id:
             self.disarm();return
         if self.preferences["activate"]:
             blocked=[text for text in s.get("activation_blockers",[]) if "calibraci" in text.lower() or "Gestos pendientes" in text]
@@ -186,11 +228,19 @@ class Resident:
                 self.disarm();self.bridge.stop();self.bridge.request("stop_camera")
                 self.window.show_error("Inicio automático detenido: "+" · ".join(blocked));self.show();return
         if s.get("camera_status",{}).get("ready") and not self.preferences["activate"]:
-            self.pending=False;return
+            self.pending=False
+            blockers=s.get("activation_blockers",[])
+            if s["settings"]["ui"]["tracking_method"]=="eye_absolute" and not self.window.absolute_context_matches(s):
+                blockers=[*blockers,"Calibración de Ojos incompatible con la pantalla o cámara actual"]
+            if blockers:
+                self.window.show_error("Inicio con Windows: "+" · ".join(blockers))
+                self.show()
+            return
         if self.gate.update(s,time.monotonic()):
             try:
-                profile=self.bridge.controller.profiles.store.load(self.preferences["profile_id"])
-                if not self.store.authorized(self.store.load(),profile):raise ValueError("La autorización del perfil cambió")
+                profile=self.bridge.controller.profiles.store.load(self.start_profile_id)
+                if self.store.registration()!="on" or not self.store.authorized(self.store.load(),profile):
+                    raise ValueError("El registro de inicio o la autorización del perfil cambió")
                 self.pending=False
                 self.bridge.controller.emergency.clear()
                 self.bridge.request("activate_startup_control",screen_context=self.window.screen_context())
@@ -199,17 +249,22 @@ class Resident:
 
     def offer_startup(self):
         try:
-            dialog=QDialog(self.window);dialog.setWindowTitle("¿Querés que HeadMouse se inicie automáticamente con Windows?")
-            layout=QVBoxLayout(dialog);text=QLabel("HeadMouse puede abrirse cuando ingreses a Windows. La activación del perfil requiere autorización independiente. Ambas opciones empiezan desactivadas.")
-            text.setWordWrap(True);layout.addWidget(text)
-            controls=StartupControls(self);layout.addWidget(controls)
-            controls.saved.connect(dialog.accept)
-            controls.profiles.setCurrentIndex(controls.profiles.findData((self.bridge.snapshot().get("profile") or {}).get("user_id")))
-            # Una pregunta por usuario/equipo. Ahora no mantiene ambas opciones apagadas.
-            buttons=QDialogButtonBox(QDialogButtonBox.StandardButton.Close);buttons.button(QDialogButtonBox.StandardButton.Close).setText("Ahora no")
-            buttons.rejected.connect(dialog.reject);layout.addWidget(buttons)
-            self.preferences=self.store.save(False,False,False,profile=self.bridge.controller.profile,prompted=True)
-            dialog.exec();self.controls.restore()
+            # Una actualización conserva las decisiones ya guardadas.
+            if self.store.registration()!="off" or self.preferences["prompted"]:return
+            dialog=QMessageBox(self.window)
+            dialog.setWindowTitle("Inicio y accesibilidad")
+            dialog.setText("¿Querés que HeadMouse se inicie automáticamente al iniciar sesión en Windows?")
+            dialog.setInformativeText("Esta opción abre HeadMouse. El control del puntero requiere una autorización aparte.")
+            yes=dialog.addButton("Sí, iniciar automáticamente",QMessageBox.ButtonRole.YesRole)
+            no=dialog.addButton("No, iniciar manualmente",QMessageBox.ButtonRole.NoRole)
+            dialog.setDefaultButton(no);dialog.setEscapeButton(no)
+            dialog.exec()
+            choice=dialog.clickedButton()
+            if choice not in (yes,no):return
+            self.preferences=self.store.save(choice==yes,False,False,remember_profile=self.preferences["remember_profile"])
+            self.controls.restore()
+        except (OSError,ValueError) as exc:
+            self.window.show_error("No se guardaron las preferencias de inicio: "+str(exc))
         finally:self.prompt_open=False
 
     def close(self):

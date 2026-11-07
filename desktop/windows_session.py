@@ -22,9 +22,11 @@ def desktop_unlocked():
 
 class WindowsSession(QAbstractNativeEventFilter):
     HOTKEY=0x484D
-    def __init__(self,window,on_stop,on_session):
+    KEYBOARD_HOTKEY=0x484E
+    def __init__(self,window,on_stop,on_session,on_keyboard=None):
         super().__init__();self.window=window;self.on_stop=on_stop;self.on_session=on_session
-        self.hotkey=False;self.registered=False;self.handle=None
+        self.hotkey=False;self.keyboard_hotkey=False;self.registered=False;self.handle=None
+        self.on_keyboard=on_keyboard
         if sys.platform!="win32":return
         import ctypes
         from ctypes import wintypes
@@ -36,10 +38,14 @@ class WindowsSession(QAbstractNativeEventFilter):
         self.wts.WTSUnRegisterSessionNotification.argtypes=[wintypes.HWND]
         self.handle=int(window.winId())
         self.hotkey=bool(self.user.RegisterHotKey(self.handle,self.HOTKEY,0x4000,0x77))
+        if on_keyboard:
+            self.keyboard_hotkey=bool(self.user.RegisterHotKey(self.handle,self.KEYBOARD_HOTKEY,0x4003,ord("K")))
         self.registered=bool(self.wts.WTSRegisterSessionNotification(self.handle,0))
 
     def dispatch(self,message,wparam):
         if message==0x0312 and wparam==self.HOTKEY:self.on_stop();return True
+        if message==0x0312 and wparam==self.KEYBOARD_HOTKEY and self.on_keyboard:
+            self.on_keyboard();return True
         if message==0x02B1:
             if wparam in (2,4,6,7):self.on_session(False)
             elif wparam in (1,3,5,8):self.on_session(True)
@@ -60,5 +66,6 @@ class WindowsSession(QAbstractNativeEventFilter):
     def close(self):
         if self.handle:
             if self.hotkey:self.user.UnregisterHotKey(self.handle,self.HOTKEY)
+            if self.keyboard_hotkey:self.user.UnregisterHotKey(self.handle,self.KEYBOARD_HOTKEY)
             if self.registered:self.wts.WTSUnRegisterSessionNotification(self.handle)
             self.handle=None

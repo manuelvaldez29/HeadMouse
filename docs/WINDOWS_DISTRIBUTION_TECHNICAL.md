@@ -1,8 +1,8 @@
-# HeadMouse 0.5.0 — Distribución Windows, tesis V0.2
+# HeadMouse 0.5.1 — Distribución Windows, tesis V0.2
 
 ## Arquitectura y límites
 
-Base integrada: `tesis-v0.2`, `9833bba`. Se conservan
+Base integrada: `tesis-v0.2`, `4445643`. Se conservan
 VisionEngine, GestureEngine, estrategias, modelos y calibradores. DesktopBridge
 sigue serializando las operaciones en el worker Qt. Los nuevos módulos son:
 
@@ -30,6 +30,18 @@ Un conflicto se conserva fuera del banco activo, en migration-conflicts. Un perf
 inválido se informa y no se importa. No se exportan fotos ni landmarks.
 
 ## Inicio y autorización
+
+En 0.5.1, Inicio y accesibilidad consulta la entrada real de Windows y
+distingue entre ausencia, coincidencia con el ejecutable actual, otra ruta
+y deshabilitación desde Windows. Si se mueve el portable, se vuelve a
+registrar la nueva ubicación al guardar la opción. El registro es único
+por usuario y lo comparten el portable y la edición instalada.
+
+La pregunta tras la primera calibración válida autoriza solamente la
+apertura. Con esa opción se recupera el último perfil si el usuario
+habilitó recordarlo. El perfil para activación automática conserva una
+autorización independiente. Ctrl+Mayús+Intro con la ventana en foco abre
+la confirmación manual, con No como respuesta predeterminada.
 
 Se usa `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, valor HeadMouse,
 con ejecutable absoluto entre comillas y --autostart. En fuente se utiliza pythonw
@@ -72,9 +84,9 @@ El script valida o descarga los modelos fijados por revisión y hash en
 recurso de versión de Windows y el instalador. El spec sólo recoge recursos
 enumerados. Los datos personales viven en AppData.
 
-PyInstaller genera dist/windows-0.5.0/HeadMouse/HeadMouse.exe y _internal
+PyInstaller genera dist/windows-0.5.1/HeadMouse/HeadMouse.exe y _internal
 (debe distribuirse la carpeta entera). Inno Setup genera
-dist/installer/HeadMouse-Setup-0.5.0-win64.exe.
+dist/installer/HeadMouse-Setup-0.5.1-win64.exe.
 Incluye icono, recursos y Qt. Es onedir/windowed, sin consola. La compilación limpia
 el PATH para no tomar DLL de otras herramientas. No se distribuyen las ICU genéricas
 de Poppler: Qt usa la API del Windows objetivo. Esto se verifica ejecutando el binario.
@@ -91,8 +103,8 @@ un import requerido.
 ## Instalador y actualización
 
 packaging/HeadMouse.iss usa AppId estable y PrivilegesRequired=lowest. La instalación
-por usuario conserva datos externos y sólo remapea una entrada Run preexistente;
-no la crea ni autoriza al instalar. Ofrece escritorio y ejecución final desmarcados.
+por usuario conserva datos externos y conserva la entrada Run al actualizar en la misma ruta. Si cambia la ruta,
+la nueva ubicación se registra desde la aplicación con una decisión explícita. Ofrece escritorio y ejecución final desmarcados.
 El desinstalador elimina el valor Run y conserva perfiles. No se firma esta edición.
 Conservar licencias y metadatos de terceros distribuidos en _internal; revisar
 sus condiciones al redistribuir fuera del contexto de tesis.
@@ -101,9 +113,9 @@ sus condiciones al redistribuir fuera del contexto de tesis.
 
 ```powershell
 .\.venv\Scripts\python.exe -m unittest discover -s tests
-.\dist\windows-0.5.0\HeadMouse\HeadMouse.exe --check
-.\dist\windows-0.5.0\HeadMouse\HeadMouse.exe --verify-runtime
-.\dist\windows-0.5.0\HeadMouse\HeadMouse.exe --check-resident
+.\dist\windows-0.5.1\HeadMouse\HeadMouse.exe --check
+.\dist\windows-0.5.1\HeadMouse\HeadMouse.exe --verify-runtime
+.\dist\windows-0.5.1\HeadMouse\HeadMouse.exe --check-resident
 .\.venv\Scripts\python.exe packaging/verify_installer.py --previous dist/installer/HeadMouse-Setup-0.4.0-win64.exe
 ```
 
@@ -120,7 +132,7 @@ equivale a una máquina limpia. Instalar, ejecutar, actualizar y desinstalar en 
 carpeta de ensayo; comparar bytes de perfiles y preferencias antes/después. El
 informe detalla las pruebas ejecutadas y las pendientes en otros sistemas.
 El verificador admite `--audio-fixture` para un WAV de prueba mono PCM16 a
-16 kHz. El manifiesto `dist/release-manifest-0.5.0.json` registra hashes de
+16 kHz. El manifiesto `dist/release-manifest-0.5.1.json` registra hashes de
 cada archivo del portable y del instalador.
 
 ## Fuentes técnicas
