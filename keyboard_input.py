@@ -1,5 +1,5 @@
 """Edición acotada al campo actual. El contexto contiene sólo teclas propias."""
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import ctypes
 from ctypes import wintypes
 import os
@@ -22,6 +22,7 @@ class Target:
     editable: bool
     private: bool
     unknown: bool = False
+    bounds: tuple | None = field(default=None, compare=False)
 
     @property
     def predictive(self):
@@ -69,18 +70,50 @@ class WindowsKeyboardFocus(UIAFocusProbe):
             info = self._classify(element)
             # Un provider que omite IsPassword nunca habilita predicción o aprendizaje.
             password = element.GetCurrentPropertyValueEx(30019, True)
-            description = " ".join(str(getattr(element, prop) or "") for prop in
-                                   ("CurrentName", "CurrentAutomationId", "CurrentHelpText", "CurrentClassName"))
-            private = password is not False or info.password or bool(SENSITIVE.search(description))
+            private = password is not False or info.password
+            if not private:
+                description = " ".join(str(getattr(element, prop) or "") for prop in
+                                       ("CurrentName", "CurrentAutomationId", "CurrentHelpText", "CurrentClassName"))
+                private = bool(SENSITIVE.search(description))
             if self.user32.GetForegroundWindow() != window:
                 return None
             self.element = element
             target = Target(window, info.runtime_id, info.editable or info.password, private,
-                            unknown=info.control_type in ("50025", "50032", "50033"))
+                            unknown=info.control_type in ("50025", "50032", "50033"),
+                            bounds=self._bounds(element))
             self.can_read = target.predictive
             return target
         except Exception:
             return Target(window, None, False, True, unknown=True)
+
+    @staticmethod
+    def _bounds(element):
+        try:
+            rect = element.CurrentBoundingRectangle
+            result = (rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top)
+            return result if result[2] > 0 and result[3] > 0 else None
+        except Exception:
+            return None
+
+    def composition_matches(self, before, after):
+        """Compara sólo caracteres que ya envió este teclado, en la línea del cursor."""
+        if not self.can_read:
+            return None
+        before, after = before.rsplit("\n", 1)[-1][-180:], after.split("\n", 1)[0][:180]
+        try:
+            pattern = self.element.GetCurrentPattern(10014).QueryInterface(self.interfaces.IUIAutomationTextPattern)
+            selection = pattern.GetSelection()
+            if selection.Length != 1:
+                return False
+            caret = selection.GetElement(0)
+            if caret.CompareEndpoints(0, caret, 1) != 0:
+                return False
+            left, right = caret.Clone(), caret.Clone()
+            left.MoveEndpointByUnit(0, 0, -len(before))
+            right.MoveEndpointByUnit(1, 0, len(after))
+            return left.GetText(-1) == before and right.GetText(-1) == after
+        except Exception:
+            return self._native_edit_matches(before, after)
 
     def caret(self, suffix):
         """Confirma sólo el sufijo propio y lee el carácter contiguo, sin persistirlo."""
@@ -143,6 +176,34 @@ class WindowsKeyboardFocus(UIAFocusProbe):
         except Exception:
             return None
 
+    def _native_edit_matches(self, before, after):
+        try:
+            hwnd = self.element.CurrentNativeWindowHandle
+            name = ctypes.create_unicode_buffer(32)
+            if not hwnd or not self.user32.GetClassNameW(hwnd, name, len(name)) or name.value != "Edit":
+                return None
+            selection = self._edit_message(hwnd, 0xB0)
+            start, end = selection & 0xFFFF, (selection >> 16) & 0xFFFF
+            if selection >= 0xFFFFFFFF or start != end:
+                return False
+            row = self._edit_message(hwnd, 0xC9, start)
+            offset = start - self._edit_message(hwnd, 0xBB, row)
+            # Edit usa unidades UTF-16, incluso para emojis fuera del BMP.
+            left_units = len(before.encode("utf-16-le")) // 2
+            right_units = len(after.encode("utf-16-le")) // 2
+            if offset < left_units or offset + right_units >= 1023:
+                return None
+            buffer = ctypes.create_unicode_buffer(offset + right_units + 2)
+            buffer[0] = chr(offset + right_units + 1)
+            count = self._edit_message(hwnd, 0xC4, row, ctypes.addressof(buffer))
+            if count < offset + right_units:
+                return False
+            raw = ctypes.string_at(ctypes.addressof(buffer), count * 2)
+            actual = raw[(offset-left_units)*2:(offset+right_units)*2].decode("utf-16-le")
+            return actual == before + after
+        except Exception:
+            return None
+
 
 KEYS = {"⌫": 0x08, "Tab": 0x09, "Enter": 0x0D, "Inicio": 0x24, "Fin": 0x23,
         "←": 0x25, "↑": 0x26, "→": 0x27, "↓": 0x28, "Supr": 0x2E}
@@ -164,7 +225,7 @@ class KeyboardTyper(SendInputTyper):
         vk = 0x20 if name==" " else KEYS.get(name)
         if vk is None:
             if not modifiers or len(name) != 1 or not name.isascii() or not name.isalnum():
-                return
+                return False
             vk = ord(name.upper())
         flags = int(name in EXTENDED)
         mods = [0x11 if mod == "Ctrl" else 0x12 for mod in modifiers]
@@ -172,14 +233,80 @@ class KeyboardTyper(SendInputTyper):
         events += [self._key(vk=vk, flags=flags), self._key(vk=vk, flags=flags | 2)]
         events += [self._key(vk=mod, flags=2) for mod in reversed(mods)]
         self._send(events)
+        return True
+
+
+class Composition:
+    """Texto propio, sólo en RAM y acotado. Nunca importa texto de otras ventanas."""
+    LIMIT = 2048
+
+    def __init__(self):
+        self.clear()
+
+    def clear(self):
+        self.text, self.cursor, self.status = "", 0, "empty"
+
+    def write(self, text, backspaces=0):
+        start = max(0, self.cursor - backspaces)
+        self.text = self.text[:start] + text + self.text[self.cursor:]
+        self.cursor = start + len(text)
+        if len(self.text) > self.LIMIT:
+            trim = len(self.text) - self.LIMIT
+            self.text = self.text[trim:]
+            self.cursor = max(0, self.cursor - trim)
+        self.status = "sent"
+
+    def special(self, name, modifiers):
+        if modifiers or name == "Tab":
+            self.clear()
+        elif name == "Enter":
+            self.write("\n")
+        elif name == "⌫":
+            start = max(0, self.cursor - 1)
+            while start and (unicodedata.combining(self.text[start]) or self.text[start] in "\ufe0e\ufe0f"):
+                start -= 1
+            self.write("", self.cursor - start)
+        elif name == "Supr":
+            self.text = self.text[:self.cursor] + self.text[self.cursor+1:]
+            self.status = "sent"
+        elif name == "←":
+            self.cursor = max(0, self.cursor - 1)
+            self.status = "sent"
+        elif name == "→":
+            self.cursor = min(len(self.text), self.cursor + 1)
+            self.status = "sent"
+        elif name == "Inicio":
+            self.cursor = self.text.rfind("\n", 0, self.cursor) + 1
+            self.status = "sent"
+        elif name == "Fin":
+            end = self.text.find("\n", self.cursor)
+            self.cursor = len(self.text) if end < 0 else end
+            self.status = "sent"
+        else:
+            # Saltos verticales dependen del ajuste de línea de la aplicación.
+            self.clear()
+
+    def verify(self, probe):
+        matcher = getattr(probe, "composition_matches", None)
+        if not self.text or not callable(matcher):
+            return None
+        result = matcher(self.text[:self.cursor], self.text[self.cursor:])
+        if result is True:
+            self.status = "confirmed"
+        return result
 
 
 class KeyboardSession:
     def __init__(self):
         self.target = None
+        self.composition = Composition()
         self.reset()
 
     def reset(self):
+        self.composition.clear()
+        self.reset_words()
+
+    def reset_words(self):
         self.draft, self.tail, self.context = "", "", []
 
     def set_target(self, target):
@@ -202,18 +329,22 @@ class KeyboardSession:
         if not self.target.predictive or not (settings["suggestions"] or settings["learning"]):
             if allowed():
                 typer.write(text)
-            self.reset()
-            return
+                if self.target.predictive:
+                    self.composition.write(text)
+                self.reset_words()
+                return True
+            return False
         edges = probe.caret(self.tail)
         verified = edges is not None and not (not self.tail and
                    (edges[0].isalnum() or edges[1].isalnum() or "_" in edges))
         if not verified:
-            self.reset()
+            self.reset_words()
         if not allowed():
-            return
+            return False
         typer.write(text)
+        self.composition.write(text)
         if not verified:
-            return
+            return True
         combined = unicodedata.normalize("NFC", self.draft + text)
         if WORD.fullmatch(combined):
             self.draft = combined
@@ -226,20 +357,25 @@ class KeyboardSession:
             if not text.isspace():
                 self.context.clear()
         else:
-            self.reset()
+            self.reset_words()
+        return True
 
     def special(self, name, modifiers, probe, typer, dictionary, settings, allowed):
         verified = (not modifiers and name in ("⌫","Enter","Tab") and self.target.predictive
                     and self.tail and probe.caret(self.tail) is not None)
         if not allowed():
-            return
-        typer.special(name, modifiers)
+            return False
+        if typer.special(name, modifiers) is False:
+            return False
+        if self.target.predictive:
+            self.composition.special(name, modifiers)
         if not modifiers and name == "⌫" and verified and self.draft:
             self.draft, self.tail = self.draft[:-1], self.tail[:-1]
         else:
             if not modifiers and name in ("Enter","Tab") and verified:
                 self.commit(self.draft, dictionary, settings)
-            self.reset()
+            self.reset_words()
+        return True
 
     def choose(self, word, probe, typer, dictionary, settings, allowed):
         if word not in {value for value, _ in self.suggestions(dictionary, settings)}:
@@ -259,13 +395,16 @@ class KeyboardSession:
         space = " " if not right else ""
         leading = " " if not self.draft and left and left in ",.;:!?" else ""
         if word.startswith(self.draft):
-            typer.write(leading + word[len(self.draft):] + space)
+            inserted = leading + word[len(self.draft):] + space
+            typer.write(inserted)
+            self.composition.write(inserted)
         else:
             typer.write(word + space, backspaces=len(self.draft))
+            self.composition.write(word + space, backspaces=len(self.draft))
         self.commit(word, dictionary, settings)
         self.tail = (self.tail[:-len(self.draft)] if self.draft else self.tail) + leading + word + space
         self.tail = self.tail[-180:]
         self.draft = ""
         if not space:
-            self.reset()
+            self.reset_words()
         return True

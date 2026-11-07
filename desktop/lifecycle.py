@@ -6,6 +6,8 @@ from shiboken6 import isValid
 def release_overlays(window):
     """Avisos flotantes sin dueño nativo (para que Windows no los esconda al minimizar
     la principal): se cierran y destruyen explícitamente con la ventana."""
+    coordinator=getattr(window,"overlay_layout",None)
+    if coordinator is not None:coordinator.stop()
     for overlay in getattr(window, "owned_overlays", ()):
         if isValid(overlay):
             overlay.close()

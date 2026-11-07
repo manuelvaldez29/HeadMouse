@@ -144,6 +144,39 @@ El diccionario guarda frecuencias y combinaciones cortas en SQLite bajo
 no alimenta el diccionario. En aplicaciones que no exponen bien el foco,
 la apertura manual permite escritura directa sin aprendizaje.
 
+La zona superior muestra únicamente texto compuesto por el teclado durante esta
+sesión, con un cursor de composición y desplazamiento para textos largos. El
+indicador distingue texto enviado a Windows y cursor comprobado en el destino.
+La comprobación contrasta caracteres propios y no importa conversaciones. Si
+cambia el campo, el cursor externo o la autorización, la composición se limpia.
+Los campos sensibles no muestran vista previa. El texto de esta vista no se
+guarda. Una tecla azul está seleccionada; verde indica que Windows aceptó el
+envío; rojo indica que no se pudo enviar. Esto no garantiza que una aplicación
+externa haya conservado el texto.
+
+Ocultar deja disponible el botón flotante «Abrir teclado». También podés volver
+a seleccionar el mismo campo con el clic de HeadMouse, cambiar de campo, usar
+Ctrl+Alt+K, la bandeja o Mostrar u ocultar teclado en Configuración. Desactivar
+la apertura automática conserva la apertura manual. F8 revoca el control y
+oculta ambos elementos del teclado.
+
+Posición del teclado virtual ofrece Automática, Siempre arriba y Siempre abajo.
+Automática utiliza el rectángulo del campo y el monitor correspondiente para
+elegir espacio libre o menor superposición. El teclado conserva su posición
+mientras escribís. Cuando falta geometría se usa una ubicación inferior en el
+monitor disponible; las posiciones fijas permiten ajustar el caso particular.
+Un editor que ocupa toda la pantalla puede seguir parcialmente cubierto. El
+tamaño de las teclas se conserva y la vista previa permite ver la composición.
+La opacidad opcional de 70 a 100 % conserva los clics sobre el teclado.
+
+En Cámara flotante podés elegir esquina, tamaño y «Evitar que la cámara tape
+el cursor». La cámara se aparta a una esquina libre y regresa cuando la zona
+principal lleva despejada el intervalo elegido. Un margen de retorno mayor y
+una espera entre movimientos evitan oscilaciones. El teclado tiene prioridad
+de espacio sobre la cámara, incluso cuando desactivás la evasión del cursor.
+Estas preferencias visuales se guardan por equipo mediante la configuración
+existente; las preferencias del teclado se conservan en el perfil.
+
 ## Dictado y calibración de voz
 
 En Configuración → Básico → Dictado por voz, podés usar el micrófono

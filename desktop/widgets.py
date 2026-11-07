@@ -649,12 +649,12 @@ class MiniCameraWindow(QWidget):
         self.setStyleSheet(f"MiniCameraWindow {{ background: {spec['border']}; }}")
         self.setAccessibleDescription(f"{spec['badge']} · {hint}")
 
-    def present(self, snapshot, screen=None):
+    def present(self, snapshot, screen=None, managed=False):
         self._apply_status(snapshot)
         # Siempre con la guía de centro y zona quieta, aunque esté apagada en la vista normal.
         self.preview.present(zoom_snapshot(snapshot, self.ZOOM))
         if not self.isVisible():
-            if screen is not None:
+            if screen is not None and not managed:
                 area = screen.availableGeometry()
                 self.move(area.right() - self.width() - 16, area.bottom() - self.height() - 16)
             self.show()

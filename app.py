@@ -53,7 +53,7 @@ def main(argv=None):
     keyboard=None
     if sys.platform=="win32":
         from desktop.keyboard import VirtualKeyboard
-        keyboard=window.virtual_keyboard=VirtualKeyboard(bridge)
+        keyboard=window.virtual_keyboard=VirtualKeyboard(bridge,coordinator=window.overlay_layout)
         keyboard.service.error.connect(window.show_error)
         window.owned_overlays+=(keyboard,)
     resident=None

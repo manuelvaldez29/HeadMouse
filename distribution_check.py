@@ -59,7 +59,20 @@ def run():
         assert not result.face_landmarks
     from tempfile import TemporaryDirectory
     from keyboard_dictionary import Dictionary,base_words
+    from keyboard_input import Composition
+    from desktop.overlay_layout import CameraPlacement,keyboard_rect
+    from PySide6.QtCore import QPoint,QRect,QSize
     assert {"días","niño"}.issubset(base_words())
+    composition=Composition()
+    composition.write("Ñandú 🙂")
+    assert composition.text=="Ñandú 🙂"
+    area=QRect(0,0,1920,1040)
+    keyboard=keyboard_rect(area,QSize(1500,360),QRect(20,950,1700,50))
+    assert keyboard.bottom()<950
+    placement=CameraPlacement()
+    home=placement.place(area,QSize(304,268),"bottom_right",True,1.,QPoint(900,500),[],0.)
+    away=placement.place(area,QSize(304,268),"bottom_right",True,1.,home.center(),[],1.)
+    assert not home.intersects(away)
     with TemporaryDirectory(prefix="headmouse-keyboard-check-") as root:
         dictionary=Dictionary(root,"synthetic")
         try:
@@ -70,7 +83,8 @@ def run():
             dictionary.close()
     report=dict(result="passed",version=VERSION,qt=qVersion(),opencv=cv2.__version__,numpy=np.__version__,
         facial_model=path.is_file(),camera_opened=False,physical_actions=0,
-        python_network_blocked=True,voice=voice_check(),keyboard=dict(sqlite=True,spanish_base=True))
+        python_network_blocked=True,voice=voice_check(),keyboard=dict(sqlite=True,spanish_base=True,
+            composition=True,overlay_geometry=True))
     from user_storage import write_json
     write_json(data_root()/"logs"/"distribution-check.json",report)
     return 0

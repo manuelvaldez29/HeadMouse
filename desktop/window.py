@@ -101,10 +101,13 @@ class UIPreferences:
 
     def get(self,key,default):
         value=self._settings.value(key,default)
-        return value.lower()=="true" if isinstance(value,str) else bool(value)
+        if isinstance(default,bool):
+            return value.lower()=="true" if isinstance(value,str) else bool(value)
+        try:return type(default)(value)
+        except (TypeError,ValueError):return default
 
     def set(self,key,value):
-        self._settings.setValue(key,bool(value))
+        self._settings.setValue(key,value)
 
 
 def friendly_date(value):
@@ -265,11 +268,14 @@ class MainWindow(QMainWindow):
         # Sin dueño Qt no se destruyen solas: la ventana las lleva registradas y las
         # libera al cerrarse (y dispose_window), como pedía la corrección de ciclo de vida.
         self.owned_overlays=(self.dictation_overlay,self.mini_camera)
+        from desktop.overlay_layout import OverlayCoordinator
+        self.overlay_layout=OverlayCoordinator(self)
         self.ui_prefs=UIPreferences()
         mini=self.ui_prefs.get("mini_camera",True)  # predeterminado: visible
         for check in (self.mini_camera_check,self.mini_camera_settings_check):
             check.setChecked(mini)
             check.toggled.connect(self.set_mini_camera)
+        self.restore_camera_preferences()
         self._dictation_message=("",0.)
         self._last_dictation_state="idle"
         self.timer=QTimer(self)
@@ -1008,9 +1014,34 @@ class MainWindow(QMainWindow):
             g=gesture_hints(s)
             hints=dict(hint_paused=f"{capitalized(g['pause_short'])} para activar" if g["pause_short"] else "Sin gesto de pausa: F8 detiene",
                        hint_dragging=f"{capitalized(g['click_short'])} para soltar" if g["click_short"] else "F8 para soltar")
-            self.mini_camera.present(dict(s,**hints),self.screen())
+            self.mini_camera.present(dict(s,**hints),self.screen(),managed=True)
+            self.overlay_layout.present_camera(self.mini_camera,self.screen(),dict(
+                corner=self.camera_corner.currentData(),avoid=self.camera_avoid.isChecked(),
+                size=self.camera_size.currentData(),delay=self.camera_return.value()))
         elif self.mini_camera.isVisible():
             self.mini_camera.hide()
+
+    def restore_camera_preferences(self):
+        for widget,key,default in ((self.camera_corner,"camera_corner","bottom_right"),
+                                   (self.camera_size,"camera_size","normal")):
+            widget.setCurrentIndex(max(0,widget.findData(self.ui_prefs.get(key,default))))
+        self.camera_avoid.setChecked(self.ui_prefs.get("camera_avoid",True))
+        self.camera_return.setValue(self.ui_prefs.get("camera_return",1.))
+        self.camera_corner.currentIndexChanged.connect(self.save_camera_preferences)
+        self.camera_size.currentIndexChanged.connect(self.save_camera_preferences)
+        self.camera_avoid.toggled.connect(self.save_camera_preferences)
+        self.camera_return.valueChanged.connect(self.save_camera_preferences)
+
+    def save_camera_preferences(self):
+        for key,value in (("camera_corner",self.camera_corner.currentData()),("camera_size",self.camera_size.currentData()),
+                          ("camera_avoid",self.camera_avoid.isChecked()),("camera_return",self.camera_return.value())):
+            self.ui_prefs.set(key,value)
+        if self.snapshot:self._present_mini_camera(self.snapshot)
+
+    def reset_camera_position(self):
+        self.camera_corner.setCurrentIndex(self.camera_corner.findData("bottom_right"))
+        self.camera_return.setValue(1.)
+        self.save_camera_preferences()
 
     def _present_diagnostic(self,s):
         """Estado en lenguaje simple: rostro, hacia dónde iría el cursor y cada gesto."""
@@ -1152,14 +1183,34 @@ class MainWindow(QMainWindow):
         self.landmarks_check=QCheckBox("Mostrar puntos de la cara")
         form.addRow(self.overlay_check)
         form.addRow(self.landmarks_check)
-        self.mini_camera_settings_check=QCheckBox("Mini cámara al controlar con la nariz (se aplica al instante)")
+        section(form,"Cámara flotante")
+        self.mini_camera_settings_check=QCheckBox("Mostrar cámara flotante al controlar con la nariz (se aplica al instante)")
         form.addRow(self.mini_camera_settings_check)
+        self.camera_corner=QComboBox()
+        for title,key in (("Inferior derecha","bottom_right"),("Superior izquierda","top_left"),
+                          ("Superior derecha","top_right"),("Inferior izquierda","bottom_left")):
+            self.camera_corner.addItem(title,key)
+        form.addRow("Posición preferida",self.camera_corner)
+        self.camera_avoid=QCheckBox("Evitar que la cámara tape el cursor")
+        form.addRow(self.camera_avoid)
+        self.camera_size=QComboBox()
+        for title,key in (("Compacta","compact"),("Normal","normal"),("Grande","large")):
+            self.camera_size.addItem(title,key)
+        form.addRow("Tamaño de cámara",self.camera_size)
+        self.camera_return=QDoubleSpinBox()
+        self.camera_return.setRange(.3,5.);self.camera_return.setDecimals(1);self.camera_return.setSingleStep(.1)
+        self.camera_return.setSuffix(" s")
+        form.addRow("Volver al despejar la zona durante",self.camera_return)
+        form.addRow(button("Restaurar posición de cámara",self.reset_camera_position))
 
         section(form,"Teclado virtual y escritura")
         self.keyboard_checks={}
         for key,title in (
             ("auto_open","Abrir al enfocar un campo editable"),
             ("microphone","Mostrar el botón de dictado"),
+            ("preview","Mostrar vista previa del texto compuesto"),
+            ("feedback","Mostrar confirmación visual de pulsaciones"),
+            ("enlarged_key","Ampliar la última tecla seleccionada"),
         ):
             self.keyboard_checks[key]=QCheckBox(title)
             form.addRow(self.keyboard_checks[key])
@@ -1168,9 +1219,13 @@ class MainWindow(QMainWindow):
             self.keyboard_size.addItem(title,key)
         form.addRow("Tamaño",self.keyboard_size)
         self.keyboard_position=QComboBox()
-        self.keyboard_position.addItem("Abajo","bottom")
-        self.keyboard_position.addItem("Arriba","top")
-        form.addRow("Posición",self.keyboard_position)
+        self.keyboard_position.addItem("Automática (recomendado)","auto")
+        self.keyboard_position.addItem("Siempre abajo","bottom")
+        self.keyboard_position.addItem("Siempre arriba","top")
+        form.addRow("Posición del teclado virtual",self.keyboard_position)
+        self.keyboard_opacity=QComboBox()
+        for value in (100,90,80,70):self.keyboard_opacity.addItem(f"{value} %",value)
+        form.addRow("Opacidad del teclado",self.keyboard_opacity)
         form.addRow(label("Distribución: Español (Ñ). Abrí el teclado con Ctrl+Alt+K o desde la bandeja.","Subtitle"))
         form.addRow(button("Mostrar u ocultar teclado",self.toggle_keyboard))
         section(form,"Predicción y aprendizaje de palabras")
@@ -1437,6 +1492,7 @@ class MainWindow(QMainWindow):
         settings["voice"]["send_word"]=self.voice_send.currentText().strip().lower()
         settings["keyboard"]={key:check.isChecked() for key,check in self.keyboard_checks.items()}
         settings["keyboard"].update(size=self.keyboard_size.currentData(),position=self.keyboard_position.currentData())
+        settings["keyboard"]["opacity"]=self.keyboard_opacity.currentData()
         self.bridge.request("save_public_settings",settings=settings,method=public_method)
 
     def toggle_keyboard(self):
@@ -1787,6 +1843,7 @@ class MainWindow(QMainWindow):
                     check.setChecked(keyboard[key])
                 self.keyboard_size.setCurrentIndex(self.keyboard_size.findData(keyboard["size"]))
                 self.keyboard_position.setCurrentIndex(self.keyboard_position.findData(keyboard["position"]))
+                self.keyboard_opacity.setCurrentIndex(self.keyboard_opacity.findData(keyboard["opacity"]))
             voice=s["settings"]["voice"]
             notes=["Con el dictado activo: hacé click en un campo de texto y decí solo el comando. "
                    "Dentro de una frase más larga se escribe como texto normal."]

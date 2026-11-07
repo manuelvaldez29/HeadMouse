@@ -99,6 +99,7 @@ class ControlEngine:
         self.backend = backend
         self.screen_bounds = tuple(screen_bounds) if screen_bounds is not None else None
         self.movement_only = movement_only
+        self.pointer_click = (0, None, 0.)
         # PyAutoGUI en Windows pasa el valor directo a mouse_event: una muesca de
         # rueda son 120 unidades (WHEEL_DELTA). Sin escalar, scroll(3) movía 3/120
         # de muesca. En macOS/Linux PyAutoGUI ya cuenta muescas.
@@ -465,8 +466,10 @@ class ControlEngine:
                                 self.last_actions += (GestureEvent("LEFT_DRAG_END", gesture=gesture_key),)
                                 # Apretar y soltar en el mismo lugar es un click para Windows
                                 # (el campo recibe el foco): el dictado también tiene que enterarse.
-                                if self.dictation is not None and self._released_in_place(origin):
-                                    self.dictation.on_click()
+                                if self._released_in_place(origin):
+                                    self._record_pointer_click()
+                                    if self.dictation is not None:
+                                        self.dictation.on_click()
                         continue
                     if self._pending_click is not None:
                         continue
@@ -583,6 +586,7 @@ class ControlEngine:
 
         elif ev.type == EV_LEFT_CLICK:
             self.backend.click(_pause=False)
+            self._record_pointer_click()
             self._log_event("LEFT_CLICK", clicks=True)
             if self.dictation is not None:
                 self.dictation.on_click()
@@ -605,6 +609,7 @@ class ControlEngine:
 
         elif ev.type == "DOUBLE_CLICK":
             self.backend.doubleClick(interval=0.1, _pause=False)
+            self._record_pointer_click()
             self._log_event("DOUBLE_CLICK", clicks=True)
             if self.dictation is not None:
                 self.dictation.on_click()
@@ -628,6 +633,16 @@ class ControlEngine:
             raise ValueError(f"Evento desconocido: {ev.type}")
         if self.metrics:
             self.metrics.action(ev)
+
+    def _record_pointer_click(self):
+        """Notifica sólo clicks ejecutados por HeadMouse, sin hooks globales."""
+        try:
+            from screen_mapping import physical_coordinates
+            with physical_coordinates():
+                point = tuple(self.backend.position())
+            self.pointer_click = (self.pointer_click[0] + 1, point, self._clock())
+        except Exception:
+            pass  # una presentación opcional nunca interrumpe el control
 
     def _log_event(self, name: str,
                    clicks: bool = False, scrolls: bool = False):
