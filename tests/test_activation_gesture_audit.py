@@ -59,7 +59,7 @@ class GestureModeAuditTests(unittest.TestCase):
         self.assertEqual(nose.result()["gesture_calibrations"],eyes.result()["gesture_calibrations"])
         self.assertEqual(nose.result()["thresholds"],eyes.result()["thresholds"])
         self.assertEqual(nose.validator.recognized,eyes.validator.recognized)
-        self.assertEqual(len(eyes.validator.recognized),8)
+        self.assertEqual(len(eyes.validator.recognized),9)
         self.assertEqual(eyes.diagnostic()["result"],"validated")
         self.assertFalse(eyes.diagnostic()["iris_required"])
         self.assertGreater(eyes.diagnostic()["accepted_samples"],0)

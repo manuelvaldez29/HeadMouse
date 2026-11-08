@@ -5,7 +5,7 @@ Base integrada `tesis-v0.2`, commit `9833bba`. La distribución 0.5.0 se constru
 | Función | Código y recursos | Ejecución |
 | --- | --- | --- |
 | Nariz, Ojos y gestos | OpenCV, MediaPipe Face Landmarker, NumPy, `vision_engine`, `tracking`, `gaze_*`, `gesture_*` | Cámara, CPU, sin red |
-| Calibración, validación y control | `calibration_*`, `adaptive_calibration`, `ocular_profiles`, `control_engine`, PyAutoGUI | Calibraciones y bancos de gestos por método y perfil. Filtrado de fijaciones, recentrado, arrastre por guiño, labios para scroll, cejas y besito opcional |
+| Calibración, validación y control | `calibration_*`, `adaptive_calibration`, `ocular_profiles`, `control_engine`, PyAutoGUI | Calibraciones y bancos de gestos por método y perfil. Filtrado de fijaciones, recentrado, arrastre por guiño, labios para scroll, cejas y besito |
 | Escritorio | PySide6, tema QSS, iconos, ventanas auxiliares, UI Automation para dictado | Menú de perfiles, dos métodos, mini cámara y aviso de dictado |
 | Perfiles, diagnóstico y experimentos | `profiles`, `user_storage`, `runtime_diagnostics`, `metrics`, `experiment_engine` | JSON y registros locales. Incluye análisis y exportación de sesiones |
 | Bandeja e inicio | `desktop/resident.py`, `windows_session.py`, `single_instance.py`, `startup_preferences.py` | HKCU Run opcional, bloqueo de sesión, F8, exclusión entre instancias |

@@ -15,11 +15,12 @@ from profiles import validate_profile
 from test_core import calibration
 
 NEUTRAL=dict(eye_left_ratio=.1,eye_right_ratio=.12,brow_left_lift=.2,brow_right_lift=.22,
-             mouth_left=.01,mouth_right=.01,mouth_open=.01)
+             mouth_left=.01,mouth_right=.01,mouth_open=.01,mouth_width=.53)
 ACTIVE={"LEFT_WINK":{"eye_left_ratio":.02},"RIGHT_WINK":{"eye_right_ratio":.03},
         "MOUTH_LEFT":{"mouth_left":.25},"MOUTH_RIGHT":{"mouth_right":.25},
         "LEFT_BROW":{"brow_left_lift":.4},"RIGHT_BROW":{"brow_right_lift":.5},
-        "MOUTH_OPEN":{"mouth_open":.3},"BOTH_BROWS":{"brow_left_lift":.3,"brow_right_lift":.33}}
+        "MOUTH_OPEN":{"mouth_open":.3},"BOTH_BROWS":{"brow_left_lift":.3,"brow_right_lift":.33},
+        "KISS":{"mouth_width":.38}}
 
 
 class AdaptiveSessionTests(unittest.TestCase):
@@ -60,7 +61,7 @@ class AdaptiveSessionTests(unittest.TestCase):
         s=self.session()
         self.capture(s)
         self.assertEqual(s.state,"measured")
-        self.assertEqual(len(s.telemetry),8)
+        self.assertEqual(len(s.telemetry),9)
         for record in (r for r in s.candidate["gesture_calibrations"].values() if r["enabled"]):
             self.assertEqual(record["repetitions_valid"],3)
             self.assertEqual(record["quality_score"],1)
@@ -95,7 +96,7 @@ class AdaptiveSessionTests(unittest.TestCase):
         self.assertEqual(s.state,"measured")
         self.assertEqual(s.models["LEFT_WINK"].to_record(),left)
         self.assertEqual(s.models["RIGHT_WINK"].retries,1)
-        self.assertEqual(len(s.telemetry),9)
+        self.assertEqual(len(s.telemetry),10)
 
     def test_disable_failed_gesture_continues_without_restart(self):
         s=self.session()
@@ -184,7 +185,7 @@ class AdaptiveSessionTests(unittest.TestCase):
             self.assertEqual(len(diagnostics),1)
             self.assertEqual(diagnostics[0]["gesture_bank"],"nose")
             self.assertFalse(diagnostics[0]["iris_required"])
-            self.assertEqual(len(records),9)
+            self.assertEqual(len(records),10)
             self.assertEqual(records[1]["quality_label"],"DÉBIL")
             self.assertEqual(records[2]["retries"],1)
             for record in records:
@@ -238,7 +239,7 @@ class AdaptiveSessionTests(unittest.TestCase):
             self.assertIsNone(s.validator.error,key)
         self.feed(s,2.2,{"nose_y":.57})
         self.assertEqual(s.state,"validated")
-        self.assertEqual(len(s.result()["validation"]["recognized"]),8)
+        self.assertEqual(len(s.result()["validation"]["recognized"]),9)
 
 
 if __name__=="__main__": unittest.main()

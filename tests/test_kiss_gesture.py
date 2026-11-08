@@ -1,4 +1,4 @@
-"""Besito (2026-11-03): gesto opcional por el ancho de la boca, con mouthPucker de control.
+"""Besito: gesto calibrado por el ancho de la boca, con mouthPucker de control.
 
 La primera versión usaba sólo el blendshape mouthPucker. En la calibración real del
 usuario marcó 0.85-0.93 con la cara relajada (labios cerrados o apretados) durante
@@ -35,8 +35,9 @@ class KissGestureTests(unittest.TestCase):
 
     def face(self, values=None, width=WIDE, pucker=RELAXED):
         self.timestamp += 50
-        return FaceData(True, timestamp_ms=self.timestamp, mouth_width=width,
-                        blendshapes=(("mouthPucker", pucker),), **(NEUTRAL | (values or {})))
+        return FaceData(True, timestamp_ms=self.timestamp,
+                        blendshapes=(("mouthPucker", pucker),),
+                        **(NEUTRAL | {"mouth_width":width} | (values or {})))
 
     def calibrated(self, kiss=True, rest_pucker=RELAXED):
         session = CalibrationSession({"user_id": "besito"}, self.config, self.clock, {"KISS": kiss})
@@ -119,11 +120,55 @@ class KissGestureTests(unittest.TestCase):
         self.assertNotIn("KISS", migrated["gesture_modes"]["nose"]["gesture_calibrations"])
         self.assertTrue(migrated["validation"]["passed"])
 
-    def test_kiss_is_opt_in_and_then_remembered(self):
+    def test_kiss_starts_enabled_and_remembers_explicit_choices(self):
         fresh = CalibrationSession({"user_id": "nuevo"}, self.config, self.clock)
-        self.assertFalse(fresh.models["KISS"].enabled)
+        self.assertTrue(fresh.models["KISS"].enabled)
         self.assertTrue(fresh.models["LEFT_WINK"].enabled)
         self.assertTrue(CalibrationSession(self.calibrated(), self.config, self.clock).models["KISS"].enabled)
+        self.assertFalse(CalibrationSession(self.calibrated(kiss=False), self.config, self.clock).models["KISS"].enabled)
+
+    def test_saved_profile_without_kiss_can_validate_and_publish(self):
+        profile = self.calibrated(kiss=False)
+        del profile["gesture_calibrations"]["KISS"]
+        original = deepcopy(profile)
+        session = CalibrationSession(profile, self.config, self.clock)
+        session.candidate = profile
+        session.validate()
+        snap = session.snapshot()
+        self.assertFalse(snap["enabled"]["KISS"])
+        self.assertTrue(snap["calibration_enabled"]["KISS"])
+        self.assertEqual(snap["quality"]["KISS"]["label"], "SIN CALIBRAR")
+        self.assertNotIn("KISS", [event for event,_ in session.validator.gestures])
+        self.assertFalse(snap["can_save"])
+        self.assertEqual(profile,original)
+        # También cubrir los perfiles anteriores a las cejas individuales.
+        for key in ("LEFT_BROW", "RIGHT_BROW"):
+            del profile["gesture_calibrations"][key]
+        session = CalibrationSession(profile, self.config, self.clock)
+        session.candidate = profile
+        session.validate()
+        self.assertEqual(session.snapshot()["quality"]["LEFT_BROW"]["label"], "SIN CALIBRAR")
+        self.assertEqual(original["gesture_calibrations"]["LEFT_WINK"], profile["gesture_calibrations"]["LEFT_WINK"])
+
+    def test_all_nine_gestures_including_kiss_must_pass_before_saving(self):
+        session = CalibrationSession(self.calibrated(), self.config, self.clock)
+        session.candidate = self.calibrated()
+        session.validate()
+        def feed(frames, values=None, width=WIDE, pucker=RELAXED):
+            for _ in range(frames):
+                session.update(self.face(values,width,pucker))
+                session.snapshot()  # la interfaz publica cada paso
+        feed(45)
+        for key in GESTURE_SIGNALS:
+            self.assertFalse(session.validator.neutral)
+            self.assertFalse(session.snapshot()["can_save"])
+            feed(24,ACTIVE.get(key),NARROW if key=="KISS" else WIDE,KISS if key=="KISS" else RELAXED)
+            self.assertIsNone(session.validator.error)
+            feed(45)
+        self.assertEqual(session.state,"validated")
+        self.assertTrue(session.snapshot()["can_save"])
+        self.assertEqual(len(session.result()["validation"]["recognized"]),9)
+        self.assertIn("KISS",session.result()["validation"]["recognized"])
 
 
 if __name__ == "__main__":

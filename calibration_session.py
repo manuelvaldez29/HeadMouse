@@ -25,9 +25,9 @@ class CalibrationSession:
         if self.source not in SOURCES:
             raise ValueError("Fuente de calibración inválida")
         previous=profile.get("gesture_calibrations",{})
-        # El besito (opt-in) se calibra sólo si se tilda; después el perfil lo recuerda.
-        # Así no alarga la calibración de quien no lo usa.
-        availability={key:previous.get(key,{}).get("enabled",not s.opt_in) for key,s in GESTURE_SIGNALS.items()}
+        # Todos los gestos empiezan disponibles; conservar una desactivación
+        # explícita que el usuario ya guardó en su perfil.
+        availability={key:previous.get(key,{}).get("enabled",True) for key in GESTURE_SIGNALS}
         if enabled is not None:
             if not isinstance(enabled,dict) or set(enabled)-set(GESTURE_SIGNALS) or any(type(v) is not bool for v in enabled.values()):
                 raise ValueError("Disponibilidad de gestos inválida")
@@ -503,8 +503,10 @@ class CalibrationSession:
                     attempt=min(cc.repetitions,(len(model.active_samples)+1)) if model and not validating else 0,repetitions=cc.repetitions,
                     feedback=self._live_feedback(),capture_message="" if validating else self.capture_message,
                     recognized=self.validator.recognized.copy() if self.validator else [],
-                    enabled={key:m.enabled for key,m in self.models.items()},
-                    quality={key:dict(label=(self.candidate["gesture_calibrations"][key]["quality_label"]
+                    calibration_enabled={key:m.enabled for key,m in self.models.items()},
+                    enabled={key:(key in v.gesture.enabled_gestures if validating else m.enabled)
+                             for key,m in self.models.items()},
+                    quality={key:dict(label=(self.candidate["gesture_calibrations"].get(key,{}).get("quality_label","SIN CALIBRAR")
                                             if self.validator and self.candidate.get("gesture_calibrations") else
                                             "NO DISPONIBLE" if not m.enabled else "PENDIENTE" if not m.active_samples else
                                             m.quality_label+(" (provisional)" if len(m.active_samples)<cc.repetitions else "")),

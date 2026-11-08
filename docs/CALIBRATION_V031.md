@@ -62,8 +62,11 @@ calibración sigue siendo válido y los tiene apagados.
   con la cara relajada (labios cerrados o apretados) y 0,03-0,35 en otros momentos
   de reposo, el mismo rango que el besito (0,8-1,0). Apretar los labios no angosta
   la boca.
-- Es opt-in: se calibra sólo si se tilda en Calibración → Más opciones, y después el
-  perfil lo recuerda. Su acción inicial es doble click.
+- Se mide y valida como los demás gestos: arranca tildado en las nuevas
+  calibraciones. Se puede desmarcar si no se puede realizar; el perfil recuerda
+  esa elección. Su acción inicial es doble click.
+- Los perfiles anteriores sin Besito conservan sus calibraciones y pueden
+  validarse sin errores. Besito permanece sin activar hasta medirlo y validarlo.
 - No se dispara con la boca abierta, con los labios corridos ni durante un guiño.
 - Un registro de besito con la señal vieja se descarta al cargar el perfil, sin
   tocar su validación.

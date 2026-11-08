@@ -161,7 +161,7 @@ class CalibrationButtonTests(HomeButtonTests):
         self.assertTrue(window.calibration_primary.isHidden())
         self.assertFalse(window.save_calibration_button.isHidden())
         self.assertTrue(window.save_calibration_button.isEnabled())
-        self.assertEqual(window.calibration_steps.text().count("detectado"), 8)
+        self.assertEqual(window.calibration_steps.text().count("detectado"), 9)
 
 
 class CalibrationOrderTests(unittest.TestCase):

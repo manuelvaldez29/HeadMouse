@@ -58,12 +58,10 @@ class GestureSignal:
     directions: tuple
     legacy_keys: tuple
     brow: bool = False
-    # Opcional: un perfil sin su calibración sigue siendo válido y lo tiene apagado
-    # (cejas separadas, que volvieron el 2026-11-03, y besito).
-    optional: bool = False
-    # Opt-in: además arranca sin tildar en Calibración (besito). Las cejas arrancan
-    # tildadas: quien no las quiera las destilda.
-    opt_in: bool = False
+    # Compatibilidad con perfiles anteriores a estas señales: si falta el registro,
+    # sigue válido y el motor no habilita una acción sin calibrar. No altera la
+    # disponibilidad inicial en una nueva calibración.
+    legacy_missing: bool = False
 
     def extract(self, face, source="GEOMETRIC"):
         if source not in SOURCES:
@@ -88,15 +86,15 @@ GESTURE_SIGNALS = {
         GestureSignal("MOUTH_RIGHT", "mouth_right", "Labios a la derecha", "Llevá los labios hacia tu derecha",
                       "SCROLL_DOWN", ("mouth_right",), (1,), ("mouth_right",)),
         GestureSignal("LEFT_BROW", "brow_left", "Ceja izquierda", "Levantá la ceja izquierda cómodamente",
-                      "LEFT_BROW", ("left",), (1,), ("brow_left",), True, optional=True),
+                      "LEFT_BROW", ("left",), (1,), ("brow_left",), True, legacy_missing=True),
         GestureSignal("RIGHT_BROW", "brow_right", "Ceja derecha", "Levantá la ceja derecha cómodamente",
-                      "RIGHT_BROW", ("right",), (1,), ("brow_right",), True, optional=True),
+                      "RIGHT_BROW", ("right",), (1,), ("brow_right",), True, legacy_missing=True),
         GestureSignal("MOUTH_OPEN", "mouth", "Boca", "Abrí la boca cómodamente",
                       "MOUTH_OPEN", ("mouth_open",), (1,), ("mouth_open",)),
         GestureSignal("BOTH_BROWS", "both_brows", "Ambas cejas", "Levantá ambas cejas cómodamente",
                       "BOTH_BROWS", ("left", "right"), (1, 1), ("brow_left", "brow_right"), True),
         GestureSignal("KISS", "kiss", "Besito", "Tirá un besito: fruncí los labios hacia adelante",
-                      "KISS", ("mouth_width",), (-1,), (), optional=True, opt_in=True),
+                      "KISS", ("mouth_width",), (-1,), (), legacy_missing=True),
     )
 }
 

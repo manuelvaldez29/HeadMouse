@@ -665,13 +665,12 @@ class MainWindow(QMainWindow):
         options.setContentsMargins(16,12,16,12)
         self.calibration_options.hide()
         self.calibration_options.toggled_scroll=scroll  # para llevar la vista a las opciones al abrirlas
-        options.addWidget(label("Gestos disponibles: desmarcá los que no puedas hacer. "
-                                "El besito es opcional: tildalo para calibrarlo y usarlo.","Subtitle"))
+        options.addWidget(label("Gestos disponibles: desmarcá los que no puedas hacer.","Subtitle"))
         choices=QGridLayout()
         self.calibration_enabled={}
         for index,(key,title) in enumerate(GESTURE_LABELS.items()):
-            check=QCheckBox(title+(" (opcional)" if GESTURE_SIGNALS[key].opt_in else ""))
-            check.setChecked(not GESTURE_SIGNALS[key].opt_in)
+            check=QCheckBox(title)
+            check.setChecked(True)
             check.toggled.connect(lambda checked,gesture_id=key:self.calibration_availability(gesture_id,checked))
             self.calibration_enabled[key]=check
             choices.addWidget(check,index//3,index%3)
@@ -903,8 +902,8 @@ class MainWindow(QMainWindow):
         for key in CALIBRATION_ORDER:
             title=GESTURE_LABELS[key]
             label_text=quality.get(key,{}).get("label","PENDIENTE")
-            if not enabled.get(key,not GESTURE_SIGNALS[key].opt_in):
-                icon,color,detail="—","#8192aa","opcional, sin tildar" if GESTURE_SIGNALS[key].opt_in else "no disponible"
+            if not enabled.get(key,True):
+                icon,color,detail="—","#8192aa","sin calibrar" if label_text=="SIN CALIBRAR" else "no disponible"
             elif validating:
                 if key in recognized or wizard.get("state")=="validated":
                     icon,color,detail="✓","#8ce5cd","detectado"
@@ -1861,7 +1860,7 @@ class MainWindow(QMainWindow):
             for k,widget in self.mapping_fields.items(): widget.setCurrentIndex(widget.findData(s["settings"]["actions"]["bindings"][k]))
             self.calibration_source.setCurrentIndex(self.calibration_source.findData(s["settings"]["calibration"]["brow_signal_source"]))
             for key,check in self.calibration_enabled.items():
-                enabled=(p or {}).get("gesture_calibrations",{}).get(key,{}).get("enabled",not GESTURE_SIGNALS[key].opt_in)
+                enabled=(p or {}).get("gesture_calibrations",{}).get(key,{}).get("enabled",True)
                 check.blockSignals(True)
                 check.setChecked(enabled)
                 check.blockSignals(False)
@@ -1874,7 +1873,7 @@ class MainWindow(QMainWindow):
             quality=wizard.get("quality",{})
             self.calibration_quality.setToolTip("\n".join(GESTURE_LABELS[k]+": "+v["label"] for k,v in quality.items()))
             if s["state"]=="CALIBRATING":
-                for key,value in wizard.get("enabled",{}).items():
+                for key,value in wizard.get("calibration_enabled",wizard.get("enabled",{})).items():
                     self.calibration_enabled[key].blockSignals(True)
                     self.calibration_enabled[key].setChecked(value)
                     self.calibration_enabled[key].blockSignals(False)

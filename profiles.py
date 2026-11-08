@@ -99,12 +99,12 @@ def validate_profile(data):
         from adaptive_calibration import HysteresisGate
         from gesture_signals import GESTURE_SIGNALS, SOURCES
         records = data["gesture_calibrations"]
-        required = {key for key, spec in GESTURE_SIGNALS.items() if not spec.optional}
+        required = {key for key, spec in GESTURE_SIGNALS.items() if not spec.legacy_missing}
         if not isinstance(records, dict) or not required <= set(records) or set(records) - set(GESTURE_SIGNALS):
             raise ValueError("La calibración necesita un estado por gesto registrado")
         for gesture_id, spec in GESTURE_SIGNALS.items():
             if gesture_id not in records:
-                continue  # gesto opcional agregado después de esta calibración: apagado
+                continue  # señal agregada después de esta calibración: sin activar
             record = records[gesture_id]
             if not isinstance(record, dict) or record.get("gesture_id") != gesture_id or type(record.get("enabled")) is not bool:
                 raise ValueError("Identidad o disponibilidad de gesto inválida")
@@ -194,8 +194,8 @@ def _migrate_gesture_block(block):
     return changed
 
 
-def _drop_stale_optional(block):
-    """Un gesto opcional cuya señal cambió (el besito pasó del blendshape mouthPucker
+def _drop_stale_legacy_signals(block):
+    """Un gesto cuya señal cambió (el besito pasó del blendshape mouthPucker
     al ancho de la boca, 2026-11-03) no se puede reusar: queda apagado, sin invalidar
     el resto del perfil ni su validación."""
     records = block.get("gesture_calibrations") if isinstance(block, dict) else None
@@ -204,7 +204,7 @@ def _drop_stale_optional(block):
     from gesture_signals import GESTURE_SIGNALS
     for key, spec in GESTURE_SIGNALS.items():
         record = records.get(key)
-        if spec.optional and isinstance(record, dict) and (
+        if spec.legacy_missing and isinstance(record, dict) and (
                 record.get("channels") != list(spec.channels) or record.get("directions") != list(spec.directions)):
             del records[key]
 
@@ -213,9 +213,9 @@ def migrate_legacy_lip_gestures(data):
     """Migra en memoria perfiles anteriores (cejas individuales → labios izq/der)."""
     if not isinstance(data, dict):
         return data
-    _drop_stale_optional(data)
+    _drop_stale_legacy_signals(data)
     for mode_block in (data.get("gesture_modes") or {}).values() if isinstance(data.get("gesture_modes"), dict) else ():
-        _drop_stale_optional(mode_block)
+        _drop_stale_legacy_signals(mode_block)
     # Las acciones de los gestos nuevos las completa MappingConfig con sus valores iniciales.
     changed = _migrate_gesture_block(data)
     if isinstance(data.get("gesture_modes"), dict):

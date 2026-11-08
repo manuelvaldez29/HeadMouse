@@ -73,7 +73,7 @@ class CalibrationRegressionTests(unittest.TestCase):
                     self.assertEqual(controller.state,"PREVIEW")
                     saved=manager.store.load("regression")
                     self.assertTrue(saved["validation"]["passed"])
-                    self.assertEqual(len(saved["validation"]["recognized"]),8)
+                    self.assertEqual(len(saved["validation"]["recognized"]),9)
 
     def test_valid_five_fps_waits_for_minimum_samples(self):
         completed=self.capture(step=200)

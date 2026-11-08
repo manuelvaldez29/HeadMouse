@@ -196,9 +196,9 @@ class GestureEngine:
             raise ValueError("El perfil aún no está calibrado")
         self._thresholds = calibration["thresholds"].copy()
         self.calibrations = deepcopy(calibration.get("gesture_calibrations", {}))
-        # Un gesto opcional sin calibración en el perfil (agregado después) queda apagado.
+        # Una señal agregada después del perfil queda apagada hasta calibrarla.
         self.enabled_gestures = {key for key, spec in GESTURE_SIGNALS.items()
-                                 if self.calibrations.get(key, {}).get("enabled", not spec.optional)}
+                                 if self.calibrations.get(key, {}).get("enabled", not spec.legacy_missing)}
         if movement_only:
             self.enabled_gestures.clear()
         self._gates = {}
@@ -210,7 +210,7 @@ class GestureEngine:
             self._signal_sources[key] = record["source"] if record else "GEOMETRIC"
             if spec.legacy_keys:
                 fallback = dict(zip(spec.channels, (self._thresholds[k] for k in spec.legacy_keys)))
-            else:  # sin umbral histórico (gesto opcional apagado): compuerta que nunca abre
+            else:  # sin umbral histórico: compuerta que nunca abre sin calibración
                 fallback = {channel: 2. * d for channel, d in zip(spec.channels, spec.directions)}
             a = record["activation_threshold"] if record and record["enabled"] else fallback
             r = record["release_threshold"] if record and record["enabled"] else fallback

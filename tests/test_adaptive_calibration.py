@@ -187,7 +187,7 @@ class AdaptiveCalibrationTests(unittest.TestCase):
                   "MOUTH_OPEN":{"mouth_open":.3},"BOTH_BROWS":{"brow_left_lift":.3,"brow_right_lift":.33}}
         records={}
         for key,spec in GESTURE_SIGNALS.items():
-            if spec.optional: continue  # como un perfil anterior al besito
+            if spec.legacy_missing: continue  # como un perfil anterior al besito
             model=self.make_model(key)
             for _ in range(3): model.add_repetition([spec.extract(neutral)]*20,[spec.extract(replace(neutral,**variants[key]))]*20)
             model.fit(CalibrationConfig())
