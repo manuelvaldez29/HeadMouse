@@ -260,7 +260,7 @@ class KeyboardService(QObject):
                                        if verified else [])
                         prediction_key = current_key
                         # SendInput encola la tecla; el otro programa puede actualizar el caret después.
-                        if wanted and not verified and retry_count < 3:
+                        if wanted and not verified and retry_count < 6:
                             retry_count += 1
                             prediction_retry = time.monotonic() + .07
                         else:

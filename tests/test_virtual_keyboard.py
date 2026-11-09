@@ -575,3 +575,143 @@ class VirtualKeyboardTests(unittest.TestCase):
         resolved, info = focus._resolve_focus_element(132692, core_window)
         self.assertIs(resolved, search_box)
         self.assertTrue(info.editable)
+
+    def test_chrome_dom_leak_prevention_value_pattern_and_enclosing_element(self):
+        from types import SimpleNamespace
+        focus = WindowsKeyboardFocus.__new__(WindowsKeyboardFocus)
+        focus.can_read = True
+        focus.interfaces = SimpleNamespace(
+            IUIAutomationTextPattern="TextPattern",
+            IUIAutomationValuePattern="ValuePattern",
+        )
+        focus.user32 = Mock()
+        focus.user32.GetClassNameW.return_value = 0
+
+        # Simulate Chrome Google Search <textarea title="Buscar">:
+        # TextPattern leaks webpage DOM ("Ir al contenido\n\n" before, "Buscar\nBuscar con Google" after),
+        # while ValuePattern.CurrentValue holds the exact input value ("" or "yyyyb").
+        dom_state = {
+            "val": "",
+            "tp_left": "Gmail\nImágenes\n\n",
+            "tp_right": "Buscar\nBuscar con Google\nVoy a tener suerte",
+        }
+
+        class FakeChromeRange:
+            def __init__(self, kind="caret", count=0):
+                self.kind = kind
+                self.count = count
+            def CompareEndpoints(self, e1, other, e2):
+                return 0
+            def Clone(self):
+                return FakeChromeRange(self.kind, self.count)
+            def MoveEndpointByUnit(self, endpoint, unit, count):
+                self.kind = "left" if count < 0 else "right"
+                self.count = abs(count)
+            def GetText(self, max_len):
+                if self.kind == "left":
+                    full = dom_state["tp_left"] + dom_state["val"]
+                    return full[-self.count:] if self.count else ""
+                full = dom_state["tp_right"]
+                return full[:self.count] if self.count else ""
+
+        text_pattern = SimpleNamespace(
+            GetSelection=lambda: SimpleNamespace(Length=1, GetElement=lambda idx: FakeChromeRange()),
+            DocumentRange=FakeChromeRange("doc"),
+        )
+        class FakeValuePattern:
+            CurrentIsReadOnly = 0
+            @property
+            def CurrentValue(self_vp):
+                return dom_state["val"]
+        value_pattern = FakeValuePattern()
+
+        focus.element = SimpleNamespace(
+            CurrentControlType=50004,
+            CurrentNativeWindowHandle=0,
+            GetRuntimeId=lambda: (42, 777),
+            GetCurrentPropertyValue=lambda pid: True if pid == focus.VALUE_AVAILABLE else False,
+            GetCurrentPattern=lambda pid: SimpleNamespace(
+                QueryInterface=lambda iface: value_pattern if pid == 10002 else text_pattern
+            ),
+        )
+
+        # Case 1: Empty Google search box -> must NOT leak "Buscar" into read_field() or caret()
+        self.assertEqual(focus.read_field(), ("", ""))
+        self.assertEqual(focus.caret(""), ("", ""))
+        self.assertTrue(focus.composition_matches("", ""))
+
+        # Selecting saved/default suggestion "gracias" on empty Google search box must succeed!
+        self.buffer = Buffer()
+        self.session.reset_all()
+        self.session.set_target(Target(1, (42, 777), True, False))
+        self.session.restore_or_sync(focus, recover_external=True)
+        self.assertEqual(self.session.composition.text, "")
+        preds = [w for w, _ in self.session.suggestions(self.dictionary, self.settings)]
+        self.assertIn("gracias", preds)
+        self.assertTrue(self.session.choose("gracias", focus, self.buffer, self.dictionary, self.settings, self.allowed))
+        self.assertEqual(self.buffer.text, "gracias ")
+        self.assertEqual(self.session.composition.text, "gracias ")
+
+        # Case 2: Google search results page with "yyyy" -> typing "b" shows "yyyyb" in composition
+        dom_state["val"] = "yyyy"
+        dom_state["tp_right"] = "\nyyyyb\nyyyyb\nyyyy yyyy\nyyyy3"
+        self.buffer = Buffer("yyyy", 4)
+        self.session.reset_all()
+        self.session.set_target(Target(1, (42, 778), True, False))
+        self.assertTrue(self.session.restore_or_sync(focus, recover_external=True))
+        self.assertEqual(self.session.composition.text, "yyyy")
+        self.assertEqual(self.session.tail, "yyyy")
+
+        def write_and_update_vp(text, backspaces=0):
+            self.buffer.write(text, backspaces)
+            dom_state["val"] = self.buffer.text
+
+        typer_proxy = SimpleNamespace(write=write_and_update_vp, special=self.buffer.special)
+        self.assertTrue(self.session.insert("b", focus, typer_proxy, self.dictionary, self.settings, self.allowed))
+        self.assertEqual(self.buffer.text, "yyyyb")
+        self.assertEqual(self.session.composition.text, "yyyyb")
+        self.assertTrue(focus.composition_matches("yyyyb", ""))
+
+        # Case 3: Contenteditable element without ValuePattern uses GetEnclosingElement boundary check
+        outside_el = SimpleNamespace(GetRuntimeId=lambda: (42, 1))
+        inside_el = SimpleNamespace(GetRuntimeId=lambda: (42, 999))
+        focus._automation = SimpleNamespace(
+            ControlViewWalker=SimpleNamespace(GetParentElement=lambda el: None)
+        )
+
+        class BoundedDomRange:
+            def __init__(self, steps=0, direction=0):
+                self.steps = steps
+                self.direction = direction
+            def CompareEndpoints(self, e1, other, e2):
+                return 0
+            def Clone(self):
+                return BoundedDomRange(self.steps, self.direction)
+            def MoveEndpointByUnit(self, endpoint, unit, count):
+                self.direction = -1 if count < 0 else 1
+                self.steps = abs(count)
+            def GetEnclosingElement(self):
+                if self.direction < 0 and self.steps <= 2:
+                    return inside_el
+                if self.direction > 0:
+                    return outside_el
+                return outside_el
+            def GetText(self, max_len):
+                if self.direction < 0:
+                    return (" CabeceraDOMho")[-self.steps:]
+                return ("Buscar"[:self.steps])
+
+        ce_pattern = SimpleNamespace(
+            GetSelection=lambda: SimpleNamespace(Length=1, GetElement=lambda idx: BoundedDomRange()),
+            DocumentRange=BoundedDomRange(),
+        )
+        focus.element = SimpleNamespace(
+            CurrentControlType=50030,
+            CurrentNativeWindowHandle=0,
+            GetRuntimeId=lambda: (42, 999),
+            GetCurrentPropertyValue=lambda pid: False,
+            GetCurrentPattern=lambda pid: SimpleNamespace(QueryInterface=lambda iface: ce_pattern),
+        )
+        self.assertEqual(focus.read_field(), ("ho", ""))
+        self.assertEqual(focus.caret("ho"), ("o", ""))
+

@@ -569,3 +569,9 @@ class KeyboardOverlayGUITests(unittest.TestCase):
         QTest.mouseClick(dia_btn, Qt.MouseButton.LeftButton)
         self.wait(lambda: self.buffer.text == f"Buenos {dia_word} " and self.panel.state.get("preview") == f"Buenos {dia_word} ")
         self.assertEqual(self.panel.state.get("preview"), f"Buenos {dia_word} ")
+
+        # Case 4: Compact 1-line preview never hides text on vertical scroll when composition has newlines
+        self.assertFalse(self.panel.is_preview_expanded())
+        self.panel.present(dict(self.panel.state, preview="línea previa\nyyyyb", cursor=18, preview_status="confirmed"))
+        self.assertEqual(self.panel.composition.toPlainText(), "línea previa ↵ yyyyb▏")
+        self.assertNotIn("\n", self.panel.composition.toPlainText())

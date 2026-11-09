@@ -298,12 +298,145 @@ class WindowsKeyboardFocus(UIAFocusProbe):
                 break
         return None
 
+    def _is_native_edit(self):
+        try:
+            hwnd = getattr(self.element, "CurrentNativeWindowHandle", 0)
+            if hwnd and hasattr(self, "user32"):
+                name = ctypes.create_unicode_buffer(32)
+                if self.user32.GetClassNameW(hwnd, name, len(name)) and name.value == "Edit":
+                    return True
+        except Exception:
+            pass
+        return False
+
+    def _value_pattern_raw(self):
+        if self.element is None or self._is_native_edit():
+            return None
+        try:
+            get_prop = getattr(self.element, "GetCurrentPropertyValue", None)
+            if callable(get_prop):
+                if get_prop(self.VALUE_AVAILABLE) is False:
+                    return None
+                if get_prop(self.VALUE_READ_ONLY) is True:
+                    return None
+            vp = self.element.GetCurrentPattern(10002).QueryInterface(self.interfaces.IUIAutomationValuePattern)
+            if not hasattr(vp, "CurrentValue") or getattr(vp, "CurrentIsReadOnly", 0):
+                return None
+            raw_val = vp.CurrentValue
+            if raw_val is not None and not isinstance(raw_val, str):
+                return None
+            val = self._normalize_uia_text(raw_val or "")
+            if len(val) > Composition.LIMIT:
+                return None
+            ctrl = getattr(self.element, "CurrentControlType", 0)
+            if ctrl == self.DOCUMENT and val.startswith(("http://", "https://", "file://", "chrome://", "edge://", "about:")):
+                return None
+            return val
+        except Exception:
+            return None
+
+    def _split_value_at_caret(self, val):
+        if not val:
+            return "", ""
+        n = len(val)
+        try:
+            pattern = self.element.GetCurrentPattern(10014).QueryInterface(self.interfaces.IUIAutomationTextPattern)
+            selection = pattern.GetSelection()
+            if selection.Length == 1:
+                caret = selection.GetElement(0)
+                if caret.CompareEndpoints(0, caret, 1) == 0:
+                    left = caret.Clone()
+                    left.MoveEndpointByUnit(0, 0, -n)
+                    got_left = self._normalize_uia_text(left.GetText(n))
+                    if got_left == val:
+                        return val, ""
+                    right = caret.Clone()
+                    right.MoveEndpointByUnit(1, 0, n)
+                    got_right = self._normalize_uia_text(right.GetText(n))
+                    for k in range(n, -1, -1):
+                        if got_left.endswith(val[:k]) and got_right.startswith(val[k:]):
+                            return val[:k], val[k:]
+                    for k in range(n, -1, -1):
+                        if val[:k] and got_left.endswith(val[:k]):
+                            return val[:k], val[k:]
+        except Exception:
+            pass
+        return val, ""
+
+    def _range_within_element(self, text_range):
+        if self.element is None:
+            return True
+        get_enclosing = getattr(text_range, "GetEnclosingElement", None)
+        if not callable(get_enclosing):
+            return True
+        try:
+            target_rt = tuple(self.element.GetRuntimeId() or ())
+            if not target_rt:
+                return True
+            enclosing = get_enclosing()
+            if enclosing is None:
+                return True
+            enc_rt = tuple(enclosing.GetRuntimeId() or ())
+            if not enc_rt:
+                return True
+            if enc_rt == target_rt:
+                return True
+            walker = getattr(getattr(self, "_automation", None), "ControlViewWalker", None)
+            if walker is None:
+                return True
+            current = enclosing
+            for _ in range(16):
+                current = walker.GetParentElement(current)
+                if current is None:
+                    break
+                if tuple(current.GetRuntimeId() or ()) == target_rt:
+                    return True
+            return False
+        except Exception:
+            return True
+
+    def _bounded_move_text(self, caret, endpoint, direction, max_chars):
+        if max_chars <= 0:
+            return ""
+        full = caret.Clone()
+        full.MoveEndpointByUnit(endpoint, 0, direction * max_chars)
+        if self._range_within_element(full):
+            return self._normalize_uia_text(full.GetText(max_chars))
+        one = caret.Clone()
+        one.MoveEndpointByUnit(endpoint, 0, direction)
+        if not self._range_within_element(one):
+            return ""
+        lo, hi = 1, max_chars
+        best = one
+        while lo < hi:
+            mid = (lo + hi + 1) // 2
+            probe_r = caret.Clone()
+            probe_r.MoveEndpointByUnit(endpoint, 0, direction * mid)
+            if self._range_within_element(probe_r):
+                lo = mid
+                best = probe_r
+            else:
+                hi = mid - 1
+        return self._normalize_uia_text(best.GetText(lo))
+
     def composition_matches(self, before, after):
         """Compara sólo caracteres que ya envió este teclado, en la línea del cursor."""
         if not self.can_read:
             return None
         before = self._normalize_uia_text(before.rsplit("\n", 1)[-1])[-180:]
         after = self._normalize_uia_text(after.split("\n", 1)[0])[:180]
+        if self._is_native_edit():
+            return self._native_edit_matches(before, after)
+        val = self._value_pattern_raw()
+        if val is not None:
+            cur_before, cur_after = self._split_value_at_caret(val)
+            line_before = cur_before.rsplit("\n", 1)[-1]
+            line_after = cur_after.split("\n", 1)[0]
+            if line_before.endswith(before) and line_after.startswith(after):
+                return True
+            if not after and val.rsplit("\n", 1)[-1].endswith(before):
+                return True
+            return False
         try:
             pattern = self.element.GetCurrentPattern(10014).QueryInterface(self.interfaces.IUIAutomationTextPattern)
             selection = pattern.GetSelection()
@@ -312,17 +445,9 @@ class WindowsKeyboardFocus(UIAFocusProbe):
             caret = selection.GetElement(0)
             if caret.CompareEndpoints(0, caret, 1) != 0:
                 return False
-            if before:
-                left = caret.Clone()
-                left.MoveEndpointByUnit(0, 0, -len(before))
-                got_left = self._normalize_uia_text(left.GetText(-1))
-            else:
-                got_left = ""
-            if after:
-                right = caret.Clone()
-                right.MoveEndpointByUnit(1, 0, len(after))
-                got_right = self._normalize_uia_text(right.GetText(-1))
-            else:
+            got_left = self._bounded_move_text(caret, 0, -1, len(before)) if before else ""
+            got_right = self._bounded_move_text(caret, 1, 1, len(after)) if after else ""
+            if got_right == "\n":
                 got_right = ""
             return got_left == before and got_right == after
         except Exception:
@@ -336,6 +461,21 @@ class WindowsKeyboardFocus(UIAFocusProbe):
         if not self.can_read:
             return None
         line_suffix = self._normalize_uia_text(suffix.rsplit("\n", 1)[-1]) if suffix else ""
+        if self._is_native_edit():
+            return self._native_edit_caret(line_suffix)
+        val = self._value_pattern_raw()
+        if val is not None:
+            cur_before, cur_after = self._split_value_at_caret(val)
+            line_before = cur_before.rsplit("\n", 1)[-1]
+            line_after = cur_after.split("\n", 1)[0]
+            if line_suffix:
+                if line_before.endswith(line_suffix):
+                    return line_suffix[-1:], (line_after[:1] if line_after else "")
+                full_line = val.rsplit("\n", 1)[-1]
+                if full_line.endswith(line_suffix):
+                    return line_suffix[-1:], ""
+                return None
+            return (line_before[-1:] if line_before else ""), (line_after[:1] if line_after else "")
         try:
             pattern = self.element.GetCurrentPattern(10014).QueryInterface(self.interfaces.IUIAutomationTextPattern)
             selection = pattern.GetSelection()
@@ -345,14 +485,10 @@ class WindowsKeyboardFocus(UIAFocusProbe):
             if caret.CompareEndpoints(0, caret, 1) != 0:
                 return None
             n_back = len(line_suffix) or 1
-            before = caret.Clone()
-            before.MoveEndpointByUnit(0, 0, -n_back)
-            left = self._normalize_uia_text(before.GetText(n_back))
+            left = self._bounded_move_text(caret, 0, -1, n_back)
             if line_suffix and left != line_suffix:
                 return None
-            after = caret.Clone()
-            after.MoveEndpointByUnit(1, 0, 1)
-            right = self._normalize_uia_text(after.GetText(1))
+            right = self._bounded_move_text(caret, 1, 1, 1)
             if right == "\n":
                 right = ""
             return (left[-1:] if left else ""), (right[:1] if right else "")
@@ -367,6 +503,14 @@ class WindowsKeyboardFocus(UIAFocusProbe):
         if not self.can_read or self.element is None:
             return None
         limit = Composition.LIMIT
+        if self._is_native_edit():
+            return self._native_edit_read(limit)
+        val = self._value_pattern_raw()
+        if val is not None:
+            before, after = self._split_value_at_caret(val)
+            before = before[-limit:]
+            after = after[:max(0, limit - len(before))]
+            return before, after
         try:
             pattern = self.element.GetCurrentPattern(10014).QueryInterface(self.interfaces.IUIAutomationTextPattern)
             selection = pattern.GetSelection()
@@ -375,13 +519,12 @@ class WindowsKeyboardFocus(UIAFocusProbe):
             caret = selection.GetElement(0)
             if caret.CompareEndpoints(0, caret, 1) != 0:
                 return None
-            left, right = caret.Clone(), caret.Clone()
-            left.MoveEndpointByUnit(0, 0, -limit)
-            right.MoveEndpointByUnit(1, 0, limit)
-            before = self._normalize_uia_text(left.GetText(limit))
-            after = self._normalize_uia_text(right.GetText(limit))
+            before = self._bounded_move_text(caret, 0, -1, limit)
+            after = self._bounded_move_text(caret, 1, 1, limit)
             if after.endswith("\n"):
                 try:
+                    right = caret.Clone()
+                    right.MoveEndpointByUnit(1, 0, limit)
                     doc_end = pattern.DocumentRange
                     if right.CompareEndpoints(1, doc_end, 1) == 0:
                         after = after[:-1]
@@ -791,12 +934,27 @@ class KeyboardSession:
             if allowed():
                 typer.write(text)
                 if self.target.predictive:
+                    if not self.composition.text:
+                        field_text = _read_probe_field(probe)
+                        if field_text is not None and (field_text[0] or field_text[1]):
+                            self.composition.load(field_text[0], field_text[1], status="confirmed")
                     self.composition.write(text)
                     self.save_current_field()
                 self.reset_words()
                 return True
             return False
+        if not self.composition.text and not self.tail:
+            field_text = _read_probe_field(probe)
+            if field_text is not None and (field_text[0] or field_text[1]):
+                self.composition.load(field_text[0], field_text[1], status="confirmed")
+                self.sync_words_from_composition()
         raw_edges = probe.caret(self.tail)
+        if raw_edges is None and self.tail:
+            field_text = _read_probe_field(probe)
+            if field_text is not None:
+                self.composition.load(field_text[0], field_text[1], status="confirmed")
+                self.sync_words_from_composition()
+                raw_edges = probe.caret(self.tail)
         edges = ((raw_edges[0] or ""), (raw_edges[1] or "")) if raw_edges is not None else None
         verified = edges is not None and not (not self.tail and
                    (edges[0].isalnum() or edges[1].isalnum() or "_" in edges))

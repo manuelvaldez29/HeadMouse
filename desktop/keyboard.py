@@ -394,9 +394,32 @@ class VirtualKeyboard(QWidget):
     def toggle_preview_mode(self):
         self.preview_override = "compact" if self.is_preview_expanded() else "expanded"
         self.update_keys()
+        self._update_composition_view(force_scroll=True)
         if self.isVisible():
             self.coordinator.keyboard_key = None
             self.coordinator.place_keyboard(self, self.state)
+
+    def _update_composition_view(self, force_scroll=False):
+        state = self.state
+        show_preview = (state.get("show_preview", True) and not state.get("private", False)
+                        and state.get("preview_mode", "compact") != "hidden")
+        text = state.get("preview", "") if show_preview else ""
+        cursor = min(len(text), state.get("cursor", len(text)))
+        before_text = text[:cursor]
+        after_text = text[cursor:]
+        if not self.is_preview_expanded() and "\n" in text:
+            before_text = before_text.replace("\n", " ↵ ")
+            after_text = after_text.replace("\n", " ↵ ")
+        shown = before_text + "▏" + after_text
+        changed = self.composition.toPlainText() != shown
+        if changed:
+            self.composition.setPlainText(shown)
+        if changed or force_scroll:
+            caret = self.composition.textCursor()
+            caret.setPosition(len((before_text + "▏").encode("utf-16-le")) // 2)
+            self.composition.setTextCursor(caret)
+            self.composition.ensureCursorVisible()
+        return changed
 
     def apply_effective_size(self, effective_size):
         if effective_size in SIZE_SPECS and effective_size != self.effective_size:
@@ -435,9 +458,13 @@ class VirtualKeyboard(QWidget):
             button.setFixedHeight(spec["aux_h"])
         expanded = self.is_preview_expanded()
         preview_h = spec["expanded_h"] if expanded else spec["preview_h"]
-        self.composition.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth if expanded else QPlainTextEdit.LineWrapMode.NoWrap)
-        self.composition.setFixedHeight(preview_h)
-        self.preview_row.setFixedHeight(preview_h)
+        wrap_mode = QPlainTextEdit.LineWrapMode.WidgetWidth if expanded else QPlainTextEdit.LineWrapMode.NoWrap
+        if self.composition.lineWrapMode() != wrap_mode:
+            self.composition.setLineWrapMode(wrap_mode)
+        if self.composition.height() != preview_h:
+            self.composition.setFixedHeight(preview_h)
+        if self.preview_row.height() != preview_h:
+            self.preview_row.setFixedHeight(preview_h)
         self.preview_toggle.setText("▴" if expanded else "▾")
         usable = self.state.get("usable", False)
         for button in (*self.letter_buttons, *self.action_buttons):
@@ -624,14 +651,6 @@ class VirtualKeyboard(QWidget):
             self.key_preview.setText("•")
         self.setWindowOpacity(state.get("opacity", 100) / 100)
         text = state.get("preview", "") if show_preview else ""
-        cursor = min(len(text), state.get("cursor", len(text)))
-        shown = text[:cursor] + "▏" + text[cursor:]
-        if self.composition.toPlainText() != shown:
-            self.composition.setPlainText(shown)
-            caret = self.composition.textCursor()
-            caret.setPosition(len(shown[:cursor + 1].encode("utf-16-le")) // 2)
-            self.composition.setTextCursor(caret)
-            self.composition.ensureCursorVisible()
         self.composition_label.setText("Composición de HeadMouse · " + (
             "campo o cursor cambiado; vista limpiada" if state.get("preview_status") == "changed" else
             "cursor comprobado" if state.get("preview_status") == "confirmed" else
@@ -649,10 +668,13 @@ class VirtualKeyboard(QWidget):
                 button.setEnabled(False)
         self.update_keys()
         was_visible = self.isVisible()
+        composition_changed = self._update_composition_view(force_scroll=not was_visible or target_changed)
         moves_before = self.coordinator.keyboard_moves
         self.coordinator.place_keyboard(self, state)
         moved = self.coordinator.keyboard_moves != moves_before
         self.show()
+        if show_preview and (composition_changed or not was_visible or moved):
+            self.composition.ensureCursorVisible()
         _win32_ensure_topmost(self, target_hwnd=target_hwnd,
                               force=(not was_visible) or target_changed or moved,
                               always_on_top=always_on_top)
