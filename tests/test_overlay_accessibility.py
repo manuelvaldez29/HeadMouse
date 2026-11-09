@@ -395,3 +395,80 @@ class KeyboardOverlayGUITests(unittest.TestCase):
         self.panel.present(dict(self.panel.state,visible=False,restore=True,bounds=None))
         self.assertTrue(self.panel.restore_handle.isVisible())
         self.assertTrue(QApplication.primaryScreen().availableGeometry().contains(self.panel.restore_handle.geometry()))
+
+    def test_adaptive_size_resolution_and_explorer_search_box_compact_fallback(self):
+        from desktop.overlay_layout import resolve_keyboard_size
+        # 1080p @ 150% DPI = 1280 x 672 logical work area
+        dpi150_area = QRect(0, 0, 1280, 672)
+        self.assertEqual(resolve_keyboard_size(dpi150_area, None, "auto"), "compact")
+        # 1080p @ 100% DPI = 1920 x 1040 logical work area
+        dpi100_area = QRect(0, 0, 1920, 1040)
+        self.assertEqual(resolve_keyboard_size(dpi100_area, None, "auto"), "normal")
+        # Tight vertical field forces compact even on taller screen
+        tight_field = QRect(400, 310, 300, 40)
+        self.assertEqual(resolve_keyboard_size(QRect(0, 0, 1440, 650), tight_field, "auto"), "compact")
+
+        # Real Windows Explorer Search Box geometry on 1280x672 logical work area
+        explorer_search_logical = QRect(979, 241, 247, 33)
+        self.wait(self.panel.isVisible)
+        self.panel.apply_effective_size("compact")
+        rect = keyboard_rect(dpi150_area, self.panel.sizeHint(), explorer_search_logical, "auto")
+        self.assertTrue(dpi150_area.contains(rect))
+        self.assertEqual(overlap(rect, explorer_search_logical), 0)
+        self.assertLessEqual(rect.height(), 275)
+        self.assertLessEqual(rect.width(), 800)
+
+    def test_preview_modes_compact_expanded_toggle_and_hidden(self):
+        self.wait(self.panel.isVisible)
+        # Default is compact 1-line preview
+        self.assertTrue(self.panel.preview_row.isVisible())
+        self.assertFalse(self.panel.is_preview_expanded())
+        compact_h = self.panel.height()
+
+        # Toggle to expanded preview via button
+        QTest.mouseClick(self.panel.preview_toggle, Qt.MouseButton.LeftButton)
+        self.assertTrue(self.panel.is_preview_expanded())
+        self.assertGreater(self.panel.height(), compact_h)
+
+        # Toggle back to compact preview
+        QTest.mouseClick(self.panel.preview_toggle, Qt.MouseButton.LeftButton)
+        self.assertFalse(self.panel.is_preview_expanded())
+        self.assertEqual(self.panel.height(), compact_h)
+
+        # Hidden preview mode hides preview_row and reduces total keyboard height further
+        self.settings["preview_mode"] = "hidden"
+        self.panel.present(dict(self.panel.state, preview_mode="hidden", show_preview=False))
+        self.assertFalse(self.panel.preview_row.isVisible())
+        self.assertLess(self.panel.height(), compact_h)
+
+    def test_win32_topmost_zorder_and_modal_dialog_protection(self):
+        from desktop.keyboard import _win32_ensure_topmost, _win32_is_obscured_in_zorder
+        self.wait(self.panel.isVisible)
+        # Modal dialog active -> must not force topmost over modal dialog
+        with patch("desktop.keyboard.QApplication.activeModalWidget", return_value=Mock(isVisible=lambda: True)):
+            self.assertFalse(_win32_ensure_topmost(self.panel, target_hwnd=100, force=True, always_on_top=True))
+
+        # Simulated Win32 Z-order where Explorer (hwnd=100) is above keyboard
+        fake_u32 = Mock()
+        fake_u32.GetWindowRect.return_value = False
+        fake_u32.IsWindowVisible.return_value = True
+        fake_u32.GetWindow.side_effect = [100, 0]
+        self.assertTrue(_win32_is_obscured_in_zorder(fake_u32, 999, 100))
+
+    def test_manual_position_drag_and_new_keyboard_config_options(self):
+        cfg = KeyboardConfig(size="auto", position="manual", preview_mode="expanded",
+                             keep_visible=True, always_on_top=True)
+        self.assertEqual(cfg.size, "auto")
+        self.assertEqual(cfg.position, "manual")
+        self.assertEqual(cfg.preview_mode, "expanded")
+        with self.assertRaises(ValueError):
+            KeyboardConfig(preview_mode="invalid")
+        with self.assertRaises(ValueError):
+            KeyboardConfig(keep_visible="yes")
+
+        self.wait(self.panel.isVisible)
+        self.panel.coordinator.set_manual_position(QPoint(120, 140))
+        self.assertEqual(self.panel.coordinator.manual_pos, (120, 140))
+        area = QRect(0, 0, 1280, 672)
+        rect = keyboard_rect(area, QSize(700, 240), None, "manual", manual_pos=self.panel.coordinator.manual_pos)
+        self.assertEqual(rect.topLeft(), QPoint(120, 140))

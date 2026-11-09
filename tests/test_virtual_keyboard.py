@@ -246,3 +246,113 @@ class VirtualKeyboardTests(unittest.TestCase):
         self.assertTrue(panel.state["usable"])
         self.assertEqual(panel.state["predictions"],[])
         self.assertFalse(panel.mic.isEnabled())
+
+    def test_explorer_xaml_bridge_and_autosuggestbox_focus_resolution(self):
+        from types import SimpleNamespace
+        from keyboard_input import WindowsKeyboardFocus
+
+        focus = WindowsKeyboardFocus()
+        rect = SimpleNamespace(left=1469, top=362, right=1839, bottom=411)
+        zero_rect = SimpleNamespace(left=0, top=0, right=0, bottom=0)
+
+        def make_find_all(items):
+            return SimpleNamespace(Length=len(items), GetElement=lambda idx: items[idx])
+
+        search_edit = SimpleNamespace(
+            CurrentControlType=50004,
+            CurrentClassName="TextBox",
+            CurrentAutomationId="TextBox",
+            CurrentName="Buscar en Inicio",
+            CurrentIsEnabled=True,
+            CurrentIsPassword=False,
+            CurrentIsKeyboardFocusable=True,
+            CurrentHasKeyboardFocus=True,
+            CurrentNativeWindowHandle=0,
+            CurrentBoundingRectangle=rect,
+            GetRuntimeId=lambda: (42, 99),
+            GetCurrentPropertyValue=lambda pid: True if pid == focus.VALUE_AVAILABLE else False,
+            GetCurrentPattern=lambda pid: Mock(CurrentIsReadOnly=0),
+            FindAll=lambda scope, cond: make_find_all([]),
+        )
+        autosuggest = SimpleNamespace(
+            CurrentControlType=50026,
+            CurrentClassName="AutoSuggestBox",
+            CurrentAutomationId="FileExplorerSearchBox",
+            CurrentName="",
+            CurrentIsEnabled=True,
+            CurrentIsPassword=False,
+            CurrentIsKeyboardFocusable=False,
+            CurrentHasKeyboardFocus=False,
+            CurrentNativeWindowHandle=0,
+            CurrentBoundingRectangle=rect,
+            GetRuntimeId=lambda: (42, 50),
+            GetCurrentPropertyValue=lambda pid: False,
+            GetCurrentPattern=lambda pid: (_ for _ in ()).throw(OSError()),
+            FindAll=lambda scope, cond: make_find_all([search_edit]),
+        )
+        xaml_bridge = SimpleNamespace(
+            CurrentControlType=50033,
+            CurrentClassName="Microsoft.UI.Content.DesktopChildSiteBridge",
+            CurrentAutomationId="",
+            CurrentName="DesktopChildSiteBridge",
+            CurrentIsEnabled=True,
+            CurrentIsPassword=False,
+            CurrentIsKeyboardFocusable=True,
+            CurrentHasKeyboardFocus=True,
+            CurrentNativeWindowHandle=777,
+            CurrentBoundingRectangle=rect,
+            GetRuntimeId=lambda: (42, 10),
+            GetCurrentPropertyValue=lambda pid: False,
+            GetCurrentPattern=lambda pid: (_ for _ in ()).throw(OSError()),
+            FindAll=lambda scope, cond: make_find_all([search_edit]),
+        )
+        file_item = SimpleNamespace(
+            CurrentControlType=50004,
+            CurrentClassName="UIProperty",
+            CurrentAutomationId="System.ItemNameDisplay",
+            CurrentName="Nombre",
+            CurrentIsEnabled=True,
+            CurrentIsPassword=False,
+            CurrentIsKeyboardFocusable=False,
+            CurrentHasKeyboardFocus=False,
+            CurrentNativeWindowHandle=777,
+            CurrentBoundingRectangle=rect,
+            GetRuntimeId=lambda: (42, 200),
+            GetCurrentPropertyValue=lambda pid: True,
+            GetCurrentPattern=lambda pid: Mock(CurrentIsReadOnly=0),
+            FindAll=lambda scope, cond: make_find_all([]),
+        )
+
+        parents = {
+            id(search_edit): autosuggest,
+            id(autosuggest): xaml_bridge,
+            id(xaml_bridge): None,
+        }
+
+        class FakeWalker:
+            def GetParentElement(self, el):
+                return parents.get(id(el))
+
+        walker = FakeWalker()
+        focus._automation = SimpleNamespace(
+            ControlViewWalker=walker,
+            CreatePropertyCondition=lambda pid, val: (pid, val),
+        )
+        focus._pointer_in_foreground = lambda: False
+
+        self.assertTrue(focus._is_non_input_item(file_item))
+        self.assertFalse(focus._is_non_input_item(search_edit))
+        self.assertTrue(focus._classify(search_edit).editable)
+
+        resolved, info = focus._resolve_focus_element(777, autosuggest)
+        self.assertIs(resolved, search_edit)
+        self.assertTrue(info.editable)
+
+        focus._bridge_focus = None
+        resolved_bridge, info_bridge = focus._resolve_focus_element(777, xaml_bridge)
+        self.assertIs(resolved_bridge, search_edit)
+        self.assertTrue(info_bridge.editable)
+
+        search_edit_zero = SimpleNamespace(**{**search_edit.__dict__, "CurrentBoundingRectangle": zero_rect})
+        parents[id(search_edit_zero)] = autosuggest
+        self.assertEqual(focus._bounds(search_edit_zero, walker), (1469, 362, 370, 49))

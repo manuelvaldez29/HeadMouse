@@ -272,7 +272,7 @@ class MappingConfig:
 @dataclass
 class KeyboardConfig:
     auto_open: bool = True
-    size: str = "normal"
+    size: str = "auto"
     position: str = "auto"
     microphone: bool = True
     suggestions: bool = True
@@ -282,12 +282,17 @@ class KeyboardConfig:
     preview: bool = True
     feedback: bool = True
     enlarged_key: bool = False
+    preview_mode: str = "compact"
+    keep_visible: bool = True
+    always_on_top: bool = True
 
     def __post_init__(self):
         if any(type(getattr(self, name)) is not bool for name in
-               ("auto_open", "microphone", "suggestions", "learning", "corrections", "preview", "feedback", "enlarged_key")):
+               ("auto_open", "microphone", "suggestions", "learning", "corrections", "preview", "feedback", "enlarged_key", "keep_visible", "always_on_top")):
             raise ValueError("Opciones de teclado inválidas")
-        if self.size not in ("compact", "normal", "large") or self.position not in ("auto", "bottom", "top"):
+        if self.size not in ("auto", "compact", "normal", "large") or self.position not in ("auto", "bottom", "top", "manual"):
+            raise ValueError("Tamaño o posición del teclado inválidos")
+        if self.preview_mode not in ("compact", "expanded", "hidden"):
             raise ValueError("Tamaño o posición del teclado inválidos")
         if type(self.opacity) is not int or self.opacity not in (70, 80, 90, 100):
             raise ValueError("Opacidad de teclado inválida")

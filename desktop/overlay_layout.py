@@ -2,7 +2,7 @@
 import math
 import time
 
-from PySide6.QtCore import QObject, QRect, QSize, QTimer, QPropertyAnimation, QEasingCurve
+from PySide6.QtCore import QObject, QPoint, QRect, QSize, QTimer, QPropertyAnimation, QEasingCurve
 from PySide6.QtGui import QCursor
 from PySide6.QtWidgets import QApplication
 from shiboken6 import isValid
@@ -41,17 +41,51 @@ def logical_field(bounds, screens):
                          max(1, round(field.width()/dpr)), max(1, round(field.height()/dpr)))
 
 
-def keyboard_rect(area, size, field=None, mode="auto"):
-    """Prueba espacio real arriba/abajo, y luego minimiza la superposición."""
+def resolve_keyboard_size(area, field=None, requested="auto"):
+    """Determina la densidad efectiva (compact, normal, large) según resolución y espacio libre."""
+    free_vertical = area.height()
+    if field is not None:
+        above = max(0, field.top() - area.top())
+        below = max(0, area.bottom() - field.bottom())
+        free_vertical = max(above, below)
+    if requested in ("compact", "normal", "large"):
+        if field is not None and requested != "compact":
+            if free_vertical < 275:
+                return "compact"
+            if requested == "large" and free_vertical < 330:
+                return "normal"
+        return requested
+    # Modo adaptativo ("auto")
+    if area.height() <= 760 or area.width() <= 1366 or (field is not None and free_vertical < 305):
+        return "compact"
+    return "normal"
+
+
+def keyboard_rect(area, size, field=None, mode="auto", manual_pos=None):
+    """Prueba espacio real arriba/abajo/lateral, y luego minimiza la superposición."""
     safe = area.adjusted(8, 8, -8, -8)
     width, height = min(size.width(), safe.width()), min(size.height(), safe.height())
-    left = safe.center().x()-width//2
+    center_left = safe.center().x() - width // 2
+    if field is not None:
+        left = max(safe.left(), min(field.center().x() - width // 2, safe.right() - width + 1))
+    else:
+        left = center_left
     top = QRect(left, safe.top(), width, height)
     bottom = QRect(left, safe.bottom()-height+1, width, height)
     if mode == "top":
         return top
-    if mode == "bottom" or field is None:
-        return bottom
+    if mode == "bottom" or (field is None and mode != "manual"):
+        return QRect(center_left, safe.bottom()-height+1, width, height) if field is None else bottom
+    if mode == "manual" and manual_pos is not None:
+        pt = manual_pos if isinstance(manual_pos, QPoint) else QPoint(int(manual_pos[0]), int(manual_pos[1]))
+        manual_rect = bounded(QRect(pt.x(), pt.y(), width, height), safe)
+        if field is None:
+            return manual_rect
+        protected = field.adjusted(-8, -12, 8, 12).intersected(safe)
+        if overlap(manual_rect, protected) == 0:
+            return manual_rect
+    if field is None:
+        return QRect(center_left, safe.bottom()-height+1, width, height)
     protected = field.adjusted(-8, -12, 8, 12).intersected(safe)
     above, below = protected.top()-safe.top(), safe.bottom()-protected.bottom()
     candidates = [bottom, top]
@@ -60,6 +94,16 @@ def keyboard_rect(area, size, field=None, mode="auto"):
         candidates.append(QRect(left, protected.top()-height, width, height))
     if below >= height:
         candidates.append(QRect(left, protected.bottom()+1, width, height))
+    if above < height and below < height:
+        left_space = protected.left() - safe.left()
+        right_space = safe.right() - protected.right()
+        v_mid = max(safe.top(), min(protected.center().y() - height // 2, safe.bottom() - height + 1))
+        if left_space >= width:
+            candidates.append(QRect(protected.left() - width, v_mid, width, height))
+        if right_space >= width:
+            candidates.append(QRect(protected.right() + 1, v_mid, width, height))
+        candidates.append(QRect(safe.left(), safe.bottom()-height+1, width, height))
+        candidates.append(QRect(safe.right()-width+1, safe.bottom()-height+1, width, height))
     return min(candidates, key=lambda r: (overlap(r, protected),
                -(below if r.center().y() > protected.center().y() else above),
                min(abs(r.top()-safe.top()), abs(safe.bottom()-r.bottom()))))
@@ -111,6 +155,12 @@ class CameraPlacement:
 
 class OverlayCoordinator(QObject):
     """Un único árbitro. El teclado reserva su rectángulo y la cámara lo respeta."""
+    WIDTH_SPECS = {
+        "compact": (0.60, 480, 800),
+        "normal":  (0.68, 520, 920),
+        "large":   (0.82, 580, 1140),
+    }
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.keyboard = self.camera = None
@@ -120,6 +170,8 @@ class OverlayCoordinator(QObject):
         self.camera_options = {}
         self.keyboard_key = None
         self.last_bounds = None
+        self.manual_pos = None
+        self.effective_size = "normal"
         self.camera_placement = CameraPlacement()
         self.camera_moves = 0
         self.keyboard_moves = 0
@@ -128,6 +180,10 @@ class OverlayCoordinator(QObject):
         self.timer = QTimer(self)
         self.timer.setInterval(100)
         self.timer.timeout.connect(self.update_camera)
+
+    def set_manual_position(self, pos):
+        self.manual_pos = (int(pos.x()), int(pos.y())) if hasattr(pos, "x") else (int(pos[0]), int(pos[1]))
+        self.keyboard_key = None
 
     def place_keyboard(self, widget, state):
         self.keyboard = widget
@@ -143,16 +199,35 @@ class OverlayCoordinator(QObject):
         if stable:
             bounds = self.last_bounds
             field = QRect(*bounds)
-        key = (state.get("target"), bounds, screen.geometry().getRect(), screen.availableGeometry().getRect(),
-               screen.devicePixelRatio(), state.get("size"), state.get("position"), state.get("show_preview"))
+        area = screen.availableGeometry()
+        effective = resolve_keyboard_size(area, field, state.get("size", "auto"))
+        preview_expanded = getattr(widget, "is_preview_expanded", lambda: False)()
+        key = (state.get("target"), bounds, screen.geometry().getRect(), area.getRect(),
+               screen.devicePixelRatio(), state.get("size"), effective, state.get("position"),
+               state.get("show_preview"), state.get("preview_mode"), preview_expanded,
+               state.get("suggestions", True), self.manual_pos)
         if key != self.keyboard_key or not widget.isVisible():
             self.keyboard_key, self.last_bounds = key, bounds
             self.field, self.keyboard_screen = field, screen
-            area = screen.availableGeometry()
-            ratio = {"compact":.70,"normal":.85,"large":.96}[state["size"]]
-            width = min(area.width()-16, max(widget.minimumSizeHint().width(), round(area.width()*ratio)))
+            self.effective_size = effective
+            if hasattr(widget, "apply_effective_size"):
+                widget.apply_effective_size(effective)
+            ratio, min_w, max_w = self.WIDTH_SPECS.get(effective, self.WIDTH_SPECS["normal"])
+            desired_w = min(max_w, max(min_w, round(area.width() * ratio)))
+            width = min(area.width()-16, max(widget.minimumSizeHint().width(), desired_w))
             height = min(area.height()-16, widget.sizeHint().height())
-            rect = keyboard_rect(area, QSize(width,height), field, state["position"])
+            pos_mode = state.get("position", "auto")
+            rect = keyboard_rect(area, QSize(width,height), field, pos_mode, self.manual_pos)
+            # Si aún hay superposición en modo normal/large, probar densidad compacta automáticamente
+            if field and overlap(field, rect) and effective != "compact" and hasattr(widget, "apply_effective_size"):
+                effective = "compact"
+                self.effective_size = effective
+                widget.apply_effective_size(effective)
+                ratio, min_w, max_w = self.WIDTH_SPECS["compact"]
+                desired_w = min(max_w, max(min_w, round(area.width() * ratio)))
+                width = min(area.width()-16, max(widget.minimumSizeHint().width(), desired_w))
+                height = min(area.height()-16, widget.sizeHint().height())
+                rect = keyboard_rect(area, QSize(width,height), field, pos_mode, self.manual_pos)
             if widget.geometry() != rect:
                 widget.setGeometry(rect)
                 self.keyboard_moves += 1

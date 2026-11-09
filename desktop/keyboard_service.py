@@ -219,7 +219,9 @@ class KeyboardService(QObject):
                                 session.composition.status = "changed"
                             elif verified_preview is None:
                                 session.composition.status = "sent"
-                    if not settings.get("preview",True):
+                    preview_mode = settings.get("preview_mode", "compact")
+                    show_preview = bool(settings.get("preview", True) and preview_mode != "hidden")
+                    if not show_preview:
                         session.composition.clear()
                     wanted = bool(usable and not busy and dictionary and settings["suggestions"])
                     current_key = (generation,wanted,session.draft,tuple(session.context),settings.get("corrections"))
@@ -236,13 +238,17 @@ class KeyboardService(QObject):
                                   mic=bool(usable and target.predictive and voice and settings.get("microphone")),
                                   show_mic=settings.get("microphone", True), busy=busy,
                                   listening=bool(voice and voice.state=="listening"),
-                                  size=settings.get("size","normal"), position=settings.get("position","bottom"))
+                                  size=settings.get("size","auto"), position=settings.get("position","auto"),
+                                  preview_mode=preview_mode, keep_visible=settings.get("keep_visible",True),
+                                  always_on_top=settings.get("always_on_top",True),
+                                  suggestions=settings.get("suggestions",True))
                     result.update(bounds=target.bounds if target else None,
                                   target=(target.window,target.runtime) if target else None,
+                                  window=target.window if target else None,
                                   restore=bool(active and visibility.suppressed),
-                                  preview=session.composition.text if settings.get("preview",True) else "",
+                                  preview=session.composition.text if show_preview else "",
                                   cursor=session.composition.cursor, preview_status=session.composition.status,
-                                  show_preview=settings.get("preview",True),
+                                  show_preview=show_preview,
                                   feedback=settings.get("feedback",True), enlarged_key=settings.get("enlarged_key",False),
                                   opacity=settings.get("opacity",100))
                     if result != last_view and not self.closed.is_set():

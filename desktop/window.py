@@ -1206,6 +1206,8 @@ class MainWindow(QMainWindow):
         self.keyboard_checks={}
         for key,title in (
             ("auto_open","Abrir al enfocar un campo editable"),
+            ("keep_visible","Mantener visible mientras se escribe"),
+            ("always_on_top","Mostrar siempre sobre la ventana activa"),
             ("microphone","Mostrar el botón de dictado"),
             ("preview","Mostrar vista previa del texto compuesto"),
             ("feedback","Mostrar confirmación visual de pulsaciones"),
@@ -1214,14 +1216,19 @@ class MainWindow(QMainWindow):
             self.keyboard_checks[key]=QCheckBox(title)
             form.addRow(self.keyboard_checks[key])
         self.keyboard_size=QComboBox()
-        for title,key in (("Compacto","compact"),("Normal","normal"),("Grande","large")):
+        for title,key in (("Automático (adaptable)","auto"),("Compacto","compact"),("Normal","normal"),("Grande","large")):
             self.keyboard_size.addItem(title,key)
         form.addRow("Tamaño",self.keyboard_size)
         self.keyboard_position=QComboBox()
         self.keyboard_position.addItem("Automática (recomendado)","auto")
         self.keyboard_position.addItem("Siempre abajo","bottom")
         self.keyboard_position.addItem("Siempre arriba","top")
+        self.keyboard_position.addItem("Manual (arrastrar teclado)","manual")
         form.addRow("Posición del teclado virtual",self.keyboard_position)
+        self.keyboard_preview_mode=QComboBox()
+        for title,key in (("Compacta (1 línea)","compact"),("Expandida","expanded"),("Oculta","hidden")):
+            self.keyboard_preview_mode.addItem(title,key)
+        form.addRow("Modo de vista previa",self.keyboard_preview_mode)
         self.keyboard_opacity=QComboBox()
         for value in (100,90,80,70):self.keyboard_opacity.addItem(f"{value} %",value)
         form.addRow("Opacidad del teclado",self.keyboard_opacity)
@@ -1490,7 +1497,9 @@ class MainWindow(QMainWindow):
         settings["voice"]["detector"]=self.voice_detector.currentData()
         settings["voice"]["send_word"]=self.voice_send.currentText().strip().lower()
         settings["keyboard"]={key:check.isChecked() for key,check in self.keyboard_checks.items()}
-        settings["keyboard"].update(size=self.keyboard_size.currentData(),position=self.keyboard_position.currentData())
+        preview_mode=self.keyboard_preview_mode.currentData()
+        settings["keyboard"].update(size=self.keyboard_size.currentData(),position=self.keyboard_position.currentData(),
+                                    preview_mode=preview_mode,preview=self.keyboard_checks["preview"].isChecked() and preview_mode!="hidden")
         settings["keyboard"]["opacity"]=self.keyboard_opacity.currentData()
         self.bridge.request("save_public_settings",settings=settings,method=public_method)
 
@@ -1839,10 +1848,12 @@ class MainWindow(QMainWindow):
             keyboard=s["settings"].get("keyboard")
             if keyboard:
                 for key,check in self.keyboard_checks.items():
-                    check.setChecked(keyboard[key])
-                self.keyboard_size.setCurrentIndex(self.keyboard_size.findData(keyboard["size"]))
-                self.keyboard_position.setCurrentIndex(self.keyboard_position.findData(keyboard["position"]))
-                self.keyboard_opacity.setCurrentIndex(self.keyboard_opacity.findData(keyboard["opacity"]))
+                    check.setChecked(keyboard.get(key,True))
+                self.keyboard_size.setCurrentIndex(max(0,self.keyboard_size.findData(keyboard.get("size","auto"))))
+                self.keyboard_position.setCurrentIndex(max(0,self.keyboard_position.findData(keyboard.get("position","auto"))))
+                mode_val="hidden" if not keyboard.get("preview",True) else keyboard.get("preview_mode","compact")
+                self.keyboard_preview_mode.setCurrentIndex(max(0,self.keyboard_preview_mode.findData(mode_val)))
+                self.keyboard_opacity.setCurrentIndex(max(0,self.keyboard_opacity.findData(keyboard.get("opacity",100))))
             voice=s["settings"]["voice"]
             notes=["Con el dictado activo: hacé click en un campo de texto y decí solo el comando. "
                    "Dentro de una frase más larga se escribe como texto normal."]

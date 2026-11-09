@@ -43,6 +43,102 @@ class WindowsKeyboardFocus(UIAFocusProbe):
         self.user32.SendMessageTimeoutW.restype = wintypes.LPARAM
         self.element = None
         self.can_read = False
+        self._bridge_focus = None
+
+    @staticmethod
+    def _is_non_input_item(element):
+        try:
+            cls_name = element.CurrentClassName or ""
+            aid = element.CurrentAutomationId or ""
+            return cls_name == "UIProperty" or aid.startswith("System.")
+        except Exception:
+            return False
+
+    def _focused_child_edit(self, container):
+        try:
+            cond = self._automation.CreatePropertyCondition(30003, self.EDIT)
+            children = container.FindAll(4, cond)
+            single = None
+            under_pt = None
+            pt = None
+            try:
+                pt = self._cursor_point()
+            except Exception:
+                pt = None
+            for i in range(min(children.Length, 12)):
+                child = children.GetElement(i)
+                if self._is_non_input_item(child):
+                    continue
+                if child.CurrentHasKeyboardFocus:
+                    return child
+                if single is None:
+                    single = child
+                if pt is not None and under_pt is None:
+                    b = self._bounds(child)
+                    if b and b[0] <= pt.x <= b[0] + b[2] and b[1] <= pt.y <= b[1] + b[3]:
+                        under_pt = child
+            if under_pt is not None:
+                return under_pt
+            if single is not None and (container.CurrentClassName or "") == "AutoSuggestBox":
+                return single
+        except Exception:
+            pass
+        return None
+
+    def _resolve_focus_element(self, window, element):
+        is_bridge = False
+        bridge_has_focus = False
+        if element is not None:
+            try:
+                cls_name = element.CurrentClassName or ""
+                ctrl = element.CurrentControlType
+                is_bridge = (cls_name in ("Microsoft.UI.Content.DesktopChildSiteBridge", "AutoSuggestBox",
+                                          "InputSiteWindowClass", "Windows.UI.Core.CoreWindow") or
+                             ctrl in (50026, 50033))
+                bridge_has_focus = bool(is_bridge and element.CurrentHasKeyboardFocus)
+            except Exception:
+                pass
+        if self._pointer_in_foreground():
+            try:
+                for candidate in self._pointer_chain(5):
+                    if self._is_non_input_item(candidate):
+                        continue
+                    cls_name = candidate.CurrentClassName or ""
+                    if cls_name == "AutoSuggestBox" or candidate.CurrentControlType == 50026:
+                        child = self._focused_child_edit(candidate)
+                        if child is not None:
+                            info = self._classify(child)
+                            if info.editable or info.password:
+                                self._bridge_focus = (window, child)
+                                return child, info
+                    if candidate.CurrentHasKeyboardFocus or bridge_has_focus:
+                        info = self._classify(candidate)
+                        if info.editable or info.password:
+                            self._bridge_focus = (window, candidate)
+                            return candidate, info
+            except Exception:
+                pass
+        cached = getattr(self, "_bridge_focus", None)
+        if cached and cached[0] == window and cached[1] is not None:
+            try:
+                if (cached[1].CurrentHasKeyboardFocus or bridge_has_focus) and not self._is_non_input_item(cached[1]):
+                    info = self._classify(cached[1])
+                    if info.editable or info.password:
+                        return cached[1], info
+            except Exception:
+                pass
+        if is_bridge and element is not None:
+            try:
+                child = self._focused_child_edit(element)
+                if child is not None:
+                    info = self._classify(child)
+                    if info.editable or info.password:
+                        self._bridge_focus = (window, child)
+                        return child, info
+            except Exception:
+                pass
+        self._bridge_focus = None
+        return None, None
 
     def focused(self):
         self.element = None
@@ -65,9 +161,21 @@ class WindowsKeyboardFocus(UIAFocusProbe):
                 except Exception:
                     pass
             element = self._automation.GetFocusedElement()
-            if not element or not element.CurrentHasKeyboardFocus:
-                return Target(window, None, False, True, unknown=True)
-            info = self._classify(element)
+            info = None
+            if element and element.CurrentHasKeyboardFocus and not self._is_non_input_item(element):
+                info = self._classify(element)
+                if info.editable or info.password:
+                    self._bridge_focus = (window, element)
+            if info is None or (not info.editable and not info.password):
+                resolved_el, resolved_info = self._resolve_focus_element(window, element)
+                if resolved_el is not None and resolved_info is not None:
+                    element, info = resolved_el, resolved_info
+                elif not element or not element.CurrentHasKeyboardFocus:
+                    return Target(window, None, False, True, unknown=True)
+                elif info is None:
+                    info = self._classify(element)
+                    if self._is_non_input_item(element):
+                        return Target(window, info.runtime_id, False, False, unknown=False, bounds=self._bounds(element, getattr(self._automation, "ControlViewWalker", None)))
             # Un provider que omite IsPassword nunca habilita predicción o aprendizaje.
             password = element.GetCurrentPropertyValueEx(30019, True)
             private = password is not False or info.password
@@ -80,20 +188,29 @@ class WindowsKeyboardFocus(UIAFocusProbe):
             self.element = element
             target = Target(window, info.runtime_id, info.editable or info.password, private,
                             unknown=info.control_type in ("50025", "50032", "50033"),
-                            bounds=self._bounds(element))
+                            bounds=self._bounds(element, getattr(self._automation, "ControlViewWalker", None)))
             self.can_read = target.predictive
             return target
         except Exception:
             return Target(window, None, False, True, unknown=True)
 
     @staticmethod
-    def _bounds(element):
-        try:
-            rect = element.CurrentBoundingRectangle
-            result = (rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top)
-            return result if result[2] > 0 and result[3] > 0 else None
-        except Exception:
-            return None
+    def _bounds(element, walker=None):
+        current = element
+        for _ in range(3):
+            if current is None:
+                break
+            try:
+                rect = current.CurrentBoundingRectangle
+                result = (rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top)
+                if result[2] > 0 and result[3] > 0:
+                    return result
+                if walker is None:
+                    break
+                current = walker.GetParentElement(current)
+            except Exception:
+                break
+        return None
 
     def composition_matches(self, before, after):
         """Compara sólo caracteres que ya envió este teclado, en la línea del cursor."""
