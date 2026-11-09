@@ -333,6 +333,33 @@ class ControllerStartupTests(unittest.TestCase):
             self.c.start_camera()
         self.assertIsNone(self.c.wizard)
 
+    def test_slow_preparation_does_not_consume_capture_timeout(self):
+        def prepare(**kwargs):
+            self.now+=2*self.c.config.vision.startup_timeout_s
+            return self.vision
+        self.factory.side_effect=prepare
+        self.c.start_camera(wait=False)
+        self.assertFalse(self.c.poll_camera_startup())
+        self.assertFalse(self.vision.cancelled)
+        self.vision.ready.set()
+        self.assertTrue(self.c.poll_camera_startup())
+        self.assertEqual(self.c.state,"PREVIEW")
+        self.factory.assert_called_once()
+        self.backend.assert_not_called()
+
+    def test_capture_still_times_out_after_slow_preparation(self):
+        def prepare(**kwargs):
+            self.now+=2*self.c.config.vision.startup_timeout_s
+            return self.vision
+        self.factory.side_effect=prepare
+        self.c.start_camera(wait=False)
+        self.now+=self.c.config.vision.startup_timeout_s+.01
+        with self.assertRaisesRegex(TimeoutError,"detector_init"):
+            self.c.poll_camera_startup()
+        self.assertTrue(self.vision.cancelled)
+        self.factory.assert_called_once()
+        self.backend.assert_not_called()
+
     def test_failed_close_discards_pending_command_before_any_retry(self):
         worker=self.worker()
         worker.command("start_calibration",{})

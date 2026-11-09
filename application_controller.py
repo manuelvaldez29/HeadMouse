@@ -339,6 +339,12 @@ class ApplicationController:
             self.vision = factory(config=self.config.vision, metrics=self.metrics)
             if self._camera_cancelled.is_set():
                 self.vision.request_stop()
+            # Las importaciones/cargas en frío no consumen el tiempo de captura.
+            # Alinear el plazo del controlador con el inicio real del motor.
+            preparation_s=self.clock()-self._camera_started_at
+            self._camera_started_at = self.clock()
+            logging.getLogger(__name__).info("Preparación de cámara completada en %.2fs; comienza el plazo de captura de %.1fs",
+                preparation_s,self.config.vision.startup_timeout_s)
             self.vision.start()
             if not wait:
                 return
