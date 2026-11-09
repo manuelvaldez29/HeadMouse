@@ -91,7 +91,9 @@ class KeyboardService(QObject):
         dictionary_unavailable = False
         current_control = None
         prediction_retry = 0.
+        retry_count = 0
         preview_edited_at = 0.
+        last_synced_key = None
         try:
             while not self.closed.is_set():
                 try:
@@ -110,7 +112,8 @@ class KeyboardService(QObject):
                         dictionary = None
                         dictionary_unavailable = False
                         profile = current
-                        session.reset()
+                        session.reset_all()
+                        last_synced_key = None
                         visibility = KeyboardVisibility()
                         generation += 1
                     if action in ("list", "delete", "clear"):
@@ -119,10 +122,12 @@ class KeyboardService(QObject):
                                 dictionary = Dictionary(self.controller.data_dir, profile)
                             if action == "delete":
                                 dictionary.delete(data)
-                                session.reset()
+                                session.reset_all()
+                                last_synced_key = None
                             elif action == "clear":
                                 dictionary.clear()
-                                session.reset()
+                                session.reset_all()
+                                last_synced_key = None
                             prediction_key = None
                             self.vocabulary.emit(profile, dictionary.words())
                         continue
@@ -131,8 +136,12 @@ class KeyboardService(QObject):
                     control = getattr(self.controller,"control",None) if active else None
                     if control is not current_control:
                         current_control = control
-                        session.reset()
+                        session.reset_all()
+                        last_synced_key = None
                         generation += 1
+                    if not active:
+                        session.reset_all()
+                        last_synced_key = None
                     if action == "toggle" and not active:
                         self.error.emit("Activá el control de HeadMouse antes de usar el teclado.")
                     target = None
@@ -148,8 +157,13 @@ class KeyboardService(QObject):
                         click = (0, None, 0.)
                     visible = visibility.update(active, settings.get("auto_open",False), target, action, click, time.monotonic())
                     usable = bool(visible and target and (target.editable or (visibility.manual and target.unknown)))
-                    if not visible or not target or not target.predictive:
+                    if not visible:
+                        session.save_current_field()
                         session.reset()
+                        last_synced_key = None
+                    elif not target or not target.predictive:
+                        session.reset()
+                        last_synced_key = None
                     if visible:
                         self.controller.keyboard_visible.set()
                     else:
@@ -157,7 +171,8 @@ class KeyboardService(QObject):
                     voice = self.controller.dictation
                     busy = bool(voice and voice.busy)
                     if busy:
-                        session.reset()  # no inferir contexto de texto dictado
+                        session.reset(clear_saved=True)  # no inferir contexto de texto dictado
+                        last_synced_key = None
                     if usable and target.predictive and (settings["suggestions"] or settings["learning"]):
                         if dictionary is None and not dictionary_unavailable:
                             try:
@@ -177,18 +192,25 @@ class KeyboardService(QObject):
                     def allowed():
                         return control_allows_input() and probe.focused() == target and control_allows_input()
 
+                    synced_key = (target.window, target.runtime) if (usable and target and target.predictive and not busy) else None
+                    if synced_key is not None and synced_key != last_synced_key:
+                        if session.restore_or_sync(probe, recover_external=True):
+                            preview_edited_at = time.monotonic()
+                            prediction_key = None
+                        last_synced_key = synced_key
+
                     input_action = action in ("text", "key", "suggest", "mic")
                     executed = False
                     if (input_action and session.composition.text and usable and allowed() and
                             time.monotonic()-preview_edited_at > .3 and session.composition.verify(probe) is False):
-                        session.reset()
+                        session.reset(clear_saved=True)
                     if usable and token == generation and input_action:
                         if action == "mic":
                             if voice and settings["microphone"] and target.predictive and allowed():
                                 if busy:
                                     voice.cancel()
                                 else:
-                                    session.reset()
+                                    session.reset(clear_saved=True)
                                     voice.start_now(expected_runtime=target.runtime)
                                 executed = True
                         elif not busy:
@@ -211,28 +233,38 @@ class KeyboardService(QObject):
                                                 executed=bool(executed), token=token))
                     if session.composition.text:
                         if not usable or not target.predictive or not allowed():
+                            session.save_current_field()
                             session.reset()
+                            last_synced_key = None
                         else:
                             verified_preview = session.composition.verify(probe)
                             if verified_preview is False and time.monotonic()-preview_edited_at > .3:
-                                session.reset()
+                                session.reset(clear_saved=True)
                                 session.composition.status = "changed"
-                            elif verified_preview is None:
+                            elif verified_preview is None and session.composition.status not in ("recovered", "confirmed"):
                                 session.composition.status = "sent"
+                            else:
+                                session.save_current_field()
                     preview_mode = settings.get("preview_mode", "compact")
                     show_preview = bool(settings.get("preview", True) and preview_mode != "hidden")
-                    if not show_preview:
+                    if not settings.get("preview", True):
                         session.composition.clear()
                     wanted = bool(usable and not busy and dictionary and settings["suggestions"])
                     current_key = (generation,wanted,session.draft,tuple(session.context),settings.get("corrections"))
                     changed = current_key != prediction_key
+                    if changed:
+                        retry_count = 0
                     if changed or (prediction_retry and time.monotonic()>=prediction_retry):
                         verified = wanted and probe.caret(session.tail) is not None
                         predictions = (session.suggestions(dictionary,settings)
                                        if verified else [])
                         prediction_key = current_key
                         # SendInput encola la tecla; el otro programa puede actualizar el caret después.
-                        prediction_retry = time.monotonic()+.08 if changed and wanted and not verified else 0.
+                        if wanted and not verified and retry_count < 3:
+                            retry_count += 1
+                            prediction_retry = time.monotonic() + .07
+                        else:
+                            prediction_retry = 0.
                     result = dict(visible=visible, usable=usable and not busy, token=generation,
                                   predictions=predictions, private=bool(target and target.private),
                                   mic=bool(usable and target.predictive and voice and settings.get("microphone")),
@@ -243,6 +275,7 @@ class KeyboardService(QObject):
                                   always_on_top=settings.get("always_on_top",True),
                                   suggestions=settings.get("suggestions",True))
                     result.update(bounds=target.bounds if target else None,
+                                  panel_bounds=target.panel_bounds if target else None,
                                   target=(target.window,target.runtime) if target else None,
                                   window=target.window if target else None,
                                   restore=bool(active and visibility.suppressed),

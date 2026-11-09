@@ -41,27 +41,33 @@ def logical_field(bounds, screens):
                          max(1, round(field.width()/dpr)), max(1, round(field.height()/dpr)))
 
 
-def resolve_keyboard_size(area, field=None, requested="auto"):
+def resolve_keyboard_size(area, field=None, requested="auto", panel=None):
     """Determina la densidad efectiva (compact, normal, large) según resolución y espacio libre."""
     free_vertical = area.height()
     if field is not None:
         above = max(0, field.top() - area.top())
         below = max(0, area.bottom() - field.bottom())
         free_vertical = max(above, below)
+    if panel is not None:
+        p_above = max(0, panel.top() - area.top())
+        p_below = max(0, area.bottom() - panel.bottom())
+        p_side = max(0, panel.left() - area.left(), area.right() - panel.right())
+        if max(p_above, p_below) < 290 and p_side < 820:
+            free_vertical = min(free_vertical, 250)
     if requested in ("compact", "normal", "large"):
-        if field is not None and requested != "compact":
+        if (field is not None or panel is not None) and requested != "compact":
             if free_vertical < 275:
                 return "compact"
             if requested == "large" and free_vertical < 330:
                 return "normal"
         return requested
     # Modo adaptativo ("auto")
-    if area.height() <= 760 or area.width() <= 1366 or (field is not None and free_vertical < 305):
+    if area.height() <= 760 or area.width() <= 1366 or ((field is not None or panel is not None) and free_vertical < 305):
         return "compact"
     return "normal"
 
 
-def keyboard_rect(area, size, field=None, mode="auto", manual_pos=None):
+def keyboard_rect(area, size, field=None, mode="auto", manual_pos=None, panel=None):
     """Prueba espacio real arriba/abajo/lateral, y luego minimiza la superposición."""
     safe = area.adjusted(8, 8, -8, -8)
     width, height = min(size.width(), safe.width()), min(size.height(), safe.height())
@@ -72,6 +78,41 @@ def keyboard_rect(area, size, field=None, mode="auto", manual_pos=None):
         left = center_left
     top = QRect(left, safe.top(), width, height)
     bottom = QRect(left, safe.bottom()-height+1, width, height)
+    if panel is not None:
+        protected_panel = panel.adjusted(-6, -6, 6, 6).intersected(safe)
+        protected_field = field.adjusted(-8, -12, 8, 12).intersected(safe) if field is not None else protected_panel
+        if mode == "manual" and manual_pos is not None:
+            pt = manual_pos if isinstance(manual_pos, QPoint) else QPoint(int(manual_pos[0]), int(manual_pos[1]))
+            manual_rect = bounded(QRect(pt.x(), pt.y(), width, height), safe)
+            if overlap(manual_rect, protected_panel) == 0 and overlap(manual_rect, protected_field) == 0:
+                return manual_rect
+        right_x = min(safe.right() - width + 1, max(safe.left(), protected_panel.right() + 1))
+        left_x = max(safe.left(), min(safe.right() - width + 1, protected_panel.left() - width))
+        v_mid = max(safe.top(), min(protected_field.center().y() - height // 2, safe.bottom() - height + 1))
+        above_y = max(safe.top(), min(protected_panel.top() - height, safe.bottom() - height + 1))
+        below_y = min(safe.bottom() - height + 1, max(safe.top(), protected_panel.bottom() + 1))
+        candidates = [
+            QRect(right_x, v_mid, width, height),
+            QRect(right_x, safe.bottom() - height + 1, width, height),
+            QRect(right_x, safe.top(), width, height),
+            QRect(left_x, v_mid, width, height),
+            QRect(left_x, safe.bottom() - height + 1, width, height),
+            QRect(left_x, safe.top(), width, height),
+            QRect(left, above_y, width, height),
+            QRect(left, below_y, width, height),
+            top,
+            bottom,
+            QRect(safe.right() - width + 1, safe.bottom() - height + 1, width, height),
+            QRect(safe.left(), safe.bottom() - height + 1, width, height),
+            QRect(safe.right() - width + 1, safe.top(), width, height),
+            QRect(safe.left(), safe.top(), width, height),
+        ]
+        return min(candidates, key=lambda r: (
+            overlap(r, protected_panel),
+            overlap(r, protected_field),
+            abs(r.center().y() - protected_field.center().y()),
+            abs(r.center().x() - protected_field.center().x()),
+        ))
     if mode == "top":
         return top
     if mode == "bottom" or (field is None and mode != "manual"):
@@ -165,6 +206,7 @@ class OverlayCoordinator(QObject):
         super().__init__(parent)
         self.keyboard = self.camera = None
         self.field = None
+        self.panel = None
         self.keyboard_screen = None
         self.camera_screen = None
         self.camera_options = {}
@@ -189,7 +231,9 @@ class OverlayCoordinator(QObject):
         self.keyboard = widget
         screens = QApplication.screens()
         screen, field = logical_field(state.get("bounds"), screens)
-        screen = screen or self.keyboard_screen or QApplication.screenAt(QCursor.pos()) or QApplication.primaryScreen()
+        raw_panel = state.get("panel_bounds") or getattr(widget, "_occluding_bounds", None)
+        panel_screen, panel = logical_field(raw_panel, screens)
+        screen = screen or panel_screen or self.keyboard_screen or QApplication.screenAt(QCursor.pos()) or QApplication.primaryScreen()
         if screen not in screens:
             screen = QApplication.primaryScreen()
         bounds = field.getRect() if field else None
@@ -199,16 +243,17 @@ class OverlayCoordinator(QObject):
         if stable:
             bounds = self.last_bounds
             field = QRect(*bounds)
+        panel_rect_tuple = panel.getRect() if panel else None
         area = screen.availableGeometry()
-        effective = resolve_keyboard_size(area, field, state.get("size", "auto"))
+        effective = resolve_keyboard_size(area, field, state.get("size", "auto"), panel=panel)
         preview_expanded = getattr(widget, "is_preview_expanded", lambda: False)()
-        key = (state.get("target"), bounds, screen.geometry().getRect(), area.getRect(),
+        key = (state.get("target"), bounds, panel_rect_tuple, screen.geometry().getRect(), area.getRect(),
                screen.devicePixelRatio(), state.get("size"), effective, state.get("position"),
                state.get("show_preview"), state.get("preview_mode"), preview_expanded,
                state.get("suggestions", True), self.manual_pos)
         if key != self.keyboard_key or not widget.isVisible():
             self.keyboard_key, self.last_bounds = key, bounds
-            self.field, self.keyboard_screen = field, screen
+            self.field, self.panel, self.keyboard_screen = field, panel, screen
             self.effective_size = effective
             if hasattr(widget, "apply_effective_size"):
                 widget.apply_effective_size(effective)
@@ -217,9 +262,10 @@ class OverlayCoordinator(QObject):
             width = min(area.width()-16, max(widget.minimumSizeHint().width(), desired_w))
             height = min(area.height()-16, widget.sizeHint().height())
             pos_mode = state.get("position", "auto")
-            rect = keyboard_rect(area, QSize(width,height), field, pos_mode, self.manual_pos)
+            rect = keyboard_rect(area, QSize(width,height), field, pos_mode, self.manual_pos, panel=panel)
             # Si aún hay superposición en modo normal/large, probar densidad compacta automáticamente
-            if field and overlap(field, rect) and effective != "compact" and hasattr(widget, "apply_effective_size"):
+            has_overlap = (field and overlap(field, rect) > 0) or (panel and overlap(panel, rect) > 0)
+            if has_overlap and effective != "compact" and hasattr(widget, "apply_effective_size"):
                 effective = "compact"
                 self.effective_size = effective
                 widget.apply_effective_size(effective)
@@ -227,7 +273,15 @@ class OverlayCoordinator(QObject):
                 desired_w = min(max_w, max(min_w, round(area.width() * ratio)))
                 width = min(area.width()-16, max(widget.minimumSizeHint().width(), desired_w))
                 height = min(area.height()-16, widget.sizeHint().height())
-                rect = keyboard_rect(area, QSize(width,height), field, pos_mode, self.manual_pos)
+                rect = keyboard_rect(area, QSize(width,height), field, pos_mode, self.manual_pos, panel=panel)
+            # Si un panel de sistema (ej. Windows Search) deja una franja lateral libre, ajustar el ancho para no quedar tapado
+            if panel is not None and overlap(panel, rect) > 0:
+                safe = area.adjusted(8, 8, -8, -8)
+                side_clear = max(panel.left() - safe.left() - 6, safe.right() - panel.right() - 6)
+                min_clear_w = max(460, min(520, widget.minimumSizeHint().width()))
+                if min_clear_w <= side_clear < width:
+                    width = side_clear
+                    rect = keyboard_rect(area, QSize(width, height), field, pos_mode, self.manual_pos, panel=panel)
             if widget.geometry() != rect:
                 widget.setGeometry(rect)
                 self.keyboard_moves += 1
@@ -264,6 +318,8 @@ class OverlayCoordinator(QObject):
                 obstacles.append(handle.geometry())
             if self.field:
                 obstacles.append(self.field)
+            if self.panel:
+                obstacles.append(self.panel)
         rect = self.camera_placement.place(area, size, options.get("corner","bottom_right"),
                 options.get("avoid",True), options.get("delay",1.), QCursor.pos(), obstacles, time.monotonic())
         if self.camera_target != rect:
@@ -287,4 +343,4 @@ class OverlayCoordinator(QObject):
         self.timer.stop()
         if self.animation is not None and isValid(self.animation):self.animation.stop()
         self.camera=self.keyboard=None
-        self.field=None
+        self.field=self.panel=None

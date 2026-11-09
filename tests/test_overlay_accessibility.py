@@ -472,3 +472,100 @@ class KeyboardOverlayGUITests(unittest.TestCase):
         area = QRect(0, 0, 1280, 672)
         rect = keyboard_rect(area, QSize(700, 240), None, "manual", manual_pos=self.panel.coordinator.manual_pos)
         self.assertEqual(rect.topLeft(), QPoint(120, 140))
+
+    def test_windows_search_panel_evasion_zero_overlap_and_restore_handle(self):
+        self.wait(self.panel.isVisible)
+        # Simulate a real 1280x672 screen (1080p @ 150% DPI) and 1920x1040 screen (1080p @ 100% DPI)
+        fake_screen = FakeScreen((0, 0, 1280, 672), dpr=1.5)
+        search_box = (78, 87, 724, 60)
+        search_panel = (45, 42, 790, 742)
+        with patch("desktop.overlay_layout.QApplication.screens", return_value=[fake_screen]), \
+             patch("desktop.overlay_layout.QApplication.primaryScreen", return_value=fake_screen), \
+             patch("desktop.keyboard.QApplication.screens", return_value=[fake_screen]), \
+             patch("desktop.keyboard.QApplication.primaryScreen", return_value=fake_screen):
+            self.target = Target(132692, (42, 555), True, False, bounds=search_box, panel_bounds=search_panel)
+            self.wait(lambda: self.panel.isVisible() and self.panel.state.get("panel_bounds") == search_panel)
+
+            kb_geo = self.panel.geometry()
+            _, panel_qrect = logical_field(search_panel, [fake_screen])
+            _, box_qrect = logical_field(search_box, [fake_screen])
+            self.assertEqual(overlap(kb_geo, panel_qrect), 0)
+            self.assertEqual(overlap(kb_geo, box_qrect), 0)
+            self.assertTrue(fake_screen.availableGeometry().contains(kb_geo))
+
+            # Hiding keyboard while in Windows Search must place restore_handle outside the Search panel too
+            self.panel.hide_keyboard()
+            self.wait(self.panel.restore_handle.isVisible)
+            self.assertEqual(overlap(self.panel.restore_handle.geometry(), panel_qrect), 0)
+
+            # Reopening restores keyboard outside Search panel
+            QTest.mouseClick(self.panel.restore_handle, Qt.MouseButton.LeftButton)
+            self.wait(self.panel.isVisible)
+            self.assertEqual(overlap(self.panel.geometry(), panel_qrect), 0)
+
+    def test_preview_recovery_on_hide_and_reopen_via_uia_and_session_cache(self):
+        self.settings["suggestions"] = True
+        self.wait(self.panel.isVisible)
+
+        def type_keys(seq):
+            for ch in seq:
+                prev_len = len(self.buffer.text)
+                self.panel.press(ch)
+                self.wait(lambda: len(self.buffer.text) == prev_len + len(ch))
+
+        # Case 1 (Solución B - Session Cache without read_field):
+        # Type "Hola, cómo estás", hide keyboard, reopen on same field -> recovers preview & continues typing
+        type_keys("Hola, cómo estás")
+        self.wait(lambda: self.panel.state.get("preview") == "Hola, cómo estás")
+        self.panel.hide_keyboard()
+        self.wait(self.panel.restore_handle.isVisible)
+        self.assertEqual(self.panel.composition.toPlainText(), "")
+
+        # Reopen keyboard on same field via restore_handle
+        QTest.mouseClick(self.panel.restore_handle, Qt.MouseButton.LeftButton)
+        self.wait(self.panel.isVisible)
+        self.wait(lambda: self.panel.state.get("preview") == "Hola, cómo estás")
+        self.assertEqual(self.panel.composition.toPlainText(), "Hola, cómo estás▏")
+
+        type_keys(" amigo")
+        self.wait(lambda: self.buffer.text == "Hola, cómo estás amigo")
+        self.wait(lambda: self.panel.state.get("preview") == "Hola, cómo estás amigo")
+
+        # Case 2 (Coordination with Suggestions after reopen):
+        # Switch to a second field, type "Hola, buen", hide keyboard, reopen -> recovers "Hola, buen" & suggests "buenos"
+        self.buffer.text = ""
+        self.buffer.cursor = 0
+        self.target = Target(100, (2,), True, False, bounds=(20, 650, 600, 40))
+        self.wait(lambda: self.panel.state.get("target") == (100, (2,)))
+
+        type_keys("Hola, buen")
+        self.wait(lambda: self.panel.state.get("preview") == "Hola, buen")
+        self.panel.hide_keyboard()
+        self.wait(self.panel.restore_handle.isVisible)
+
+        QTest.mouseClick(self.panel.restore_handle, Qt.MouseButton.LeftButton)
+        self.wait(self.panel.isVisible)
+        self.wait(lambda: self.panel.state.get("preview") == "Hola, buen")
+        self.wait(lambda: any("buen" in b.text() for b in self.panel.prediction_buttons if b.isEnabled()))
+
+        sug_btn = next(b for b in self.panel.prediction_buttons if b.isEnabled() and b.text().startswith("buen"))
+        chosen_word = sug_btn.text().replace("✓ ", "")
+        QTest.mouseClick(sug_btn, Qt.MouseButton.LeftButton)
+        self.wait(lambda: self.buffer.text == f"Hola, {chosen_word} " and self.panel.state.get("preview") == f"Hola, {chosen_word} ")
+        self.assertEqual(self.panel.state.get("preview"), f"Hola, {chosen_word} ")
+
+        # Case 3 (Solución A - UIA read_field recovery of existing or externally edited text):
+        self.focus.read_field = Mock(side_effect=lambda: (
+            self.buffer.text[:self.buffer.cursor], self.buffer.text[self.buffer.cursor:]
+        ))
+        self.buffer.text = "Buenos d"
+        self.buffer.cursor = len(self.buffer.text)
+        self.target = Target(100, (3,), True, False, bounds=(20, 650, 600, 40))
+        self.wait(lambda: self.panel.state.get("preview") == "Buenos d")
+        self.assertEqual(self.panel.composition.toPlainText(), "Buenos d▏")
+        self.wait(lambda: any("día" in b.text() for b in self.panel.prediction_buttons if b.isEnabled()))
+        dia_btn = next(b for b in self.panel.prediction_buttons if b.isEnabled() and "día" in b.text())
+        dia_word = dia_btn.text().replace("✓ ", "")
+        QTest.mouseClick(dia_btn, Qt.MouseButton.LeftButton)
+        self.wait(lambda: self.buffer.text == f"Buenos {dia_word} " and self.panel.state.get("preview") == f"Buenos {dia_word} ")
+        self.assertEqual(self.panel.state.get("preview"), f"Buenos {dia_word} ")

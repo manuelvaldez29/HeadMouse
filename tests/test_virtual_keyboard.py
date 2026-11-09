@@ -356,3 +356,222 @@ class VirtualKeyboardTests(unittest.TestCase):
         search_edit_zero = SimpleNamespace(**{**search_edit.__dict__, "CurrentBoundingRectangle": zero_rect})
         parents[id(search_edit_zero)] = autosuggest
         self.assertEqual(focus._bounds(search_edit_zero, walker), (1469, 362, 370, 49))
+
+    def test_uia_textpattern_bstr_none_and_whitespace_normalization_in_caret_and_composition(self):
+        from types import SimpleNamespace
+        focus = WindowsKeyboardFocus.__new__(WindowsKeyboardFocus)
+        focus.can_read = True
+        focus.interfaces = SimpleNamespace(
+            IUIAutomationTextPattern="TextPattern",
+            IUIAutomationValuePattern="ValuePattern",
+        )
+
+        # Simulate comtypes TextPattern returning None for empty BSTR at end of field (e.g. Notepad / Chromium)
+        state = {"before": "Buenos\xa0d", "after": None}
+
+        class FakeRange:
+            def __init__(self, kind="caret"):
+                self.kind = kind
+            def CompareEndpoints(self, e1, other, e2):
+                return 0
+            def Clone(self):
+                return FakeRange(self.kind)
+            def MoveEndpointByUnit(self, endpoint, unit, count):
+                self.kind = "left" if count < 0 else "right"
+            def GetText(self, max_len):
+                return state["before"] if self.kind == "left" else state["after"]
+
+        pattern = SimpleNamespace(
+            GetSelection=lambda: SimpleNamespace(Length=1, GetElement=lambda idx: FakeRange()),
+            DocumentRange=FakeRange("doc"),
+        )
+        focus.element = SimpleNamespace(
+            GetCurrentPattern=lambda pid: SimpleNamespace(QueryInterface=lambda iface: pattern)
+        )
+
+        # caret() must normalize \xa0 -> " " and None -> "" (never returning None as right char)
+        edges = focus.caret("Buenos d")
+        self.assertEqual(edges, ("d", ""))
+        self.assertTrue(focus.composition_matches("Buenos d", ""))
+        self.assertEqual(focus.read_field(), ("Buenos d", ""))
+
+        # Simulate RichEditD2DPT virtual trailing \r at end of document
+        state["after"] = "\r"
+        self.assertEqual(focus.caret("Buenos d"), ("d", ""))
+        self.assertEqual(focus.read_field(), ("Buenos d", ""))
+
+        # Simulate empty field where both before and after return None in comtypes
+        state["before"] = None
+        state["after"] = None
+        self.assertEqual(focus.caret(""), ("", ""))
+        self.assertTrue(focus.composition_matches("", ""))
+        self.assertEqual(focus.read_field(), ("", ""))
+
+        # Private field must never read
+        focus.can_read = False
+        self.assertIsNone(focus.read_field())
+
+    def test_word_suggestions_insertion_all_cases_and_gui_click(self):
+        from threading import Event
+        from types import SimpleNamespace
+        from PySide6.QtCore import Qt
+        from PySide6.QtTest import QTest
+        from PySide6.QtWidgets import QApplication
+        from config import KeyboardConfig
+        from desktop.keyboard import VirtualKeyboard
+        from desktop.keyboard_service import KeyboardService
+
+        # 1. ho -> hola
+        self.buffer = Buffer()
+        self.session.reset_all()
+        self.session.set_target(Target(1, (1, 2), True, False))
+        self.type("ho")
+        preds = [w for w, _ in self.session.suggestions(self.dictionary, self.settings)]
+        self.assertIn("hola", preds)
+        self.assertTrue(self.choose("hola"))
+        self.assertEqual(self.buffer.text, "hola ")
+        self.assertEqual(self.session.composition.text, "hola ")
+        self.assertEqual(self.buffer.cursor, 5)
+
+        # 2. Hea -> HeadMouse
+        self.dictionary.learn("HeadMouse", [])
+        self.buffer = Buffer()
+        self.session.reset_all()
+        self.session.set_target(Target(1, (1, 2), True, False))
+        self.type("Hea")
+        self.assertTrue(self.choose("HeadMouse"))
+        self.assertEqual(self.buffer.text, "HeadMouse ")
+        self.assertEqual(self.session.composition.text, "HeadMouse ")
+
+        # 3. Buenos d -> Buenos días (without duplicating or deleting "Buenos ")
+        self.dictionary.learn("Buenos", [])
+        self.dictionary.learn("días", ["Buenos"])
+        self.buffer = Buffer()
+        self.session.reset_all()
+        self.session.set_target(Target(1, (1, 2), True, False))
+        self.type("Buenos d")
+        self.assertIn("días", [w for w, _ in self.session.suggestions(self.dictionary, self.settings)])
+        self.assertTrue(self.choose("días"))
+        self.assertEqual(self.buffer.text, "Buenos días ")
+        self.assertEqual(self.session.composition.text, "Buenos días ")
+
+        # 4. Empty field with context suggestion & words with tildes and Ñ
+        self.dictionary.learn("Ñandú", ["días"])
+        self.assertIn("Ñandú", [w for w, _ in self.session.suggestions(self.dictionary, self.settings)])
+        self.assertTrue(self.choose("Ñandú"))
+        self.assertEqual(self.buffer.text, "Buenos días Ñandú ")
+
+        # 5. Empty field from start when a learned word is suggested on empty prefix after context
+        self.buffer = Buffer()
+        self.session.reset_all()
+        self.session.set_target(Target(1, (1, 2), True, False))
+        self.session.context = ["Buenos"]
+        self.assertIn("días", [w for w, _ in self.session.suggestions(self.dictionary, self.settings)])
+        self.assertTrue(self.choose("días"))
+        self.assertEqual(self.buffer.text, "días ")
+
+        # 6. Full GUI click on prediction_buttons[0] (simulating Nose/Eye click in compact mode)
+        app = QApplication.instance() or QApplication([])
+        settings = asdict(KeyboardConfig(size="compact"))
+        gui_buffer = Buffer()
+        # Simulate COM BSTR returning None at end of field when caret is at end
+        def uia_like_caret(suffix):
+            left = gui_buffer.text[:gui_buffer.cursor]
+            if not left.endswith(suffix):
+                return None
+            right = gui_buffer.text[gui_buffer.cursor:gui_buffer.cursor+1]
+            return (left[-1:] if left else None), (right if right else None)
+
+        controller = SimpleNamespace(
+            profile={"user_id": "perfil_A"},
+            dictation=None,
+            data_dir=self.root,
+            _dictation_allowed=lambda: True,
+            keyboard_visible=Event(),
+        )
+        bridge = SimpleNamespace(
+            controller=controller,
+            snapshot=lambda: dict(profile=controller.profile, settings={"keyboard": settings}),
+        )
+        focus = Mock()
+        focus.focused.return_value = Target(10, (77,), True, False, bounds=(100, 500, 400, 40))
+        focus.caret.side_effect = uia_like_caret
+        focus.composition_matches.side_effect = lambda b, a: (
+            gui_buffer.text[:gui_buffer.cursor].endswith(b) and gui_buffer.text[gui_buffer.cursor:].startswith(a)
+        )
+        with patch("desktop.keyboard.KeyboardService", side_effect=lambda b, p: KeyboardService(
+                b, p, focus_factory=lambda: focus, typer_factory=lambda: gui_buffer)):
+            panel = VirtualKeyboard(bridge)
+        self.addCleanup(panel.close)
+
+        def wait_for(cond):
+            for _ in range(80):
+                app.processEvents()
+                if cond():
+                    return
+                QTest.qWait(20)
+            self.fail("Condición no alcanzada en prueba GUI de sugerencias")
+
+        wait_for(panel.isVisible)
+        for ch in ("h", "o"):
+            btn = next(b for b in panel.letter_buttons if b.text() == ch)
+            QTest.mouseClick(btn, Qt.MouseButton.LeftButton)
+        wait_for(lambda: gui_buffer.text == "ho" and any("hola" in b.text() for b in panel.prediction_buttons if b.isEnabled()))
+        sug_btn = next(b for b in panel.prediction_buttons if "hola" in b.text())
+        QTest.mouseClick(sug_btn, Qt.MouseButton.LeftButton)
+        wait_for(lambda: gui_buffer.text == "hola " and panel.state.get("preview") == "hola ")
+        self.assertEqual(gui_buffer.text, "hola ")
+        self.assertEqual(panel.state.get("preview"), "hola ")
+
+    def test_windows_search_flyout_detection_and_panel_bounds(self):
+        from types import SimpleNamespace
+        focus = WindowsKeyboardFocus()
+        box_rect = SimpleNamespace(left=78, top=87, right=802, bottom=147)
+        flyout_rect = SimpleNamespace(left=45, top=42, right=835, bottom=784)
+
+        search_box = SimpleNamespace(
+            CurrentControlType=50004,
+            CurrentClassName="RichEditBox",
+            CurrentAutomationId="SearchTextBox",
+            CurrentName="Cuadro de búsqueda",
+            CurrentIsEnabled=True,
+            CurrentIsPassword=False,
+            CurrentIsKeyboardFocusable=True,
+            CurrentHasKeyboardFocus=True,
+            CurrentNativeWindowHandle=0,
+            CurrentBoundingRectangle=box_rect,
+            GetRuntimeId=lambda: (42, 555),
+            GetCurrentPropertyValue=lambda pid: True if pid == focus.VALUE_AVAILABLE else False,
+            GetCurrentPattern=lambda pid: Mock(CurrentIsReadOnly=0),
+            FindAll=lambda scope, cond: SimpleNamespace(Length=0, GetElement=lambda i: None),
+        )
+        core_window = SimpleNamespace(
+            CurrentControlType=50032,
+            CurrentClassName="Windows.UI.Core.CoreWindow",
+            CurrentAutomationId="",
+            CurrentName="Búsqueda",
+            CurrentIsEnabled=True,
+            CurrentIsPassword=False,
+            CurrentIsKeyboardFocusable=True,
+            CurrentHasKeyboardFocus=False,
+            CurrentNativeWindowHandle=132692,
+            CurrentBoundingRectangle=flyout_rect,
+            GetRuntimeId=lambda: (42, 1),
+            GetCurrentPropertyValue=lambda pid: False,
+            GetCurrentPattern=lambda pid: (_ for _ in ()).throw(OSError()),
+            FindAll=lambda scope, cond: SimpleNamespace(Length=1, GetElement=lambda i: search_box),
+        )
+        parents = {id(search_box): core_window, id(core_window): None}
+        walker = SimpleNamespace(GetParentElement=lambda el: parents.get(id(el)))
+        focus._automation = SimpleNamespace(
+            ControlViewWalker=walker,
+            CreatePropertyCondition=lambda pid, val: (pid, val),
+        )
+        focus._pointer_in_foreground = lambda: False
+        focus._window_class_and_title = lambda w: ("Windows.UI.Core.CoreWindow", "Búsqueda")
+
+        self.assertTrue(focus._is_shell_flyout(132692, search_box))
+        self.assertEqual(focus._panel_bounds(132692, search_box, walker), (45, 42, 790, 742))
+        resolved, info = focus._resolve_focus_element(132692, core_window)
+        self.assertIs(resolved, search_box)
+        self.assertTrue(info.editable)

@@ -27,6 +27,19 @@ SIZE_SPECS = {
 
 _USER32 = None
 
+_IGNORED_OVERLAY_CLASSES = (
+    "UAC_InputIndicatorOverlayWnd", "UAC Input Indicator",
+    "Shell_TrayWnd", "SecondaryTrayWnd", "IME", "MSCTFIME UI",
+    "tooltips_class32", "SysShadow",
+)
+
+_HIGHER_BAND_SHELL_CLASSES = (
+    "Windows.UI.Core.CoreWindow",
+    "XamlExplorerHostIslandWindow",
+    "SearchPane",
+    "Shell_LightDismissOverlay",
+)
+
 
 def _win32_user32():
     global _USER32
@@ -69,24 +82,56 @@ def _win32_is_obscured_in_zorder(user32, hwnd, target_hwnd=None):
         steps += 1
         cur_id = int(cur)
         if target_hwnd and cur_id == int(target_hwnd):
-            return True
+            cls_buf.value = ""
+            user32.GetClassNameW(cur, cls_buf, 96)
+            if cls_buf.value not in _HIGHER_BAND_SHELL_CLASSES:
+                return True
         if user32.IsWindowVisible(cur):
             pid = wintypes.DWORD()
             user32.GetWindowThreadProcessId(cur, ctypes.byref(pid))
             if pid.value != own_pid:
                 rc = wintypes.RECT()
                 if user32.GetWindowRect(cur, ctypes.byref(rc)) and (rc.right > rc.left) and (rc.bottom > rc.top):
+                    cls_buf.value = ""
                     user32.GetClassNameW(cur, cls_buf, 96)
                     cls_name = cls_buf.value
                     if cls_name in ("CabinetWClass", "ExploreWClass",
                                     "Microsoft.UI.Content.PopupWindowSiteBridge"):
                         return True
                     if (has_kb_rect and _rects_intersect(kb_rect, rc) and
-                            cls_name not in ("UAC_InputIndicatorOverlayWnd", "UAC Input Indicator",
-                                             "Shell_TrayWnd", "SecondaryTrayWnd", "IME", "MSCTFIME UI")):
+                            cls_name not in _IGNORED_OVERLAY_CLASSES):
                         return True
         cur = user32.GetWindow(cur, GW_HWNDPREV)
     return False
+
+
+def _win32_find_occluding_rect_above(user32, hwnd):
+    """Detecta si una ventana de banda superior (ej. Windows Search) sigue por encima tras HWND_TOPMOST."""
+    GW_HWNDPREV = 3
+    own_pid = os.getpid()
+    kb_rect = wintypes.RECT()
+    if not user32.GetWindowRect(hwnd, ctypes.byref(kb_rect)):
+        return None
+    cur = user32.GetWindow(hwnd, GW_HWNDPREV)
+    steps = 0
+    cls_buf = ctypes.create_unicode_buffer(96)
+    while cur and steps < 35:
+        steps += 1
+        if user32.IsWindowVisible(cur):
+            pid = wintypes.DWORD()
+            user32.GetWindowThreadProcessId(cur, ctypes.byref(pid))
+            if pid.value != own_pid:
+                rc = wintypes.RECT()
+                if user32.GetWindowRect(cur, ctypes.byref(rc)):
+                    w, h = rc.right - rc.left, rc.bottom - rc.top
+                    if w >= 200 and h >= 150 and _rects_intersect(kb_rect, rc):
+                        cls_buf.value = ""
+                        user32.GetClassNameW(cur, cls_buf, 96)
+                        cls_name = cls_buf.value
+                        if cls_name not in _IGNORED_OVERLAY_CLASSES:
+                            return (rc.left, rc.top, w, h)
+        cur = user32.GetWindow(cur, GW_HWNDPREV)
+    return None
 
 
 def _win32_ensure_topmost(widget, target_hwnd=None, force=False, always_on_top=True):
@@ -125,6 +170,22 @@ def _win32_ensure_topmost(widget, target_hwnd=None, force=False, always_on_top=T
     return True
 
 
+def _win32_get_higher_band_occluder(widget):
+    if sys.platform != "win32":
+        return None
+    app = QApplication.instance()
+    if app is None or app.platformName() != "windows" or not widget.isVisible():
+        return None
+    try:
+        hwnd = int(widget.winId())
+    except Exception:
+        return None
+    user32 = _win32_user32()
+    if not hwnd or user32 is None:
+        return None
+    return _win32_find_occluding_rect_above(user32, hwnd)
+
+
 class RestoreHandle(QPushButton):
     def nativeEvent(self, event_type, message):
         if sys.platform == "win32":
@@ -149,6 +210,7 @@ class VirtualKeyboard(QWidget):
         self.preview_override = None
         self._drag_offset = None
         self._last_topmost_target = None
+        self._occluding_bounds = None
         from desktop.overlay_layout import OverlayCoordinator
         self.coordinator = coordinator or OverlayCoordinator(self)
         self.coordinator.keyboard = self
@@ -190,7 +252,7 @@ class VirtualKeyboard(QWidget):
         top.addWidget(self.status, 1)
         self.key_preview = QLabel()
         self.key_preview.setStyleSheet("font-size:20px;font-weight:bold;color:#bdfff1;")
-        self.key_preview.setMinimumWidth(44)
+        self.key_preview.setMinimumWidth(32)
         top.addWidget(self.key_preview)
         self.page_buttons = {}
         for mode in ROWS:
@@ -227,7 +289,7 @@ class VirtualKeyboard(QWidget):
         self.preview_toggle = self.button("▾", self.toggle_preview_mode)
         self.preview_toggle.setToolTip("Expandir o compactar la vista previa de texto")
         self.preview_toggle.setAccessibleName("Expandir o compactar vista previa")
-        self.preview_toggle.setMinimumWidth(32)
+        self.preview_toggle.setMinimumWidth(28)
         preview_layout.addWidget(self.preview_toggle)
         self.main_layout.addWidget(self.preview_row)
 
@@ -253,14 +315,14 @@ class VirtualKeyboard(QWidget):
         self.caps_button = self.button("Bloq ⇧", self.toggle_caps)
         for button in (self.shift_button, self.caps_button):
             button.setCheckable(True)
-            button.setMinimumWidth(42)
+            button.setMinimumWidth(36)
             bottom.addWidget(button)
-        self.caps_button.setMinimumWidth(72)
+        self.caps_button.setMinimumWidth(58)
         self.control_buttons = {}
         for name in ("Ctrl", "Alt"):
             button = self.button(name, lambda mod=name: self.toggle_modifier(mod))
             button.setCheckable(True)
-            button.setMinimumWidth(42)
+            button.setMinimumWidth(36)
             bottom.addWidget(button)
             self.control_buttons[name] = button
         self.action_buttons = []
@@ -285,7 +347,8 @@ class VirtualKeyboard(QWidget):
         button.setAccessibleName(title)
         button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         button.setAutoRepeat(False)
-        button.setMinimumHeight(27)
+        button.setMinimumHeight(24)
+        button.setMinimumWidth(26)
         def selected():
             self.selected_button = button
             try:
@@ -391,6 +454,11 @@ class VirtualKeyboard(QWidget):
         target_hwnd = self.state.get("window")
         if self.isVisible():
             _win32_ensure_topmost(self, target_hwnd=target_hwnd, force=False, always_on_top=True)
+            if not self.state.get("panel_bounds"):
+                occ = _win32_get_higher_band_occluder(self)
+                if occ is not None and occ != self._occluding_bounds:
+                    self._occluding_bounds = occ
+                    self.coordinator.place_keyboard(self, self.state)
         elif self.restore_handle.isVisible():
             _win32_ensure_topmost(self.restore_handle, target_hwnd=target_hwnd, force=False, always_on_top=True)
 
@@ -491,6 +559,7 @@ class VirtualKeyboard(QWidget):
         if self.coordinator.keyboard is self:
             self.coordinator.keyboard = None
             self.coordinator.field = None
+            self.coordinator.panel = None
         self.restore_handle.close()
         self.restore_handle.deleteLater()
         super().closeEvent(event)
@@ -500,6 +569,8 @@ class VirtualKeyboard(QWidget):
             return
         target_changed = (self.state.get("target") != state.get("target") or
                           self.state.get("window") != state.get("window"))
+        if target_changed:
+            self._occluding_bounds = None
         if self.state.get("token") != state["token"]:
             self.modifiers.clear()
             for button in self.control_buttons.values():
@@ -515,15 +586,17 @@ class VirtualKeyboard(QWidget):
             self.composition.clear()
             self.hide()
             self.coordinator.field = None
+            self.coordinator.panel = None
             if state.get("restore"):
                 from desktop.overlay_layout import logical_field, keyboard_rect
                 from PySide6.QtCore import QSize
                 screens = QApplication.screens()
                 screen, field = logical_field(state.get("bounds"), screens)
+                _, panel = logical_field(state.get("panel_bounds") or self._occluding_bounds, screens)
                 previous = self.coordinator.keyboard_screen
                 screen = screen or (previous if previous in screens else QApplication.primaryScreen())
                 was_handle_visible = self.restore_handle.isVisible()
-                self.restore_handle.setGeometry(keyboard_rect(screen.availableGeometry(), QSize(156, 40), field))
+                self.restore_handle.setGeometry(keyboard_rect(screen.availableGeometry(), QSize(156, 40), field, panel=panel))
                 self.restore_handle.show()
                 _win32_ensure_topmost(self.restore_handle, target_hwnd=target_hwnd,
                                       force=not was_handle_visible or target_changed, always_on_top=always_on_top)
@@ -562,6 +635,7 @@ class VirtualKeyboard(QWidget):
         self.composition_label.setText("Composición de HeadMouse · " + (
             "campo o cursor cambiado; vista limpiada" if state.get("preview_status") == "changed" else
             "cursor comprobado" if state.get("preview_status") == "confirmed" else
+            "composición recuperada en este campo" if state.get("preview_status") == "recovered" else
             "enviada; destino sin confirmar" if text else
             "sólo esta sesión, sin guardar"))
         for index, button in enumerate(self.prediction_buttons):
@@ -582,6 +656,11 @@ class VirtualKeyboard(QWidget):
         _win32_ensure_topmost(self, target_hwnd=target_hwnd,
                               force=(not was_visible) or target_changed or moved,
                               always_on_top=always_on_top)
+        if always_on_top and not state.get("panel_bounds"):
+            occ = _win32_get_higher_band_occluder(self)
+            if occ is not None and occ != self._occluding_bounds:
+                self._occluding_bounds = occ
+                self.coordinator.place_keyboard(self, state)
         if not self.topmost_timer.isActive():
             self.topmost_timer.start()
 
@@ -625,8 +704,5 @@ class VirtualKeyboard(QWidget):
             dialog.exec()
         finally:
             self.service.vocabulary.disconnect(update)
-            dialog.deleteLater()
             if was_visible and self.state.get("visible"):
                 self.show()
-                _win32_ensure_topmost(self, target_hwnd=self.state.get("window"), force=True,
-                                      always_on_top=self.state.get("always_on_top", True))
