@@ -137,8 +137,15 @@ class CalibrationRegressionTests(unittest.TestCase):
         self.assertIsNone(s.validator.error)  # El tiempo de retorno no cuenta como gesto incorrecto.
         for _ in range(4): self.feed(ACTIVE["LEFT_WINK"])
         for _ in range(15): self.feed(ACTIVE["MOUTH_OPEN"])
-        self.assertIsNotNone(s.validator.error)
+        self.assertIsNone(s.validator.error)  # 2026-11-09: avisa y espera, sin cortar
+        self.assertIn("Boca",s.validator.instruction)
+        self.assertEqual(s.validator.recognized,["LEFT_CLICK"])
+        for _ in range(s.validator.max_strikes):
+            for _ in range(45): self.feed()
+            for _ in range(15): self.feed(ACTIVE["MOUTH_OPEN"])
+        self.assertIn("Boca",s.validator.error)
         s.repeat()
+        self.assertEqual(s.validator.recognized,["LEFT_CLICK"])  # Reintentar no borra lo aprobado
         for _ in range(45): self.feed()
         for _ in range(650): self.feed(ACTIVE["LEFT_WINK"])
         self.assertIn("Tiempo agotado",s.snapshot()["error"])

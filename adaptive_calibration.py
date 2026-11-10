@@ -197,6 +197,15 @@ class GestureCalibration:
                 return [((sum(v <= t for v in n)/len(n)) + (sum(v > t for v in a)/len(a)))/2
                         for n,a in zip(neutral, active)]
             threshold = max(candidates, key=lambda t: (min(scores(t)), mean(scores(t)), min(t-low, high-t)))
+            # Margen desde el reposo: el p10 del gesto incluye su subida y el hueco
+            # quedaba pegado a la cara relajada. Sin pasar el p25 de ninguna repetición,
+            # para seguir detectando al menos 3 de cada 4 muestras del gesto sostenido.
+            rest = median(v for rows in neutral for v in rows)
+            peak = median(v for rows in active for v in rows)
+            floor = rest + getattr(config, "min_activation_fraction", 0) * (peak - rest)
+            cap = min(percentile(rows, 25) for rows in active)
+            if threshold < floor and cap > threshold:
+                threshold = min(floor, cap)
             # Liberación entre banda neutral robusta y activación: hueco positivo.
             release = (low + threshold)/2
             self.activation_threshold[channel] = direction * threshold

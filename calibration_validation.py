@@ -15,7 +15,7 @@ GESTURES = (
 
 class CalibrationValidation:
     def __init__(self, gesture, timeout_s=None, clock=time.monotonic, neutral_s=None,
-                 noise_s=None, wrong_s=None):
+                 noise_s=None, wrong_s=None, strikes=None):
         self.gesture = gesture
         if hasattr(self.gesture, "both_brows_anywhere"):
             # En la prueba de gestos no se mueve el cursor del SO: una leve deriva de
@@ -29,6 +29,12 @@ class CalibrationValidation:
         self.wrong_s = defaults.validation_wrong_s if wrong_s is None else wrong_s
         if not 0 < self.noise_s < self.wrong_s < self.timeout_s:
             raise ValueError("Tiempos de tolerancia de validación incompatibles")
+        # Tolerante (2026-11-09): un gesto que se cuela no corta la prueba ni hace
+        # perder lo aprobado; se avisa y se espera. Recién a la `strikes`-ésima vez del
+        # mismo gesto equivocado es error, nombrando cuál molesta.
+        self.max_strikes = defaults.validation_strikes if strikes is None else strikes
+        self.strikes = {}
+        self.notice = None
         enabled = getattr(gesture, "enabled_gestures", None)
         self.gestures = tuple((spec.event_type, spec.instruction) for key,spec in GESTURE_SIGNALS.items()
                               if enabled is None or not isinstance(enabled, (set,list,tuple)) or key in enabled)
@@ -56,12 +62,39 @@ class CalibrationValidation:
     def _blocking_labels(self):
         return ", ".join(GESTURE_SIGNALS[key].label for key in self.blocking)
 
+    @staticmethod
+    def _labels(event_types):
+        return ", ".join(spec.label for spec in GESTURE_SIGNALS.values() if spec.event_type in event_types)
+
+    def _strike(self, wrong, now, relaxed):
+        """Un gesto equivocado: avisar y volver a esperar la cara relajada, sin retroceder."""
+        for kind in wrong:
+            self.strikes[kind] = self.strikes.get(kind, 0) + 1
+        names = self._labels(wrong)
+        if any(self.strikes[kind] >= self.max_strikes for kind in wrong):
+            expected = self._labels({self.gestures[min(self.index, len(self.gestures) - 1)][0]})
+            self.error = (f"{names} se activa con la cara relajada. Repetí la calibración de ese gesto "
+                          "o desmarcalo si no lo vas a usar." if relaxed else
+                          f"Al hacer {expected} también se detecta {names}. Repetí la calibración de "
+                          "alguno de los dos o desmarcá el que no uses.")
+            return
+        self.notice = (f"Se detectó {names} con la cara relajada: relajá y seguimos." if relaxed else
+                       f"Se detectó {names} en lugar del gesto pedido: relajá y volvé a intentarlo.")
+        # Sin reiniciar el motor: un gesto trabado no vuelve a dispararse y termina en el
+        # aviso de tiempo agotado; los falsos positivos sueltos suman de a uno.
+        self.neutral = True
+        self.neutral_since = None
+        self.started = now
+        self._clear_tolerance()
+
     @property
     def instruction(self):
         if self.error:
             return self.error
         if self.passed:
             return "Validacion correcta. SPACE: guardar; Q: descartar"
+        if self.notice:
+            return self.notice
         if self.neutral:
             if self.blocking:
                 return f"Relajá la cara: todavía se detecta {self._blocking_labels()}"
@@ -71,10 +104,14 @@ class CalibrationValidation:
         return "Esperando gesto: "+self.gestures[self.index][1]
 
     def retry_current(self):
-        """Repite el gesto actual (o el recién reconocido), conservando anteriores."""
-        if self.neutral and self.index > 0:
-            self.index -= 1
+        """Sigue desde el gesto pendiente, conservando todos los aprobados.
+
+        Antes volvía un gesto atrás si el error llegaba al relajar: en la prueba del
+        2026-11-08 se pasó de 2 gestos aprobados a 0 a fuerza de falsas detecciones.
+        """
         self.index = max(0, min(self.index, len(self.gestures) - 1))
+        self.strikes = {}
+        self.notice = None
         self.recognized = self.recognized[:self.index]
         self.neutral = True
         self.neutral_since = None
@@ -153,9 +190,7 @@ class CalibrationValidation:
                         self._fired_wrong=set()
                         incorrect_duration=0.
                 if incorrect_duration >= self.wrong_s and self._fired_wrong:
-                    names = ", ".join(spec.label for spec in GESTURE_SIGNALS.values()
-                                      if spec.event_type in self._fired_wrong)
-                    self.error = f"Se detectó {names} durante la cara neutral. Volvé a neutral y repetí."
+                    self._strike(set(self._fired_wrong), now, relaxed=True)
                 return
             self.returning_from = None
             self._wrong_since=None
@@ -172,6 +207,7 @@ class CalibrationValidation:
                 self.neutral_since = now
             if self._neutral_elapsed >= self.neutral_s:
                 self.gesture.reset()
+                self.notice = None
                 self.neutral = False
                 self.started = now
                 self._clear_tolerance()
@@ -189,7 +225,7 @@ class CalibrationValidation:
                     self._wrong_since = now
                 self._wrong_types = wrong
                 if now - self._wrong_since >= self.wrong_s:
-                    self.error = "Gesto incorrecto sostenido. Repetí el gesto solicitado."
+                    self._strike(set(wrong), now, relaxed=False)
                 # Nunca aprobar un evento esperado mezclado con un gesto incorrecto.
                 return
             self._wrong_since = None

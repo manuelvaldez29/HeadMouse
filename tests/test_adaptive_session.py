@@ -136,8 +136,17 @@ class AdaptiveSessionTests(unittest.TestCase):
         self.feed(v,.2,ACTIVE["LEFT_WINK"])
         self.feed(v,2.2)
         self.assertEqual(v.recognized,["LEFT_CLICK"])
+        # Un gesto equivocado sostenido avisa y vuelve a esperar sin perder lo aprobado…
         self.feed(v,.5,ACTIVE["MOUTH_OPEN"])
-        self.assertIsNotNone(v.error)
+        self.assertIsNone(v.error)
+        self.assertIn("Boca",v.instruction)
+        self.assertEqual(v.recognized,["LEFT_CLICK"])
+        # …y repetido, corta nombrando qué gesto molesta.
+        for _ in range(v.max_strikes):
+            self.feed(v,2.2)
+            self.feed(v,.5,ACTIVE["MOUTH_OPEN"])
+        self.assertIn("Boca",v.error)
+        self.assertEqual(v.recognized,["LEFT_CLICK"])
 
     def test_experimental_sources_capture_and_detect_in_same_units(self):
         for source in ("BLENDSHAPE","HYBRID"):

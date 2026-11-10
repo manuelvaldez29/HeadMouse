@@ -151,6 +151,11 @@ class CalibrationConfig:
     validation_noise_s: float = 0.15
     validation_wrong_s: float = 0.35
     brow_signal_source: str = "GEOMETRIC"
+    # La activación queda al menos a esta fracción del recorrido reposo→gesto (medianas).
+    # El hueco robusto se cerraba con el inicio del gesto y dejaba umbrales pegados al
+    # reposo: cejas al 22 % y liberación a 0,0015 de la activación (2026-11-08).
+    min_activation_fraction: float = 0.4
+    validation_strikes: int = 3  # veces que se tolera el mismo gesto equivocado en la prueba
 
     def __post_init__(self):
         for name in ("countdown_s", "measuring_s", "validation_timeout_s", "validation_neutral_s"):
@@ -161,6 +166,8 @@ class CalibrationConfig:
         bounded("threshold_fraction", self.threshold_fraction, 0.1, 0.9)
         bounded("min_separation", self.min_separation, 0.0001, 1)
         bounded("noise_multiplier", self.noise_multiplier, 1, 10)
+        bounded("min_activation_fraction", self.min_activation_fraction, 0, .8)
+        bounded("validation_strikes", self.validation_strikes, 1, 20, integer=True)
         bounded("repetitions", self.repetitions, 1, 10, integer=True)
         bounded("min_window_samples", self.min_window_samples, 3, 1000, integer=True)
         for name in ("active_window_s", "neutral_window_s", "transition_s", "validation_noise_s", "validation_wrong_s"):

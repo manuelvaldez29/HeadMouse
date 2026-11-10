@@ -105,6 +105,7 @@ class SafetyTests(unittest.TestCase):
         self.assertIsNotNone(validation.error)
         validation = CalibrationValidation(gesture, clock=lambda: now[0])
         validation.neutral = False
+        gesture.unreleased_gestures.return_value = []
         gesture.update.return_value = [GestureEvent("RIGHT_CLICK")]
         validation.update(FaceData(True, timestamp_ms=32000))
         self.assertFalse(validation.passed)
@@ -112,7 +113,14 @@ class SafetyTests(unittest.TestCase):
         for timestamp in (32100,32200,32300,32400):
             now[0]=timestamp/1000
             validation.update(FaceData(True,timestamp_ms=timestamp))
-        self.assertIsNotNone(validation.error)
+        self.assertIsNone(validation.error)  # 2026-11-09: el primero avisa, no corta
+        self.assertIn("Guiño derecho", validation.instruction)
+        timestamp = 32400
+        while validation.error is None and timestamp < 40000:
+            timestamp += 100
+            now[0] = timestamp/1000
+            validation.update(FaceData(True,timestamp_ms=timestamp))
+        self.assertIn("Guiño derecho", validation.error)  # repetido, sí
 
 
 class VisionLifecycleTests(unittest.TestCase):

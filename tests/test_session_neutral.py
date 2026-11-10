@@ -101,11 +101,13 @@ class SessionNeutralTests(unittest.TestCase):
         for _ in range(6): events += engine.update(self.face(mouth_left=.25))
         self.assertEqual([e.type for e in events if e.type != "CURSOR_MOVE"], ["SCROLL_UP"])
 
-    def test_wrong_action_during_neutral_still_fails_with_its_name(self):
+    def test_wrong_action_during_neutral_is_named_without_failing(self):
+        # 2026-11-09: un gesto que se cuela con la cara relajada avisa con su nombre y espera.
         engine = GestureEngine(None, calibration=calibration(), clock=self.clock)
         v = CalibrationValidation(engine, clock=self.clock)
         for _ in range(15): v.update(self.face(mouth_left=.01, mouth_open=.3))
-        self.assertIn("Boca", v.error)
+        self.assertIsNone(v.error)
+        self.assertIn("Boca", v.instruction)
 
 
     def test_relaxed_mouth_later_in_session_is_accepted_as_neutral(self):

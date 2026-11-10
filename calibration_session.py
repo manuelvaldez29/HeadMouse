@@ -197,7 +197,7 @@ class CalibrationSession:
         gesture=GestureEngine(None,config=self.config.gesture,calibration=self.candidate,clock=self.clock)
         cc=self.config.calibration
         self.validator=CalibrationValidation(gesture,cc.validation_timeout_s,self.clock,cc.validation_neutral_s,
-                                              cc.validation_noise_s,cc.validation_wrong_s)
+                                              cc.validation_noise_s,cc.validation_wrong_s,cc.validation_strikes)
         self.state="validation"
         self.error=""
 

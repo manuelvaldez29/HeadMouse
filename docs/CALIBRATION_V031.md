@@ -349,3 +349,39 @@ sesión más `min_separation`, pero nunca por encima de la liberación provision
 del gesto. El mensaje de espera dice qué relajar ("relajá la boca"). Las pruebas
 están en `tests/test_session_neutral.py`; con el criterio anterior, el caso de
 prueba termina en timeout, que es el síntoma observado.
+
+## Prueba final tolerante y umbrales con margen (2026-11-09)
+
+### Falla observada
+
+Un perfil nuevo, calibrado el 2026-11-08 con 8 gestos activos, midió bien todos los
+gestos, pero no pasó la prueba final en 7 minutos.
+
+- **Falsas detecciones con la cara relajada.** "Se detectó Besito durante la cara
+  neutral" aparece 54 veces en la telemetría. Al llevar los labios a la izquierda,
+  se detectaban cejas.
+- **Cada error retrocedía.** Había que apretar Reintentar, y eso quitaba el gesto
+  recién aprobado: de 2 aprobados se pasó a 0.
+- **Umbrales pegados al reposo.** "Ambas cejas" (reposo 0,245, gesto 0,303) quedó
+  activando en 0,258, apenas al 22 % del recorrido, con la liberación 0,0015 por
+  debajo. Cuando las repeticiones separan sin errores, el umbral es el medio del
+  hueco entre la banda neutral y el p10 del gesto. Ese p10 incluye la subida del
+  gesto.
+
+### Cambio
+
+- **Umbral con margen.** La activación queda al menos a
+  `calibration.min_activation_fraction` (0,4) del recorrido entre las medianas de
+  reposo y gesto. Nunca pasa el p25 de ninguna repetición, para seguir detectando
+  3 de cada 4 muestras del gesto sostenido. En ese ejemplo, las cejas pasan del 22 %
+  al 40 %, y la liberación se separa en proporción.
+- **Gesto equivocado: aviso, no error.** Si otro gesto se cuela con la cara
+  relajada o en lugar del pedido, la prueba avisa con su nombre ("Se detectó
+  Besito con la cara relajada: relajá y seguimos") y vuelve a esperar la cara
+  relajada, sin perder lo aprobado. Recién a la `calibration.validation_strikes`-ésima
+  vez (3) del mismo gesto es error, y el mensaje dice cuál molesta y que se lo
+  recalibre o desmarque. No se reinicia el motor: un gesto trabado termina en el
+  aviso de tiempo agotado con su nombre.
+- **Reintentar conserva todo lo aprobado** y sigue desde el gesto pendiente.
+
+Los perfiles ya guardados mantienen sus umbrales hasta recalibrar.
