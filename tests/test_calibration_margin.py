@@ -49,6 +49,20 @@ class CalibrationMarginTests(unittest.TestCase):
         self.assertLessEqual(model.activation_threshold["eye_right_ratio"], rest - .4 * (rest - closed) + 1e-9)
         self.assertTrue(model.usable)
 
+    def test_a_repetition_with_idle_lips_does_not_drag_the_threshold_to_rest(self):
+        # 2026-11-10: "labios a la derecha" quedó en 0,011 (gesto 0,206, reposo 0,000) porque
+        # en una repetición los labios estuvieron quietos un rato, y saltó 41 veces en la prueba.
+        rng = random.Random(10)
+        model = GestureCalibration("MOUTH_RIGHT", ("mouth_right",), (1,), "GEOMETRIC")
+        for attempt in range(3):
+            neutral = [(abs(rng.gauss(0, .0005)),) for _ in range(46)]
+            idle = 5 if attempt == 1 else 0  # ~30 % del tiempo con los labios apenas corridos (~0,011)
+            active = [(rng.gauss(.011, .001),) for _ in range(idle)] + [(rng.gauss(.206, .01),) for _ in range(17 - idle)]
+            model.add_repetition(neutral, active)
+        model.fit(CalibrationConfig())
+        self.assertGreaterEqual(model.activation_threshold["mouth_right"], .4 * .2)
+        self.assertTrue(model.usable)  # el gesto sostenido se sigue detectando
+
     def test_setting_is_bounded(self):
         for value in (-.1, .9):
             with self.assertRaises(ValueError):

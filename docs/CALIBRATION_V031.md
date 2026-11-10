@@ -372,9 +372,19 @@ gestos, pero no pasó la prueba final en 7 minutos.
 
 - **Umbral con margen.** La activación queda al menos a
   `calibration.min_activation_fraction` (0,4) del recorrido entre las medianas de
-  reposo y gesto. Nunca pasa el p25 de ninguna repetición, para seguir detectando
-  3 de cada 4 muestras del gesto sostenido. En ese ejemplo, las cejas pasan del 22 %
-  al 40 %, y la liberación se separa en proporción.
+  reposo y gesto. En ese ejemplo, las cejas pasan del 22 % al 40 %, y la liberación
+  se separa en proporción.
+- **El 40 % es un piso firme (corregido el 2026-11-10).** La primera versión lo
+  topaba en el p25 de cada repetición. En la siguiente calibración del mismo perfil,
+  una repetición de "labios a la derecha" tuvo un rato con los labios apenas
+  corridos (~0,011), y el umbral quedó en 0,011 para un gesto de 0,206. En la prueba
+  saltó 41 veces con la cara relajada. Ahora una repetición así baja su propia
+  calidad, pero no arrastra el umbral; si la calidad no alcanza, se pide repetir
+  esa repetición.
+- **Gestos chicos por fisiología.** En ese perfil, levantar una sola ceja da +0,029
+  (contra +0,056 en otro usuario), dentro del movimiento natural de las cejas: fueron
+  158 s y 3 reintentos. Para esos casos, la pantalla de error ofrece "No puedo hacer
+  este gesto".
 - **Gesto equivocado: aviso, no error.** Si otro gesto se cuela con la cara
   relajada o en lugar del pedido, la prueba avisa con su nombre ("Se detectó
   Besito con la cara relajada: relajá y seguimos") y vuelve a esperar la cara

@@ -198,14 +198,13 @@ class GestureCalibration:
                         for n,a in zip(neutral, active)]
             threshold = max(candidates, key=lambda t: (min(scores(t)), mean(scores(t)), min(t-low, high-t)))
             # Margen desde el reposo: el p10 del gesto incluye su subida y el hueco
-            # quedaba pegado a la cara relajada. Sin pasar el p25 de ninguna repetición,
-            # para seguir detectando al menos 3 de cada 4 muestras del gesto sostenido.
+            # quedaba pegado a la cara relajada. Es un piso firme: una repetición con un
+            # rato sin gesto (soltar antes, arrancar tarde) baja su calidad, no el umbral.
+            # Con un tope en su p25, "labios a la derecha" quedó en 0,011 para un gesto de
+            # 0,206 y saltó 41 veces con la cara relajada en la prueba (2026-11-10).
             rest = median(v for rows in neutral for v in rows)
             peak = median(v for rows in active for v in rows)
-            floor = rest + getattr(config, "min_activation_fraction", 0) * (peak - rest)
-            cap = min(percentile(rows, 25) for rows in active)
-            if threshold < floor and cap > threshold:
-                threshold = min(floor, cap)
+            threshold = max(threshold, rest + getattr(config, "min_activation_fraction", 0) * (peak - rest))
             # Liberación entre banda neutral robusta y activación: hueco positivo.
             release = (low + threshold)/2
             self.activation_threshold[channel] = direction * threshold
