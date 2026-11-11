@@ -2,6 +2,7 @@
 import json
 import time
 from desktop.lifecycle import release_overlays
+from desktop.direction_diagnostic import DirectionDiagnosticPanel
 from copy import deepcopy
 from PySide6.QtCore import Qt, QTimer, Slot, QUrl
 from PySide6.QtGui import QShortcut, QKeySequence, QCursor, QDesktopServices
@@ -181,6 +182,8 @@ class MainWindow(QMainWindow):
         self._profiles_key=None
         self._settings_key=None
         self.gaze_overlay = None
+        self.ocular_lab = None
+        self._close_after_lab = False
         self._gaze_preview = False
         self._vertical_preview=False
         self._history_key=None
@@ -294,6 +297,8 @@ class MainWindow(QMainWindow):
         return layout
 
     def show_page(self,index):
+        if index != 3 and self.stack.currentIndex() == 3:
+            self.bridge.request("cancel_direction_diagnostic")
         self.stack.setCurrentIndex(index)
         for i,b in enumerate(self.nav): b.setChecked(i==index)
         if index==7: self.bridge.request("refresh_metrics")
@@ -315,6 +320,9 @@ class MainWindow(QMainWindow):
             camera=s
             if index==2 and self.calibration_tabs.currentIndex()==1:
                 camera=dict(s,settings=dict(s["settings"],ui=dict(s["settings"]["ui"],show_landmarks=True,show_overlay=True)))
+            elif index == 3 and s.get("direction_diagnostic"):
+                camera = dict(s, settings=dict(s["settings"], ui=dict(
+                    s["settings"]["ui"], show_landmarks=True, show_overlay=False, eye_source="both")))
             preview.present(camera)
         if self.gaze_overlay and self.gaze_overlay.isVisible():self.gaze_overlay.present_camera(s)
 
@@ -953,7 +961,12 @@ class MainWindow(QMainWindow):
         row.addWidget(button("Medir estabilidad · 10 s",lambda:self.bridge.request("start_jitter")),1)
         self.vertical_diagnostic_button=button("Diagnóstico vertical de Ojos",self.start_vertical_diagnostic)
         row.addWidget(self.vertical_diagnostic_button,1)
+        row.addWidget(button("Diagnóstico de dirección ocular", self.start_direction_diagnostic), 2)
         layout.addLayout(row)
+        lab_row = QHBoxLayout()
+        lab_row.addWidget(button("Simulador ocular y joystick virtual", self.open_ocular_lab))
+        lab_row.addStretch()
+        layout.addLayout(lab_row)
         live=QHBoxLayout()
         live.setSpacing(14)
         self.diagnostic_preview=CameraPreview("Cámara apagada\n\nTocá «Iniciar diagnóstico»")
@@ -967,6 +980,12 @@ class MainWindow(QMainWindow):
         panel.setSpacing(8)
         self.diag_face=label("Cámara apagada","DiagState")
         panel.addWidget(self.diag_face)
+        self.direction_panel = DirectionDiagnosticPanel(self.bridge.request)
+        panel.addWidget(self.direction_panel)
+        self.standard_diagnostic = QWidget()
+        panel.addWidget(self.standard_diagnostic)
+        panel = QVBoxLayout(self.standard_diagnostic)
+        panel.setContentsMargins(0, 0, 0, 0)
         self.diag_cursor=label("","Subtitle")
         panel.addWidget(self.diag_cursor)
         panel.addWidget(label("Gestos · la marca amarilla es donde se activa","ChartTitle"))
@@ -1042,12 +1061,49 @@ class MainWindow(QMainWindow):
         self.camera_return.setValue(1.)
         self.save_camera_preferences()
 
+    def open_ocular_lab(self):
+        from desktop.ocular_lab import OcularLabDialog
+
+        if self.ocular_lab:
+            self.ocular_lab.raise_()
+            return
+        controller = self.bridge.controller
+        controller.synthetic_lab.set()
+        self.stop_immediately()
+        try:
+            directory = controller.data_dir / "experiments" / "ocular-simulation"
+            self.ocular_lab = OcularLabDialog(self, directory)
+            self.ocular_lab.closed.connect(self._ocular_lab_closed)
+            self.ocular_lab.show()
+        except Exception:
+            controller.synthetic_lab.clear()
+            raise
+
+    def _ocular_lab_closed(self):
+        dialog, self.ocular_lab = self.ocular_lab, None
+        dialog.deleteLater()
+        self.bridge.controller.synthetic_lab.clear()
+        if self._close_after_lab:
+            self._close_after_lab = False
+            QTimer.singleShot(0, self.close)
+
+    def start_direction_diagnostic(self):
+        self.bridge.stop()
+        try:
+            context = self.screen_context()
+        except ValueError:
+            context = None
+        self.bridge.request("start_direction_diagnostic", screen_context=context)
+
     def _present_diagnostic(self,s):
         """Estado en lenguaje simple: rostro, hacia dónde iría el cursor y cada gesto."""
         from gesture_signals import GESTURE_SIGNALS
         d=s.get("diagnostic") or {}
         method=s["settings"]["ui"]["tracking_method"]
         self.vertical_diagnostic_button.setVisible(method!="nose")
+        direction = s.get("direction_diagnostic")
+        self.standard_diagnostic.setVisible(direction is None)
+        self.direction_panel.present(direction)
         if not s.get("camera"):
             face,face_style="Cámara apagada","DiagState"
         elif s.get("detected"):
@@ -1456,6 +1512,8 @@ class MainWindow(QMainWindow):
         self._gaze_preview = False
 
     def stop_immediately(self):
+        if self.ocular_lab:
+            self.ocular_lab.close()
         resident=getattr(self,"resident",None)
         if resident:resident.disarm()
         self.bridge.stop()
@@ -2072,6 +2130,11 @@ class MainWindow(QMainWindow):
         self.dictation_overlay.present(dictation,message,self.screen())
 
     def closeEvent(self,event):
+        if self.ocular_lab:
+            self._close_after_lab = True
+            self.ocular_lab.close()
+            event.ignore()
+            return
         resident=getattr(self,"resident",None)
         if not self._allow_close and not self._closing and resident and resident.minimize_on_close():
             event.ignore();self.hide();return

@@ -7,6 +7,8 @@ from application_controller import ApplicationController
 COMMANDS = {"create_profile", "select_profile", "rename_profile", "delete_profile", "save_settings", "pause_control", "resume_control", "activate_startup_control",
             "select_control_method", "select_eye_source", "save_public_settings", "upgrade_ocular_response",
             "start_vertical_diagnostic", "repeat_vertical_point", "cancel_vertical_diagnostic",
+            "start_direction_diagnostic", "ack_direction_target", "repeat_direction_target",
+            "cancel_direction_diagnostic", "save_direction_report",
             "start_gaze_calibration", "review_gaze_training", "export_gaze_attempt", "record_gaze_viewport", "repeat_gaze_point", "save_gaze_calibration", "cancel_gaze_calibration",
             "start_eye_calibration", "save_eye_calibration", "cancel_eye_calibration",
             "restore_defaults", "start_camera", "stop_camera", "activate_control", "stop_control",
@@ -16,7 +18,7 @@ COMMANDS = {"create_profile", "select_profile", "rename_profile", "delete_profil
             "start_voice_calibration", "cancel_voice_calibration", "save_voice_calibration", "prepare_speaker_model",
             "refresh_microphones", "remember_current_profile"}
 CAMERA_COMMANDS = {"start_camera", "start_calibration", "validate_calibration", "repeat_calibration",
-    "start_vertical_diagnostic",
+    "start_vertical_diagnostic", "start_direction_diagnostic",
     "start_eye_calibration", "start_gaze_calibration", "start_diagnostic", "activate_control", "start_jitter", "start_experiment"}
 
 
@@ -82,7 +84,9 @@ class ControllerWorker(QObject):
             self.error.emit("Operación no disponible")
             return
         try:
-            if name in ("stop_camera", "shutdown", "stop_control", "select_profile", "save_settings", "save_public_settings", "select_control_method", "select_eye_source", "upgrade_ocular_response", "cancel_eye_calibration", "cancel_gaze_calibration", "cancel_vertical_diagnostic"):
+            cancel_direction_start = (name == "cancel_direction_diagnostic" and self.pending_camera
+                                      and self.pending_camera[0] == "start_direction_diagnostic")
+            if cancel_direction_start or name in ("stop_camera", "shutdown", "stop_control", "select_profile", "save_settings", "save_public_settings", "select_control_method", "select_eye_source", "upgrade_ocular_response", "cancel_eye_calibration", "cancel_gaze_calibration", "cancel_vertical_diagnostic"):
                 pending = self.pending_camera
                 self.pending_camera = None
                 if pending:
@@ -111,7 +115,7 @@ class ControllerWorker(QObject):
                 self.timer.stop()
                 self.finished.emit()
                 return
-            if name != "experiment_input":
+            if name not in ("experiment_input", "ack_direction_target"):
                 self.profiles = self.controller.profiles.list_profiles()
             self.publish()
         except Exception as exc:

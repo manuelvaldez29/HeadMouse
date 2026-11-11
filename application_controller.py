@@ -43,6 +43,7 @@ class ApplicationController:
         self.startup_store = StartupPreferences(self.data_dir / "startup.json")
         self.clock = clock
         self.emergency = threading.Event()
+        self.synthetic_lab = threading.Event()
         self._pending_stop_reason = None  # motivo de una parada pedida desde otro hilo
         self.emergency.set()
         self.profile = None
@@ -55,6 +56,7 @@ class ApplicationController:
         self.eye_calibration = None
         self.gaze_calibration = None
         self.vertical_diagnostic=None
+        self.direction_diagnostic = None
         self._vertical_trace=None
         self._vertical_saved=False
         self._gaze_logged = None
@@ -312,6 +314,8 @@ class ApplicationController:
         return False
 
     def start_camera(self, wait=True):
+        if self.synthetic_lab.is_set():
+            raise ValueError("Cerrá el laboratorio ocular antes de abrir la cámara")
         self._require_profile()
         if self.vision is not None:
             if self.camera_status().get("stop_requested"):
@@ -360,6 +364,9 @@ class ApplicationController:
 
     def stop_control(self, reason=None):
         self.emergency_stop()
+        if self.state == "DIRECTION_DIAGNOSTIC":
+            self.direction_diagnostic = None
+            self.state = "PREVIEW" if self.vision else "HOME"
         try:
             if self.control:
                 self.control.stop()
@@ -414,6 +421,8 @@ class ApplicationController:
             raise RuntimeError("No se pudieron cerrar todos los recursos: " + "; ".join(str(e) for e in errors))
 
     def activate_control(self, confirmed=False, screen_context=None, automatic=False):
+        if self.synthetic_lab.is_set():
+            raise ValueError("Cerrá el laboratorio ocular antes de activar el control")
         if self.session_guard is not None and not self.session_guard():
             raise ValueError("La sesión de Windows está bloqueada o no permite controlar el escritorio")
         logging.getLogger(__name__).info("Activación solicitada: método=%s banco=%s confirmada=%s emergencia=%s cámara=%s acciones_validadas=%s",
@@ -423,7 +432,7 @@ class ApplicationController:
         self._require_tracking_calibration()
         if not confirmed or self.emergency.is_set():
             raise ValueError("La activación fue cancelada o no está autorizada")
-        if self.state in ("CALIBRATING", "EYE_CALIBRATING", "GAZE_CALIBRATING", "VERTICAL_DIAGNOSTIC", "JITTER") or (self.experiment and self.experiment.active):
+        if self.state in ("CALIBRATING", "EYE_CALIBRATING", "GAZE_CALIBRATING", "VERTICAL_DIAGNOSTIC", "DIRECTION_DIAGNOSTIC", "JITTER") or (self.experiment and self.experiment.active):
             raise ValueError("Terminá o cancelá la medición antes de activar")
         if self.voice_wizard and self.voice_wizard.state in ("silence", "phrase", "processing"):
             raise ValueError("Terminá o cancelá la calibración de voz antes de activar")
@@ -776,6 +785,70 @@ class ApplicationController:
         self.state = "EYE_CALIBRATING"
         self.message = "Modo experimental: calibración de tracking ocular, con el control desactivado."
 
+    def start_direction_diagnostic(self, screen_context=None):
+        from direction_diagnostic import DirectionDiagnostic
+        from screen_mapping import same_context
+
+        self.stop_control()
+        if self.experiment and self.experiment.active:
+            self.experiment.cancel()
+        self.jitter = self.eye_calibration = self.gaze_calibration = None
+        self.vertical_diagnostic = self._vertical_trace = None
+        self.start_camera()
+        source = self.config.ui.eye_source
+        models = {}
+        relative = calibration_for(self.profile, "eye", source)
+        if relative and relative.get("camera_context") in (None, self._relative_camera_context()):
+            settings = deepcopy(self.config.eye)
+            settings.vertical_reference = relative.get("vertical_reference", "eyelids")
+            try:
+                models["relative_model"] = create_strategy("eye", relative, settings, source)
+            except ValueError:
+                pass
+        absolute = calibration_for(self.profile, "eye_absolute", source)
+        if absolute and screen_context is not None:
+            try:
+                if same_context(absolute["context"], self._camera_context(screen_context)):
+                    model = create_strategy("eye_absolute", absolute, self.config.absolute, source)
+                    if model.model.record["validated"]:
+                        models["absolute_model"] = model
+            except (KeyError, ValueError):
+                pass
+        thresholds = gesture_profile(self.profile, "eyes").get("thresholds", {})
+        limits = {side: thresholds.get(f"blink_{side}", DEFAULT_THRESHOLDS[f"blink_{side}"])
+                  for side in ("left", "right")}
+        self.direction_diagnostic = DirectionDiagnostic(
+            self.clock, max_age=self.config.gesture.stale_after_s, limits=limits, models=models)
+        self.state = "DIRECTION_DIAGNOSTIC"
+        self.message = "Diagnóstico de dirección ocular iniciado."
+
+    def ack_direction_target(self, session_id, index, attempt, viewport=None):
+        if self.state == "DIRECTION_DIAGNOSTIC":
+            self.direction_diagnostic.acknowledge(session_id, index, attempt, viewport)
+
+    def repeat_direction_target(self, skip=False):
+        if self.state == "DIRECTION_DIAGNOSTIC":
+            self.direction_diagnostic.retry(skip=skip)
+
+    def cancel_direction_diagnostic(self):
+        if self.state == "DIRECTION_DIAGNOSTIC":
+            self.stop_control()
+
+    def save_direction_report(self):
+        from user_storage import write_json
+
+        session = self.direction_diagnostic
+        if self.state != "DIRECTION_DIAGNOSTIC" or session.state != "ready" or session.path:
+            return
+        path = self.data_dir / "experiments" / "ocular-direction" / f"{session.session_id}.json"
+        try:
+            write_json(path, session.record())
+        except OSError:
+            session.save_error = True
+        else:
+            session.path = str(path)
+            session.save_error = False
+
     def start_vertical_diagnostic(self):
         from vertical_diagnostic import VerticalDiagnosticSession,DiagnosticMovementTrace
         self.stop_control()
@@ -1047,6 +1120,12 @@ class ApplicationController:
         if self.vision.error or not self.vision.is_alive():
             raise RuntimeError("La cámara o MediaPipe se detuvo. Revisá la conexión y volvé a abrir la cámara.")
         face = self.vision.get_face_data()
+        if self.state == "DIRECTION_DIAGNOSTIC":
+            session = self.direction_diagnostic
+            session.update(face, self.vision.get_fps())
+            if session.state == "ready" and not session.path and not session.save_error:
+                self.save_direction_report()
+            return
         if self.control and self.config.ui.tracking_method in ("eye", "eye_absolute"):
             size = getattr(self.vision, "_frame_size", None)
             record = self._tracking_record() or {}
@@ -1185,7 +1264,7 @@ class ApplicationController:
                 conditions.append("Iris seleccionado no detectado o frame vencido")
         if not camera_status.get("ready"):
             conditions.append("Cámara no iniciada o todavía no lista")
-        if self.state in ("CALIBRATING", "EYE_CALIBRATING", "GAZE_CALIBRATING", "VERTICAL_DIAGNOSTIC", "JITTER") or (self.experiment and self.experiment.active):
+        if self.state in ("CALIBRATING", "EYE_CALIBRATING", "GAZE_CALIBRATING", "VERTICAL_DIAGNOSTIC", "DIRECTION_DIAGNOSTIC", "JITTER") or (self.experiment and self.experiment.active):
             conditions.append("Terminá o cancelá la medición en curso")
         blockers = list(conditions)
         if not self.control:
@@ -1221,6 +1300,7 @@ class ApplicationController:
                     wizard=self.wizard.snapshot() if self.wizard else None,
                     eye_calibration=self.eye_calibration.snapshot() if self.eye_calibration else None,
                     gaze_calibration=self.gaze_calibration.snapshot() if self.gaze_calibration else None,
+                    direction_diagnostic=self.direction_diagnostic.snapshot() if self.direction_diagnostic else None,
                     vertical_diagnostic=self.vertical_diagnostic.snapshot() if self.vertical_diagnostic else None,
                     vertical_report=self.vertical_diagnostic.report() if self.vertical_diagnostic else None,
                     vertical_trace=deepcopy(self._vertical_trace.last) if self._vertical_trace else {},
