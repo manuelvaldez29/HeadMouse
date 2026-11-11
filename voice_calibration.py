@@ -181,7 +181,8 @@ class VoiceCalibration:
             if self._cancel.is_set():
                 self._set("cancelled", "Calibración de voz cancelada.")
                 return
-            accuracy.append(word_accuracy(phrase, self.transcriber.transcribe(audio, self.config.language)))
+            accuracy.append(word_accuracy(phrase, self.transcriber.transcribe(
+                audio, self.config.language, hotwords=self.config.vocabulary)))
         voiced = [v for audio in captured for v in audio if abs(v) > .01]
         noise_rms, voice_rms = max(rms(noise), 1e-5), rms(voiced) or rms([v for a in captured for v in a])
         voiceprint = None

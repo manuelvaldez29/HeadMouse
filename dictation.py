@@ -478,7 +478,7 @@ class Dictation:
         spoken_at = self.clock()
         with self._lock:
             self._set("transcribing", "Transcribiendo…")
-        text = self.transcriber.transcribe(audio, self.config.language)
+        text = self.transcriber.transcribe(audio, self.config.language, hotwords=self.config.vocabulary)
         current = self.focus.focused() if not self._cancel.is_set() else None
         same_field = current and current.editable and not current.password and (
             current.runtime_id == info.runtime_id if info.runtime_id is not None else current == info
@@ -834,12 +834,13 @@ class WhisperTranscriber:
                                            cpu_threads=min(8, os.cpu_count() or 4), local_files_only=True)
         return self._model
 
-    def transcribe(self, audio, language="es"):
+    def transcribe(self, audio, language="es", hotwords=""):
         import numpy as np
         if len(audio) < SAMPLE_RATE * .3:
             return ""
         segments, _ = self._load().transcribe(np.asarray(audio, dtype=np.float32), language=language,
-                                              beam_size=1, vad_filter=True, condition_on_previous_text=False)
+                                              beam_size=1, vad_filter=True, condition_on_previous_text=False,
+                                              hotwords=hotwords or None)
         # Descartar segmentos que el modelo considera no-habla (alucinaciones con ruido).
         return " ".join(s.text.strip() for s in segments if s.no_speech_prob < .6 and s.avg_logprob > -1.2)
 

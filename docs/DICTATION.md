@@ -88,6 +88,27 @@ gestos sí cuentan mientras escucha:
   después del click cerraba el dictado con "no se escuchó nada" antes de que
   el usuario empezara.
 
+### Palabras frecuentes (2026-11-11)
+
+`voice.vocabulary` es una lista corta de palabras que Whisper favorece (`hotwords`). Se
+edita en Configuración → Dictado por voz → "Palabras que usás seguido". Por defecto trae:
+yerba, mate, colectivo, turno, facultad, kiosco y remís. Cada persona suma nombres de
+contactos, lugares o palabras de su zona. La usan el dictado y la calibración de voz.
+
+Prueba con la voz de un usuario: 10 frases leídas con su micrófono, de las cuales se
+evaluaron 9; la primera se cortó al grabar, por la pausa de 1,2 s.
+
+| Configuración | Palabras bien | Por frase |
+|---|---|---|
+| `small` sin lista | 95,4 % | ~3,5 s |
+| `small` con la lista por defecto | 97,1 % | ~3,5 s |
+| `small` con la lista y los nombres del usuario | 97,1 %, con los nombres bien escritos | ~3,6 s |
+| `large-v3-turbo` (probado, no adoptado) | ~99 % | 13,5 s |
+
+Con la lista, "yerba" deja de salir como "hierba" y "Julián" como "Julianne". Queda
+"turno" → "tu mundo", que es un error acústico. La lista va corta a propósito: una
+larga hace que esas palabras aparezcan donde no se dijeron.
+
 ### Detección de voz (2026-11-03)
 
 `voice.detector` elige cómo se decide que hay voz. Se cambia en Configuración →

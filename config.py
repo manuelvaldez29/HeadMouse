@@ -200,6 +200,10 @@ class VoiceConfig:
     after_dictation_ms: float = 600   # gestos bloqueados al terminar (cola del habla)
     detector: str = "neural"          # "neural" (Silero) o "energy" (volumen, el de antes)
     speaker_check: bool = True        # con calibración de voz: terminar cuando deja de hablar el usuario
+    # Palabras que Whisper favorece (hotwords). Con la voz del usuario, el 2026-11-11,
+    # "yerba" salía "hierba" y "Julián" "Julianne": con la lista, 95 % → 97 % de palabras
+    # bien. Corta a propósito: una lista larga hace que aparezcan donde no se dijeron.
+    vocabulary: str = "yerba, mate, colectivo, turno, facultad, kiosco, remís"
 
     def __post_init__(self):
         for name in ("enabled", "append_space", "sound_cues", "commands", "speaker_check"):
@@ -209,6 +213,9 @@ class VoiceConfig:
             raise ValueError("Modelo de voz desconocido")
         if not isinstance(self.microphone, str) or len(self.microphone) > 512:
             raise ValueError("Micrófono inválido")
+        if not isinstance(self.vocabulary, str) or len(self.vocabulary) > 300:
+            raise ValueError("Las palabras frecuentes deben ser texto de hasta 300 caracteres")
+        self.vocabulary = ", ".join(w.strip() for w in self.vocabulary.replace("\n", ",").split(",") if w.strip())
         if self.detector not in ("neural", "energy"):
             raise ValueError("Detector de voz desconocido")
         if not isinstance(self.language, str) or not 2 <= len(self.language) <= 5:

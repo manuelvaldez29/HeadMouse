@@ -1175,6 +1175,13 @@ class MainWindow(QMainWindow):
         self.voice_send.addItems(["","enviar"])
         self.voice_send.setAccessibleName("Palabra final que presiona Enter")
         form.addRow("Palabra final que presiona Enter (vacío: ninguna)",self.voice_send)
+        self.voice_vocabulary=QLineEdit()
+        self.voice_vocabulary.setMaxLength(300)
+        self.voice_vocabulary.setPlaceholderText("yerba, mate, colectivo, nombres de contactos…")
+        self.voice_vocabulary.setAccessibleName("Palabras que usás seguido, separadas por comas")
+        self.voice_vocabulary.setToolTip("El dictado las escribe bien aunque suenen parecido a otras: nombres, "
+                                         "lugares, palabras de tu zona. Pocas y frecuentes funcionan mejor que una lista larga.")
+        form.addRow("Palabras que usás seguido (separadas por comas)",self.voice_vocabulary)
         form.addRow(label("Comandos: «borrar», «borrar N palabras», «borrar N letras», «borrar todo», «deshacer». "
                           "Decí solo el comando. La lista completa está en Gestos y acciones.","Subtitle"))
         section(form,"Vista de cámara")
@@ -1496,6 +1503,7 @@ class MainWindow(QMainWindow):
         settings["voice"]["model"]=self.voice_model.currentData()
         settings["voice"]["detector"]=self.voice_detector.currentData()
         settings["voice"]["send_word"]=self.voice_send.currentText().strip().lower()
+        settings["voice"]["vocabulary"]=self.voice_vocabulary.text().strip()
         settings["keyboard"]={key:check.isChecked() for key,check in self.keyboard_checks.items()}
         preview_mode=self.keyboard_preview_mode.currentData()
         settings["keyboard"].update(size=self.keyboard_size.currentData(),position=self.keyboard_position.currentData(),
@@ -1845,6 +1853,7 @@ class MainWindow(QMainWindow):
             self.voice_model.setCurrentIndex(max(0,self.voice_model.findData(s["settings"]["voice"]["model"])))
             self.voice_detector.setCurrentIndex(max(0,self.voice_detector.findData(s["settings"]["voice"].get("detector","neural"))))
             self.voice_send.setCurrentText(s["settings"]["voice"]["send_word"])
+            self.voice_vocabulary.setText(s["settings"]["voice"].get("vocabulary",""))
             keyboard=s["settings"].get("keyboard")
             if keyboard:
                 for key,check in self.keyboard_checks.items():
