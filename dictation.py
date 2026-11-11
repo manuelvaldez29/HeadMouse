@@ -289,7 +289,7 @@ class Dictation:
 
     def __init__(self, config: VoiceConfig, focus, recorder_factory, transcriber, typer,
                  clock=time.monotonic, metrics=None, cue=None, detector_factory=None, speaker_factory=None,
-                 output_allowed=None, hints=None):
+                 output_allowed=None, hints=None, assistant=None):
         self.config, self.focus, self.recorder_factory = config, focus, recorder_factory
         self.click_allowed = lambda: True
         self.detector_factory = detector_factory  # None: detección por energía
@@ -297,6 +297,7 @@ class Dictation:
         self.transcriber, self.typer, self.clock, self.metrics = transcriber, typer, clock, metrics
         self.cue = cue or (lambda kind: None)
         self.output_allowed = output_allowed or (lambda: True)
+        self.assistant = assistant  # assistant.Assistant: texto → (hizo algo, mensaje)
         # Gestos del perfil para el aviso "Escuchando…": terminar (click) y cancelar (pausa).
         self.hints = dict(dict(finish="tu gesto de click", cancel="tu gesto de pausa"), **(hints or {}))
         self.state, self.message, self.last_text = "idle", "", ""
@@ -339,6 +340,10 @@ class Dictation:
         """Acción DICTATE: dictar en el campo que ya tiene el foco."""
         self._arm("now", expected_runtime)
 
+    def start_assistant(self):
+        """Acción ASSISTANT: escuchar un comando ("abrir Bloc de notas") en vez de dictar."""
+        self._arm("assistant")
+
     def cancel(self):
         with self._lock:
             if self.state != "idle":
@@ -365,7 +370,7 @@ class Dictation:
             self._cancel.clear()
             self._finish.clear()
             self._request = (kind, self.clock(), expected_runtime)
-            self._set("arming", "Buscando campo de texto…")
+            self._set("arming", "Asistente: preparando el micrófono…" if kind == "assistant" else "Buscando campo de texto…")
         self._wake.set()
 
     def _set(self, state, message=""):
@@ -416,22 +421,25 @@ class Dictation:
             time.sleep(.05)
 
     def _session(self, kind, since, expected_runtime=None):
-        info = self._wait_focus(kind, since)
+        assistant = kind == "assistant"  # sin campo de texto: lo dicho es un comando
+        info = None if assistant else self._wait_focus(kind, since)
         if expected_runtime is not None and (info is None or info.runtime_id != expected_runtime):
             with self._lock:
                 self.message = "El campo cambió antes de iniciar el dictado."
             return
-        if info is None or self._cancel.is_set() or not self.output_allowed():
+        if (info is None and not assistant) or self._cancel.is_set() or not self.output_allowed():
             with self._lock:
-                self.message = "" if kind == "click" else "No hay un campo de texto con el foco."
+                self.message = ("" if kind == "click" else "Asistente no disponible ahora." if assistant
+                                else "No hay un campo de texto con el foco.")
             return
         started = self.clock()
         self.cue("start")
         with self._lock:
             h = self.hints
-            self._set("listening", "Escuchando… hablá. "
+            self._set("listening", ("Asistente: decí un comando, por ejemplo «abrir Bloc de notas». " if assistant
+                                    else "Escuchando… hablá. ")
                       + (f"{h['finish'][:1].upper() + h['finish'][1:]}: terminar ya · " if h["finish"] else "")
-                      + "decí «borrar» para corregir · "
+                      + ("" if assistant else "decí «borrar» para corregir · ")
                       + (f"{h['cancel']}: cancelar." if h["cancel"] else "F8: cancelar."))
         endpoint = Endpointer(self.config.silence_s, self.config.max_utterance_s,
                               self.config.no_speech_timeout_s,
@@ -464,7 +472,7 @@ class Dictation:
         if self._cancel.is_set():
             self.cue("cancel")
             with self._lock:
-                self.message = "Dictado cancelado."
+                self.message = "Asistente cancelado." if assistant else "Dictado cancelado."
             self._record(dict(result="cancelled", listen_s=self.clock() - started))
             return
         if endpoint.state == "timeout":
@@ -479,6 +487,10 @@ class Dictation:
         with self._lock:
             self._set("transcribing", "Transcribiendo…")
         text = self.transcriber.transcribe(audio, self.config.language, hotwords=self.config.vocabulary)
+        if assistant:
+            self._assistant_reply(text, listen_s=spoken_at - started, audio_s=len(audio) / SAMPLE_RATE,
+                                  transcribe_s=self.clock() - spoken_at)
+            return
         current = self.focus.focused() if not self._cancel.is_set() else None
         same_field = current and current.editable and not current.password and (
             current.runtime_id == info.runtime_id if info.runtime_id is not None else current == info
@@ -508,6 +520,23 @@ class Dictation:
         self._record(dict(result="typed" if text or send else "empty", listen_s=spoken_at - started,
                           audio_s=len(audio) / SAMPLE_RATE, transcribe_s=latency,
                           characters=len(text.strip()), sent=send))
+
+    def _assistant_reply(self, text, **timing):
+        if self._cancel.is_set() or not self.output_allowed():
+            with self._lock:
+                self.message = "Asistente cancelado: el control ya no está activo."
+            self._record(dict(result="cancelled", **timing))
+            return
+        if self.assistant is None:
+            done, message = False, "El asistente no está disponible."
+        else:
+            done, message = self.assistant(text)
+        # Sin el texto dicho en el log ni en las métricas: puede ser personal.
+        logger.info("Asistente: %s", "acción hecha" if done else "sin acción")
+        with self._lock:
+            self.last_text = ""
+            self.message = message
+        self._record(dict(result="assistant" if done else "assistant_unknown", **timing))
 
     def _command(self, name, count, **timing):
         if name == "last":
@@ -955,8 +984,10 @@ def create_dictation(config: VoiceConfig, metrics=None, voiceprint=None, output_
     if installed_model(config.model) is None:
         raise RuntimeError(f"Falta el modelo de voz '{config.model}'. "
                            "Preparalo en Configuración.")
+    from assistant import Assistant
+    typer = SendInputTyper()
     return Dictation(config, UIAFocusProbe(), lambda: SoundDeviceRecorder(config.microphone), WhisperTranscriber(config.model),
-                     SendInputTyper(), metrics=metrics, cue=sound_cue if config.sound_cues else None,
+                     typer, metrics=metrics, cue=sound_cue if config.sound_cues else None, assistant=Assistant(typer=typer),
                      detector_factory=detector_factory(config), speaker_factory=speaker_factory(config, voiceprint),
                      output_allowed=output_allowed, hints=hints)
 

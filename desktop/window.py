@@ -160,7 +160,7 @@ ACTION_LABELS = dict(LEFT_CLICK="Click izquierdo",RIGHT_CLICK="Click derecho",DO
                      LEFT_DRAG_START="Click sostenido",LEFT_DRAG_END="Soltar click",
                      SCROLL_UP="Scroll arriba",SCROLL_DOWN="Scroll abajo",PAUSE="Pausar / reanudar",
                      KEY_ENTER="Enter",KEY_ESCAPE="Escape",KEY_SPACE="Espacio",
-                     OPEN_START_MENU="Abrir Inicio",DICTATE="Dictado por voz",
+                     OPEN_START_MENU="Abrir Inicio",DICTATE="Dictado por voz",ASSISTANT="Asistente de voz",
                      KEY_BACKSPACE="Borrar letra",DELETE_WORD="Borrar palabra",NONE="Sin acción")
 
 
@@ -1572,6 +1572,15 @@ class MainWindow(QMainWindow):
             rows.addWidget(label(phrase),index,0)
             rows.addWidget(label(effect,"Subtitle"),index,1)
         inner.addLayout(rows)
+        from assistant import ASSISTANT_COMMANDS
+        inner.addWidget(label("Asistente de voz: asigná «Asistente de voz» a un gesto y decí un comando. "
+                              "Usa el micrófono del dictado: tiene que estar activado.","Subtitle"))
+        commands=QGridLayout()
+        commands.setHorizontalSpacing(24)
+        for index,(phrase,effect,_example) in enumerate(ASSISTANT_COMMANDS):
+            commands.addWidget(label(phrase),index,0)
+            commands.addWidget(label(effect,"Subtitle"),index,1)
+        inner.addLayout(commands)
         self.voice_help_notes=label("","Subtitle")
         inner.addWidget(self.voice_help_notes)
         box.setAccessibleName("Comandos de voz")

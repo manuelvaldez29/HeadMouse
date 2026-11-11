@@ -623,6 +623,13 @@ class ControlEngine:
             if self.dictation is not None:
                 self.dictation.start_now()
             self._log_event("DICTATE")
+        elif ev.type == "ASSISTANT":
+            # Usa el micrófono y el modelo del dictado: sin dictado activo no hay asistente.
+            if self.dictation is not None and hasattr(self.dictation, "start_assistant"):
+                self.dictation.start_assistant()
+            else:
+                logger.info("[ControlEngine] Asistente no disponible: activá el dictado por voz en Configuración")
+            self._log_event("ASSISTANT")
         elif ev.type in ("KEY_ENTER", "KEY_ESCAPE", "KEY_SPACE"):
             self.backend.press({"KEY_ENTER": "enter", "KEY_ESCAPE": "esc", "KEY_SPACE": "space"}[ev.type], _pause=False)
             self._log_event(ev.type)
