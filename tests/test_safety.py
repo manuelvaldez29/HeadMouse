@@ -136,6 +136,10 @@ class VisionLifecycleTests(unittest.TestCase):
         spec = importlib.util.spec_from_file_location("isolated_vision", Path(__file__).parents[1]/"vision_engine.py")
         self.module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(self.module)
+        from contextlib import nullcontext
+        ownership = patch.object(self.module, "camera_session", side_effect=nullcontext)
+        ownership.start()
+        self.addCleanup(ownership.stop)
         self.cv = self.modules["cv2"]
         self.mp = self.module.mp_vision
 
@@ -149,7 +153,7 @@ class VisionLifecycleTests(unittest.TestCase):
         cap.isOpened.return_value = False
         with self.assertLogs("isolated_vision", level="ERROR"):
             engine.run()
-        cap.release.assert_called_once()
+        self.assertEqual(cap.release.call_count, self.cv.VideoCapture.call_count)
         self.assertTrue(engine._stopped.is_set())
         with self.assertRaises(RuntimeError):
             engine.wait_ready()
@@ -159,12 +163,13 @@ class VisionLifecycleTests(unittest.TestCase):
             engine = self.engine()
             cap = self.cv.VideoCapture.return_value
             cap.reset_mock()
+            self.cv.VideoCapture.reset_mock()
             cap.isOpened.return_value = True
             cap.read.return_value = (False, None)
             self.mp.FaceLandmarker.create_from_options.side_effect = RuntimeError("detector") if detector_fails else None
             with self.assertLogs("isolated_vision", level="ERROR"):
                 engine.run()
-            cap.release.assert_called_once()
+            self.assertEqual(cap.release.call_count, self.cv.VideoCapture.call_count)
             self.assertFalse(engine.get_face_data().detected)
             self.assertTrue(engine.ready.is_set())
 

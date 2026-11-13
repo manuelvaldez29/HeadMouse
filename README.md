@@ -5,8 +5,8 @@ Tesis UNSTA 2026 — Bloj · Domfrocht · Petrelli · Valdez.
 
 ## Aplicación instalable para Windows
 
-La distribución de tesis **0.5.1** se construye en la rama integrada `tesis-v0.2`.
-El instalador `HeadMouse-Setup-0.5.1-win64.exe` incluye el entorno de ejecución y los modelos de voz;
+La distribución de tesis **0.5.2** se construye en la rama integrada `tesis-v0.2`.
+El instalador `HeadMouse-Setup-0.5.2-win64.exe` incluye el entorno de ejecución y los modelos de voz;
 el usuario final no necesita Python ni una terminal. Los perfiles se conservan en
 `%LOCALAPPDATA%\HeadMouse`, fuera del programa. Inicio con Windows y activación
 automática son opciones independientes y desactivadas inicialmente; la segunda

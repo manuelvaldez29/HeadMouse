@@ -27,7 +27,9 @@ import sys
 import math
 import logging
 from pathlib import Path
+from contextlib import ExitStack
 from dataclasses import replace
+from camera_access import CameraStartupError, camera_session
 from config import ROOT, VisionConfig
 from face_data import FaceData
 from gesture_signals import extract_blendshapes
@@ -139,6 +141,8 @@ class VisionEngine(threading.Thread):
         self._face_status = "WAITING"
         self._processing_times = []
         self._backend_effective = None
+        self._capture_attempts = []
+        self._startup_extension_s = 0.
         self._accepted = {}
 
         # ── Asegurar modelo descargado ────────────────────────────────────────
@@ -162,7 +166,18 @@ class VisionEngine(threading.Thread):
             return self._frame.copy() if self._frame is not None else None
 
     def wait_ready(self, timeout=None):
-        if not self.ready.wait(self.config.startup_timeout_s if timeout is None else timeout):
+        if timeout is not None:
+            ready = self.ready.wait(timeout)
+        else:
+            deadline = time.monotonic() + self.config.startup_timeout_s
+            ready = self.ready.is_set()
+            while not ready:
+                with self._lock:
+                    remaining = deadline + self._startup_extension_s - time.monotonic()
+                if remaining <= 0:
+                    break
+                ready = self.ready.wait(min(remaining, .1))
+        if not ready:
             status = self.diagnostics()
             self.request_stop()
             raise TimeoutError(f"Inicio de cámara/MediaPipe agotado: etapa {status['stage']}, "
@@ -183,6 +198,8 @@ class VisionEngine(threading.Thread):
                 operation_elapsed_s=max(0., now-self._operation_at),
                 elapsed_s=max(0., now-self._created_at), timeline=dict(self._timeline),
                 backend_requested=self.config.capture_backend, backend_effective=self._backend_effective,
+                capture_attempts=list(self._capture_attempts),
+                startup_extension_s=self._startup_extension_s,
                 actual_frame=dict(width=self._frame_size[0],height=self._frame_size[1]),
                 camera_index=self.camera_index, requested=dict(width=self.config.frame_width,
                     height=self.config.frame_height, fps=self.target_fps), accepted=dict(self._accepted),
@@ -228,28 +245,86 @@ class VisionEngine(threading.Thread):
                     f"etapa {status['stage']}, operación {status['operation']} "
                     f"({status['operation_elapsed_s']:.2f} s); se conserva el hilo y sus recursos")
 
-    def _open_capture(self):
-        backend = self.config.capture_backend
+    def _open_capture(self, backend):
         if backend != "auto" and sys.platform != "win32":
             raise ValueError(f"El backend {backend} requiere Windows; seleccioná auto")
         api = {"auto":cv2.CAP_ANY, "dshow":cv2.CAP_DSHOW, "msmf":cv2.CAP_MSMF}[backend]
         self._note("CAMERA_OPENING", "camera_open", backend=backend)
-        cap = cv2.VideoCapture(self.camera_index, api)
-        return cap
+        return cv2.VideoCapture(self.camera_index, api)
+
+    def _start_capture(self):
+        preferred = self.config.capture_backend
+        backends = (preferred,)
+        if sys.platform == "win32":
+            backends += tuple(name for name in ("dshow", "msmf") if name != preferred)
+        started = time.monotonic()
+        deadline = started + self.config.startup_timeout_s
+        for position, backend in enumerate(backends):
+            if self._stop_requested.is_set() or time.monotonic() >= deadline:
+                break
+            if sys.platform == "win32" and backend in ("msmf", "auto"):
+                # MSMF's native open/read can take over ten seconds even on a working camera.
+                deadline = max(deadline, time.monotonic() + 25)
+                with self._lock:
+                    self._startup_extension_s = deadline - started - self.config.startup_timeout_s
+            cap, keep = None, False
+            try:
+                self._backend_effective = None
+                cap = self._open_capture(backend)
+                if self._stop_requested.is_set():
+                    return None
+                if not cap.isOpened():
+                    detail = "no abrió"
+                else:
+                    self._configure_capture(cap)
+                    read_deadline = deadline if position == len(backends)-1 else min(deadline, time.monotonic()+2)
+                    detail = "abrió pero no entregó video"
+                    reported = False
+                    while not self._stop_requested.is_set():
+                        if self._read_capture(cap) is not None:
+                            keep = True
+                            return cap
+                        if not reported:
+                            self._note("RECOVERABLE_ERROR", "camera_read")
+                            reported = True
+                        if time.monotonic() >= read_deadline:
+                            break
+                        self._stop_requested.wait(.03)
+            except Exception as exc:
+                detail = f"{type(exc).__name__}: {exc}"
+            finally:
+                if not keep and cap is not None:
+                    self._note("CLOSING", "camera_release", backend=backend)
+                    cap.release()
+            with self._lock:
+                self._capture_attempts.append(f"{backend}: {detail}")
+        if self._stop_requested.is_set():
+            return None
+        details = ", ".join(self._capture_attempts) or "se agotó el tiempo de inicio"
+        raise CameraStartupError("initialization", f"No se pudo iniciar la cámara del índice {self.camera_index} "
+                                 f"({details}). Verificá el índice en Configuración y si otra aplicación usa la cámara.")
 
     def _configure_capture(self, cap):
         self._note("CAMERA_OPEN", "camera_configure")
         self._backend_effective = cap.getBackendName()
+        def measured(prop):
+            value=cap.get(prop)
+            return value if isinstance(value,(float,int)) and math.isfinite(value) else None
+
         settings = ((cv2.CAP_PROP_FRAME_WIDTH, self.config.frame_width),
                     (cv2.CAP_PROP_FRAME_HEIGHT, self.config.frame_height),
                     (cv2.CAP_PROP_FPS, self.target_fps))
         for prop, value in settings:
-            if value:
-                accepted = cap.set(prop, value)
-                logger.info("Cámara[%s] solicitar propiedad %s=%s; set=%s", self.camera_index, prop, value, accepted)
-        def measured(prop):
-            value=cap.get(prop)
-            return value if isinstance(value,(float,int)) and math.isfinite(value) else None
+            if not value or self._stop_requested.is_set():
+                continue
+            if self._backend_effective == "MSMF":
+                current = measured(prop)
+                tolerance = 1.1 if prop == cv2.CAP_PROP_FPS else 0
+                # Native renegotiation is costly; the capture loop already paces near-matching FPS.
+                if current is not None and abs(current - value) <= tolerance:
+                    continue
+            accepted = cap.set(prop, value)
+            logger.info("Cámara[%s] solicitar propiedad %s=%s; set=%s", self.camera_index, prop, value, accepted)
         self._accepted = dict(width=measured(cv2.CAP_PROP_FRAME_WIDTH), height=measured(cv2.CAP_PROP_FRAME_HEIGHT),
                               fps=measured(cv2.CAP_PROP_FPS))
         self._note("CAMERA_OPEN", "idle", backend=self._backend_effective, accepted=self._accepted)
@@ -293,29 +368,14 @@ class VisionEngine(threading.Thread):
 
     def run(self):
         cap = detector = None
+        ownership = ExitStack()
         self._running = not self._stop_requested.is_set()
         try:
             if self._stop_requested.is_set():
                 return
-            cap = self._open_capture()
-            if self._stop_requested.is_set():
-                return
-            if not cap.isOpened():
-                raise RuntimeError(f"No se pudo abrir la cámara {self.camera_index} con {self.config.capture_backend}")
-            self._configure_capture(cap)
-            failures = 0
-            frame = None
-            # Probar primero OpenCV permite separar hardware/driver de MediaPipe.
-            while frame is None and not self._stop_requested.is_set():
-                frame = self._read_capture(cap)
-                if frame is None:
-                    failures += 1
-                    if time.monotonic()-self._created_at >= self.config.startup_timeout_s:
-                        raise TimeoutError("La cámara abrió pero no entregó el primer frame dentro del tiempo inicial")
-                    if failures == 1:
-                        self._note("RECOVERABLE_ERROR", "camera_read", failures=failures)
-                    self._stop_requested.wait(.01)
-            if self._stop_requested.is_set():
+            ownership.enter_context(camera_session())
+            cap = self._start_capture()
+            if cap is None or self._stop_requested.is_set():
                 return
             self._note("MEDIAPIPE_INITIALIZING", "detector_init")
             with open(str(self.model_path), "rb") as f:
@@ -399,6 +459,8 @@ class VisionEngine(threading.Thread):
             except Exception as exc:
                 self.error = self.error or exc
                 logger.exception("Error al liberar cámara")
+            finally:
+                ownership.close()
             with self._lock:
                 self._frame = None
                 self._face_data = FaceData(False)

@@ -25,6 +25,7 @@ class DirectionTarget(QWidget):
         super().__init__()
         self.setMinimumHeight(240)
         self.target = self.token = self.painted = None
+        self.pointer = None
         self.setAccessibleName("Objetivo de mirada")
 
     def present(self, target, token):
@@ -38,14 +39,18 @@ class DirectionTarget(QWidget):
         with QPainter(self) as painter:
             painter.setRenderHint(QPainter.RenderHint.Antialiasing)
             painter.fillRect(self.rect(), QColor("#091220"))
-            if self.target is None:
-                return
-            x, y = TARGETS[self.target]
-            point = QPointF(x * self.width(), y * self.height())
-            painter.setPen(QColor("#091220"))
-            painter.setBrush(QColor("#ffd477"))
-            painter.drawEllipse(point, 13, 13)
-        if self.token != self.painted:
+            if self.target is not None:
+                x, y = TARGETS[self.target]
+                point = QPointF(x * self.width(), y * self.height())
+                painter.setPen(QColor("#091220"))
+                painter.setBrush(QColor("#ffd477"))
+                painter.drawEllipse(point, 13, 13)
+            if self.pointer is not None:
+                x, y = self.pointer
+                painter.setPen(QColor("#091220"))
+                painter.setBrush(QColor("#6ee7dc"))
+                painter.drawEllipse(QPointF(x * self.width(), y * self.height()), 7, 7)
+        if self.token is not None and self.target is not None and self.token != self.painted:
             self.painted = self.token
             self.displayed.emit(*self.token, self.width(), self.height())
 
@@ -55,7 +60,7 @@ class DirectionDiagnosticPanel(QWidget):
         super().__init__()
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        self.instruction = QLabel("Mirá el punto amarillo. Mantené la cabeza cómoda y quieta.")
+        self.instruction = QLabel("Mirá el punto amarillo y dejá que se estabilice la mirada.")
         self.instruction.setWordWrap(True)
         layout.addWidget(self.instruction)
         self.target = DirectionTarget()
@@ -75,13 +80,21 @@ class DirectionDiagnosticPanel(QWidget):
         self.retry.clicked.connect(lambda: request("repeat_direction_target"))
         self.skip = QPushButton("Omitir")
         self.skip.clicked.connect(lambda: request("repeat_direction_target", skip=True))
+        self.continue_pose = QPushButton("Continuar con el ajuste")
+        self.continue_pose.clicked.connect(lambda: request("continue_geometric_pose"))
         self.save = QPushButton("Reintentar guardado")
         self.save.clicked.connect(lambda: request("save_direction_report"))
         cancel = QPushButton("Cerrar diagnóstico")
         cancel.clicked.connect(lambda: request("cancel_direction_diagnostic"))
-        for button in (self.retry, self.skip, self.save, cancel):
+        for button in (self.retry, self.skip, self.continue_pose, self.save, cancel):
             row.addWidget(button)
         layout.addLayout(row)
+        self.axis_buttons = [QPushButton("Repetir eje horizontal"), QPushButton("Repetir eje vertical")]
+        axis_row = QHBoxLayout()
+        for axis, widget in enumerate(self.axis_buttons):
+            widget.clicked.connect(lambda checked=False, value=axis: request("retry_geometric_axis", axis=value))
+            axis_row.addWidget(widget)
+        layout.addLayout(axis_row)
         self.result = QLabel()
         self.result.setWordWrap(True)
         layout.addWidget(self.result)
@@ -101,10 +114,15 @@ class DirectionDiagnosticPanel(QWidget):
         self.progress.setValue(session["done"])
         self.retry.setVisible(state == "retry")
         self.skip.setVisible(state == "retry")
+        self.continue_pose.setVisible(bool(session.get("pose_round_pause")))
         self.save.setVisible(bool(session["save_error"]))
         status = dict(await_target="Preparando objetivo", transition="Acomodá la mirada",
                       fixation="Mantené la mirada", retry="Faltaron muestras válidas",
                       ready="Evaluación terminada")[state]
+        if session.get("geometric_status"):
+            status = f"{session['geometric_status']} · {status}" if target else session["geometric_status"]
+        for axis, widget in enumerate(self.axis_buttons):
+            widget.setVisible(axis in session.get("repair_axes", ()))
         if target is not None:
             status = f"{LABELS[target]} · {status}"
             if session["valid"] is not None:
@@ -112,7 +130,7 @@ class DirectionDiagnosticPanel(QWidget):
         self.status.setText(status)
         self.result.setVisible(state == "ready")
         if state == "ready":
-            lines = _summary(session["report"])
+            lines = session.get("geometric_summary") or _summary(session["report"])
             if session["path"]:
                 lines.append(f"Informe local en {session['path']}")
             elif session["save_error"]:

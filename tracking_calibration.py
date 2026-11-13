@@ -6,6 +6,12 @@ from config import bounded
 from gaze_source import gaze_position, selected_eyes_open, validate_source, SOURCE_LABELS
 
 
+def minimum_eye_excursion(vertical_reference):
+    # Y by corners is expressed in eye widths, not in eyelid opening heights.
+    # Capture also requires the signed excursion to exceed fixation noise.
+    return .02, .002 if vertical_reference == "canthi" else .02
+
+
 @dataclass(frozen=True)
 class TrackingCalibration:
     method: str = "eye"
@@ -31,14 +37,18 @@ class TrackingCalibration:
                 raise ValueError("Contexto de cámara ocular inválido")
             for key, value in self.camera_context.items():
                 bounded(key, value, 0 if key == "camera_index" else 2, 100 if key == "camera_index" else 100000, integer=True)
-        if self.method != "eye" or type(self.schema_version) is not int or self.schema_version != 1:
+        if self.method != "eye" or type(self.schema_version) is not int or self.schema_version not in (1, 2):
             raise ValueError("Calibración de tracking desconocida")
         if type(self.ranges_measured) is not bool:
             raise ValueError("ranges_measured debe ser booleano")
+        if self.schema_version == 2 and (self.vertical_reference != "canthi" or not self.ranges_measured):
+            raise ValueError("La calibración relativa v2 requiere rangos medidos con comisuras")
         for key in ("neutral_x", "neutral_y"):
             bounded(key, getattr(self, key), .05, .95)
-        for key in ("left_range", "right_range", "up_range", "down_range"):
-            bounded(key, getattr(self, key), .02, 1)
+        min_x, min_y = minimum_eye_excursion(self.vertical_reference) if self.schema_version == 2 else (.02, .02)
+        for key, minimum in (("left_range", min_x), ("right_range", min_x),
+                             ("up_range", min_y), ("down_range", min_y)):
+            bounded(key, getattr(self, key), minimum, 1)
 
     @classmethod
     def from_record(cls, record):

@@ -208,16 +208,38 @@ class CameraEngineTests(unittest.TestCase):
         self.cap.release.assert_called_once()
         self.assertEqual(str(engine.error),"graph failed")
 
-    def test_backend_selection_is_explicit_and_no_fallback(self):
+    def test_preferred_backend_is_tried_first(self):
         for backend,api in (("dshow",self.cv.CAP_DSHOW),("msmf",self.cv.CAP_MSMF),("auto",self.cv.CAP_ANY)):
             engine=self.engine(capture_backend=backend)
             self.cv.VideoCapture.reset_mock()
             with patch.object(self.module.sys, "platform", "win32"):
-                cap=engine._open_capture()
+                cap=engine._start_capture()
             self.cv.VideoCapture.assert_called_once_with(0,api)
             self.assertIs(cap,self.cap)
         with self.assertRaises(ValueError):load_config(overrides={"vision":{"capture_backend":"guess"}})
         with self.assertRaises(ValueError):load_config(overrides={"vision":{"frame_width":640,"frame_height":0}})
+
+    def test_failed_preferred_capture_is_released_before_fallback(self):
+        engine = self.engine(capture_backend="dshow")
+        rejected = Mock()
+        rejected.isOpened.return_value = False
+
+        def open_backend(index, api):
+            self.assertEqual(index, 0)
+            if api is self.cv.CAP_DSHOW:
+                return rejected
+            self.assertIs(api, self.cv.CAP_MSMF)
+            rejected.release.assert_called_once()
+            return self.cap
+
+        self.cv.VideoCapture.side_effect = open_backend
+        with patch.object(self.module.sys, "platform", "win32"):
+            engine.start()
+            engine.wait_ready(1)
+            engine.stop()
+        self.assertEqual(engine.diagnostics()["capture_attempts"], ["dshow: no abrió"])
+        self.fixture.mp.FaceLandmarker.create_from_options.assert_called_once()
+        self.cap.release.assert_called_once()
 
     def test_callback_already_extracting_when_cancelled_cannot_publish(self):
         engine=self.engine()
@@ -360,6 +382,19 @@ class ControllerStartupTests(unittest.TestCase):
         self.factory.assert_called_once()
         self.backend.assert_not_called()
 
+    def test_qt_startup_respects_the_native_backend_budget(self):
+        worker = self.worker()
+        self.c.config.vision.startup_timeout_s = 10.
+        worker.command("start_calibration", {})
+        current = self.vision.diagnostics()
+        self.vision.diagnostics = lambda: dict(current, startup_extension_s=8.)
+        self.now += 13.
+        worker.tick()
+        self.assertFalse(self.vision.cancelled)
+        self.vision.ready.set()
+        worker.tick()
+        self.assertEqual(self.c.state, "CALIBRATING")
+
     def test_failed_close_discards_pending_command_before_any_retry(self):
         worker=self.worker()
         worker.command("start_calibration",{})
@@ -387,7 +422,9 @@ class ControllerStartupTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):self.c.start_camera()
         self.factory.assert_called_once()
         self.vision.block_close=False
-        self.c.stop_camera()
+        self.vision.alive=False
+        worker.tick()  # reap a native capture that finished after the shutdown timeout
+        self.assertIn("detector_init", self.c.message)
         self.assertIsNone(self.c.vision)
         replacement=PendingVision()
         replacement.ready.set()

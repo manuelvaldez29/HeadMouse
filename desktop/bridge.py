@@ -1,14 +1,17 @@
 """Adaptador Qt con worker dedicado y mailbox de capacidad uno para preview."""
 import logging
+import sys
 import threading
 from PySide6.QtCore import QObject, QThread, QTimer, Signal, Slot, Qt
 from application_controller import ApplicationController
+from camera_access import CameraStartupError
 
 COMMANDS = {"create_profile", "select_profile", "rename_profile", "delete_profile", "save_settings", "pause_control", "resume_control", "activate_startup_control",
             "select_control_method", "select_eye_source", "save_public_settings", "upgrade_ocular_response",
             "start_vertical_diagnostic", "repeat_vertical_point", "cancel_vertical_diagnostic",
-            "start_direction_diagnostic", "ack_direction_target", "repeat_direction_target",
-            "cancel_direction_diagnostic", "save_direction_report",
+            "select_ocular_mode", "ack_direction_target", "repeat_direction_target",
+            "cancel_direction_diagnostic", "save_direction_report", "revert_geometric_center", "retry_geometric_axis", "continue_geometric_pose",
+            "start_geometric",
             "start_gaze_calibration", "review_gaze_training", "export_gaze_attempt", "record_gaze_viewport", "repeat_gaze_point", "save_gaze_calibration", "cancel_gaze_calibration",
             "start_eye_calibration", "save_eye_calibration", "cancel_eye_calibration",
             "restore_defaults", "start_camera", "stop_camera", "activate_control", "stop_control",
@@ -18,7 +21,7 @@ COMMANDS = {"create_profile", "select_profile", "rename_profile", "delete_profil
             "start_voice_calibration", "cancel_voice_calibration", "save_voice_calibration", "prepare_speaker_model",
             "refresh_microphones", "remember_current_profile"}
 CAMERA_COMMANDS = {"start_camera", "start_calibration", "validate_calibration", "repeat_calibration",
-    "start_vertical_diagnostic", "start_direction_diagnostic",
+    "start_vertical_diagnostic", "start_geometric",
     "start_eye_calibration", "start_gaze_calibration", "start_diagnostic", "activate_control", "start_jitter", "start_experiment"}
 
 
@@ -52,11 +55,30 @@ class ControllerWorker(QObject):
     def failed(self, exc):
         self.controller.emergency_stop()
         logging.getLogger(__name__).exception("Fallo del worker")
+        message = self.camera_failure_message(exc)
         try:
-            self.controller.fail(str(exc))
+            self.controller.fail(message)
         except Exception:
             logging.getLogger(__name__).exception("Limpieza pendiente; se conserva el worker")
-        self.error.emit(str(exc))
+        self.error.emit(message)
+
+    def camera_failure_message(self, exc):
+        error = exc if isinstance(exc, CameraStartupError) else exc.__cause__
+        if not isinstance(error, CameraStartupError):
+            return str(exc)
+        if error.category == "initialization" and sys.platform == "win32":
+            status = self.controller.camera_status()
+            try:
+                from PySide6.QtCore import QCoreApplication
+                from PySide6.QtMultimedia import QMediaDevices
+                cameras = QMediaDevices.videoInputs() if QCoreApplication.instance() else ()
+            except (ImportError, OSError, RuntimeError):
+                cameras = ()
+            index = status.get("camera_index")
+            if cameras and isinstance(index, int) and index >= len(cameras):
+                return (f"El índice de cámara {index} no está disponible. Windows detecta {len(cameras)} "
+                        f"cámara(s). Elegí un índice de 0 a {len(cameras)-1} en Configuración.")
+        return str(error)
 
     @Slot()
     def start(self):
@@ -85,8 +107,8 @@ class ControllerWorker(QObject):
             return
         try:
             cancel_direction_start = (name == "cancel_direction_diagnostic" and self.pending_camera
-                                      and self.pending_camera[0] == "start_direction_diagnostic")
-            if cancel_direction_start or name in ("stop_camera", "shutdown", "stop_control", "select_profile", "save_settings", "save_public_settings", "select_control_method", "select_eye_source", "upgrade_ocular_response", "cancel_eye_calibration", "cancel_gaze_calibration", "cancel_vertical_diagnostic"):
+                                      and self.pending_camera[0] == "start_geometric")
+            if cancel_direction_start or name in ("stop_camera", "shutdown", "stop_control", "select_profile", "save_settings", "save_public_settings", "select_control_method", "select_ocular_mode", "select_eye_source", "upgrade_ocular_response", "cancel_eye_calibration", "cancel_gaze_calibration", "cancel_vertical_diagnostic"):
                 pending = self.pending_camera
                 self.pending_camera = None
                 if pending:
@@ -115,13 +137,14 @@ class ControllerWorker(QObject):
                 self.timer.stop()
                 self.finished.emit()
                 return
-            if name not in ("experiment_input", "ack_direction_target"):
+            if name not in ("experiment_input", "ack_direction_target", "acknowledge_horizontal_target"):
                 self.profiles = self.controller.profiles.list_profiles()
             self.publish()
         except Exception as exc:
             logging.getLogger(__name__).exception("No se pudo completar %s", name)
-            self.controller.message = str(exc)
-            self.error.emit(str(exc))
+            message = self.camera_failure_message(exc)
+            self.controller.message = message
+            self.error.emit(message)
             if name == "shutdown":
                 # Un driver aún vivo no permite destruir QThread ni sus recursos.
                 logging.getLogger(__name__).error("Cierre pendiente: se reintentará sin terminar hilos nativos")
@@ -153,6 +176,10 @@ class ControllerWorker(QObject):
         except Exception as exc:
             self.pending_camera = None
             self.failed(exc)
+            try:
+                self.publish()
+            except Exception:
+                logging.getLogger(__name__).exception("No se pudo publicar el estado tras detener el control")
 
 
 class DesktopBridge(QObject):

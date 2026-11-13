@@ -38,7 +38,7 @@ from typing import TYPE_CHECKING
 from face_data import FaceData
 from config import GestureConfig, DEFAULT_THRESHOLDS
 from profiles import load_legacy, validate_profile
-from tracking import NoseTrackingStrategy
+from tracking import NoseTrackingStrategy, ocular_delta
 from action_mapping import LEGACY_GESTURES
 from adaptive_calibration import HysteresisGate, percentile
 from gesture_signals import GESTURE_SIGNALS
@@ -290,14 +290,17 @@ class GestureEngine:
         events = []
 
         # 1. Cursor
-        cursor_ev = self._update_cursor(fd)
-        if cursor_ev:
-            events.append(cursor_ev)
+        if self.strategy.name != "eye_joystick":
+            cursor_ev = self._update_cursor(fd)
+            if cursor_ev:
+                events.append(cursor_ev)
+        else:
+            self._update_ocular_head_gate(fd)
 
         # 2. Gestos binarios
         gesture_evs = self._update_gestures(fd)
         events.extend(gesture_evs)
-        if self.strategy.name in ("eye", "eye_absolute"):
+        if self.strategy.name in ("eye", "eye_absolute", "eye_joystick"):
             # Usar el estado físico, incluso si el guiño no tiene acción asignada.
             physical = {key: all(self._gates[key].states) for key in ("LEFT_WINK", "RIGHT_WINK")}
             selected = {"LEFT_WINK" if side == "left" else "RIGHT_WINK"
@@ -462,7 +465,7 @@ class GestureEngine:
         reposo→activación calibrada. Nunca acumula: parte siempre de la
         calibración. Devuelve un dict con `ok` y, si no recentró, `reason`.
         """
-        if self.strategy.name in ("eye", "eye_absolute"):
+        if self.strategy.name in ("eye", "eye_absolute", "eye_joystick"):
             return dict(ok=False, reason="el neutral ocular se ajusta en Calibrar tracking ocular")
         # `since_ms`: sólo lo ocurrido después de pausar. Sin ese límite, si la postura
         # cómoda duraba menos que la ventana, ganaba el momento previo a la pausa (en la
@@ -553,12 +556,7 @@ class GestureEngine:
             - La zona muerta previene deriva por micro-movimientos
         """
         if self.strategy.name in ("eye", "eye_absolute"):
-            # La puerta de cejas sigue dependiendo de cabeza/nariz, nunca de mirada.
-            alpha = self.config.smoothing_alpha
-            self._smooth_x = alpha*self._smooth_x+(1-alpha)*fd.nose_x
-            self._smooth_y = alpha*self._smooth_y+(1-alpha)*fd.nose_y
-            self.head_still = (abs(self._smooth_x-self.config.neutral_x) <= self.config.dead_zone
-                               and abs(self._smooth_y-self.config.neutral_y) <= self.config.dead_zone)
+            self._update_ocular_head_gate(fd)
             return self._update_eye_cursor(fd)
         alpha = self.config.smoothing_alpha
 
@@ -598,17 +596,35 @@ class GestureEngine:
 
         return GestureEvent(type=EV_CURSOR_MOVE, dx=px, dy=py)
 
+    def _update_ocular_head_gate(self, fd):
+        alpha = self.config.smoothing_alpha
+        self._smooth_x = alpha*self._smooth_x+(1-alpha)*fd.nose_x
+        self._smooth_y = alpha*self._smooth_y+(1-alpha)*fd.nose_y
+        self.head_still = (abs(self._smooth_x-self.config.neutral_x) <= self.config.dead_zone
+                           and abs(self._smooth_y-self.config.neutral_y) <= self.config.dead_zone)
+
     def _update_eye_cursor(self, fd):
         raw = gaze_position(fd, self.strategy.eye_source,getattr(self.strategy,"vertical_reference","eyelids"))
         if raw is None:
             self._eye_smooth_x = self._eye_smooth_y = 0.
             self._absolute_smooth = None
+            self._interrupt_fixation()
             self._cursor_delta = (0., 0.)
             self._tracking_block = "se requieren ambos iris válidos" if self.strategy.eye_source == "both" else "iris seleccionado ausente o inválido"
             self._eye_recovering = True
             self._eye_recovery.clear()
             return None
         if fd.timestamp_ms < self._eye_hold_until:
+            return None
+        position = self.strategy.position(fd)
+        if position is None:
+            self._eye_smooth_x = self._eye_smooth_y = 0.
+            self._absolute_smooth = None
+            self._interrupt_fixation()
+            self._cursor_delta = (0., 0.)
+            self._tracking_block = getattr(self.strategy, "reason", "falta calibración")
+            self._eye_recovering = True
+            self._eye_recovery.clear()
             return None
         if self._eye_recovering:
             self._eye_recovery.append((fd.timestamp_ms, *raw))
@@ -618,15 +634,6 @@ class GestureEngine:
                 return None
             self._eye_recovering = False
             self._eye_recovery.clear()
-        position = self.strategy.position(fd)
-        if position is None:
-            # Cortar inmediatamente: no emitir la cola del EMA sin iris válido.
-            self._eye_smooth_x = self._eye_smooth_y = 0.
-            self._absolute_smooth = None
-            self._interrupt_fixation()
-            self._cursor_delta = (0., 0.)
-            self._tracking_block = getattr(self.strategy, "reason", "falta calibración")
-            return None
         self._tracking_block = ""
         if self.strategy.name == "eye_absolute":
             if getattr(self, "_fixation", None) is None:
@@ -640,11 +647,7 @@ class GestureEngine:
         a = c.smoothing_alpha
         self._eye_smooth_x = a*self._eye_smooth_x+(1-a)*position[0]
         self._eye_smooth_y = a*self._eye_smooth_y+(1-a)*position[1]
-        def delta(value,zone):
-            d = max(0., abs(value)-zone)*(1 if value >= 0 else -1)
-            return max(-c.max_delta, min(c.max_delta, d*c.sensitivity+d*abs(d)*c.acceleration))
-        dx=delta(self._eye_smooth_x,c.dead_zone if c.dead_zone_x is None else c.dead_zone_x)
-        dy=delta(self._eye_smooth_y,c.dead_zone if c.dead_zone_y is None else c.dead_zone_y)
+        dx, dy = ocular_delta((self._eye_smooth_x, self._eye_smooth_y), c)
         self._cursor_delta = (dx, dy)
         self._tracking_block = "zona muerta" if not (dx or dy) else ""
         return GestureEvent(type=EV_CURSOR_MOVE, dx=dx, dy=dy) if dx or dy else None

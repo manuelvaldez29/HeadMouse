@@ -1,4 +1,4 @@
-# HeadMouse 0.5.1 — Manual de usuario para Windows
+# HeadMouse 0.5.2 — Manual de usuario para Windows
 
 HeadMouse es un proyecto de tesis de Ingeniería en Informática de UNSTA. Permite
 controlar el puntero mediante Nariz u Ojos y realizar acciones faciales calibradas.
@@ -13,7 +13,7 @@ facial. No hace falta instalar Python ni usar una terminal. La primera versión
 se verificó en el equipo de desarrollo indicado en el informe de pruebas;
 la matriz completa de equipos y Windows 10/11 requiere pruebas adicionales.
 
-Abrir `HeadMouse-Setup-0.5.1-win64.exe` y seguir el asistente. Se instala para el
+Abrir `HeadMouse-Setup-0.5.2-win64.exe` y seguir el asistente. Se instala para el
 usuario actual en `%LOCALAPPDATA%\Programs\HeadMouse`. Crea acceso en Inicio,
 ofrece acceso de escritorio y registra un desinstalador. Abrir al finalizar es
 opcional; la instalación no habilita el control ni el inicio con Windows.
@@ -226,7 +226,7 @@ hacer una copia de seguridad de la carpeta de datos con la aplicación cerrada.
 ## Prueba guiada después de actualizar
 
 1. Cerrá HeadMouse y conservá una copia de `%LOCALAPPDATA%\HeadMouse` antes de
-   actualizar. Abrí el instalador v0.5.1 y mantené la carpeta de la instalación
+   actualizar. Abrí el instalador v0.5.2 y mantené la carpeta de la instalación
    anterior. Los perfiles, las calibraciones y el diccionario están fuera de
    esa carpeta.
 2. Abrí HeadMouse, elegí tu perfil y revisá Nariz y Ojos por separado. Confirmá
@@ -266,3 +266,12 @@ se conservan para reinstalar; borrarlos manualmente sólo si se desea perderlos.
 - No hay icono visible: revisar los iconos ocultos de notificaciones de Windows.
 - Error de arranque: conservar `%LOCALAPPDATA%\HeadMouse\logs\headmouse.log` y
   los registros fault. Compartirlos sólo tras revisar los datos personales incluidos.
+
+## Elegir cómo se mueve el cursor con los ojos
+
+En Inicio, elegí Ojos y luego Directo o Joystick. El cambio detiene el control y conserva las preferencias de cada modalidad. Ojos requiere confirmación cada vez que se inicia el control.
+
+- Directo mueve el puntero hacia la posición estimada de la mirada. En Calibración → Ojos, seguí los puntos de pantalla y completá la comprobación del ajuste.
+- Joystick mueve el puntero mientras mirás fuera de la zona quieta. En Calibración → Ojos → Calibrar movimiento, seguí los cinco puntos. Al activar, mirá primero al centro. Un eje inseguro queda bloqueado. Si el otro es utilizable, el movimiento se limita a ese eje a baja velocidad y sin clics. Podés repetir solo el eje pendiente.
+- Recentrar mirada ajusta el centro del joystick y permite revertirlo. Después de un cambio importante de postura, repetí la calibración.
+- Ctrl+Alt+K abre el teclado existente. La permanencia se habilita en Configuración → Ojos y se ofrece con calibración adecuada. F8 detiene el control y apaga la cámara.

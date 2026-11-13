@@ -258,13 +258,16 @@ class DirectionDiagnostic:
                        phase=phase, limits=self.limits, models=self.models)
             self.samples.append(row)
         if now >= end_fixation + self.max_age:
-            good = sum(row["phase"] == "fixation" and row["rejected"] is None for row in self.samples)
+            good = sum(row["phase"] == "fixation" and self._usable_sample(row) for row in self.samples)
             if good >= self.min_samples:
                 self._archive(used=True, advance=True)
             else:
                 self.state = "retry"
         elif now >= end_transition:
             self.state = "fixation"
+
+    def _usable_sample(self, row):
+        return row["rejected"] is None
 
     def retry(self, *, skip=False):
         if self.state == "retry":
@@ -296,8 +299,10 @@ class DirectionDiagnostic:
                     row["head_delta"] = delta
                     row["head_motion"] = None if delta is None else (
                         delta[0] > HEAD_POSITION_DELTA or (delta[1] is not None and delta[1] > HEAD_ANGLE_DELTA))
-            channels = RAW_CHANNELS + tuple(self.models)
-            self.report = analyze(self.trials, channels, self.min_samples)
+            self.report = analyze(self.trials, self._report_channels(), self.min_samples)
+
+    def _report_channels(self):
+        return RAW_CHANNELS + tuple(self.models)
 
     def record(self):
         return dict(experiment="ocular_direction", schema_version=1, source="webcam", recorded_at=self.created_at,

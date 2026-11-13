@@ -65,7 +65,7 @@ def validate_profile(data):
                 GazeModel(record)
     if "gesture_modes" in data:
         records = data["gesture_modes"]
-        if not isinstance(records, dict) or records.keys() - {"nose", "eyes", "eye", "eye_absolute"}:
+        if not isinstance(records, dict) or records.keys() - {"nose", "eyes", "eye", "eye_absolute", "eye_joystick"}:
             raise ValueError("Calibraciones por modalidad inválidas")
         for record in records.values():
             if not isinstance(record, dict) or record.keys() - set(GESTURE_PROFILE_KEYS):
@@ -78,7 +78,7 @@ def validate_profile(data):
             validate_profile(candidate)
     if "gesture_mode_origin" in data:
         origins=data["gesture_mode_origin"]
-        if not isinstance(origins,dict) or origins.keys()-{"nose","eyes","eye","eye_absolute"} or any(v!="measured" for v in origins.values()):
+        if not isinstance(origins,dict) or origins.keys()-{"nose","eyes","eye","eye_absolute","eye_joystick"} or any(v!="measured" for v in origins.values()):
             raise ValueError("Origen de calibraciones de gestos inválido")
     if data.get("status") == "draft":
         if "thresholds" in data or data.get("calibrated_at"):

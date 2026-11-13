@@ -43,7 +43,6 @@ class ApplicationController:
         self.startup_store = StartupPreferences(self.data_dir / "startup.json")
         self.clock = clock
         self.emergency = threading.Event()
-        self.synthetic_lab = threading.Event()
         self._pending_stop_reason = None  # motivo de una parada pedida desde otro hilo
         self.emergency.set()
         self.profile = None
@@ -57,6 +56,8 @@ class ApplicationController:
         self.gaze_calibration = None
         self.vertical_diagnostic=None
         self.direction_diagnostic = None
+        self.geometric_joystick = None
+        self.geometric_record = None
         self._vertical_trace=None
         self._vertical_saved=False
         self._gaze_logged = None
@@ -74,6 +75,7 @@ class ApplicationController:
         self.cursor = (400., 250.)
         self.closed = False
         self.session_guard = None
+        self.global_stop_available = False
         self._saved_calibrations = 0
         self.history = []
         self.refresh_metrics()
@@ -158,6 +160,7 @@ class ApplicationController:
         self.voice_wizard = None
         self.profile = self.profiles.store.load(user_id)
         self.config = load_config(overrides=self.profile.get("settings", {}))
+        self._load_geometric_record()
         self.state = "HOME"
         self.wizard = None
         self.message = self.profiles.status(self.profile)
@@ -174,6 +177,7 @@ class ApplicationController:
         self.stop_camera()
         self.profiles.delete(self.profile["user_id"], confirmed)
         self.profile = None
+        self.geometric_record = None
         try:
             self._last_profile_path.unlink()
         except OSError:
@@ -186,9 +190,11 @@ class ApplicationController:
         incoming = load_config(overrides=settings)  # validar antes de detener/modificar
         validated = settings_for_save(self.config, asdict(incoming))
         self.stop_camera()
-        candidate=migrate_public_eyes(self.profile,validated.ui.ocular_engine) if validated.ui.unified_eyes else self.profile
+        legacy_engine = validated.ui.ocular_engine if validated.ui.ocular_engine != "eye_joystick" else "eye_absolute"
+        candidate=migrate_public_eyes(self.profile,legacy_engine) if validated.ui.unified_eyes else self.profile
         self.profile = self.profiles.save_settings(candidate, asdict(validated))
         self.config = validated
+        self._load_geometric_record()
         self.wizard = None
         self.message = "Configuración guardada. Volvé a abrir la cámara cuando quieras."
 
@@ -206,6 +212,14 @@ class ApplicationController:
         self.save_settings(settings)
         self.message="Configuración de "+("Nariz" if method=="nose" else "Ojos")+" cargada para este perfil."
 
+    def select_ocular_mode(self, mode):
+        self._require_profile()
+        if mode not in ("eye_absolute", "eye_joystick"):
+            raise ValueError("Elegí Directo o Joystick.")
+        settings = asdict(self.config)
+        settings["ui"].update(tracking_method=mode, ocular_engine=mode, unified_eyes=True)
+        self.save_settings(settings)
+
     def select_eye_source(self,source):
         from gaze_source import validate_source
         validate_source(source)
@@ -214,7 +228,7 @@ class ApplicationController:
         settings=asdict(self.config);settings["ui"]["eye_source"]=source
         self.save_settings(settings)
 
-    def save_public_settings(self,settings,method):
+    def save_public_settings(self,settings,method,ocular_mode=None):
         before=asdict(self.config)
         changed=method!=("nose" if self.config.ui.tracking_method=="nose" else "eyes") or (method=="eyes" and not self.config.ui.unified_eyes)
         if changed:
@@ -229,8 +243,14 @@ class ApplicationController:
             for key in ("eye_source","show_overlay","show_landmarks"):
                 if settings["ui"][key]!=before["ui"][key]:data["ui"][key]=settings["ui"][key]
         else:data=deepcopy(settings)
-        data["ui"].update(tracking_method=self.config.ui.tracking_method,
-            ocular_engine=self.config.ui.ocular_engine,unified_eyes=self.config.ui.unified_eyes)
+        data["ui"].update(
+            tracking_method=(ocular_mode if method == "eyes" and ocular_mode is not None
+                             else self.config.ui.tracking_method),
+            ocular_engine=ocular_mode or self.config.ui.ocular_engine,
+            unified_eyes=self.config.ui.unified_eyes)
+        for key in ("ocular_keyboard_dwell", "ocular_keyboard_dwell_ms"):
+            if key in settings["ui"]:
+                data["ui"][key] = settings["ui"][key]
         self.save_settings(data)
 
     def upgrade_ocular_response(self,confirmed=False):
@@ -252,10 +272,11 @@ class ApplicationController:
         if profile and (ocular or profile.get("status") != "draft"):
             absolute = self.config.ui.tracking_method == "eye_absolute"
             runtime=dict(thresholds=DEFAULT_THRESHOLDS.copy()) if profile.get("status")=="draft" else profile
-            self.gesture = GestureEngine(self.vision, config=self.config.gesture, calibration=runtime,
-                                         strategy=create_strategy(self.config.ui.tracking_method,
-                                             self._tracking_record(), self.config.absolute if absolute else self.config.eye,
-                                             self.config.ui.eye_source), clock=self.clock,movement_only=ocular and not self._actions_ready())
+            strategy = self.geometric_joystick if self._uses_geometric_joystick() else create_strategy(self.config.ui.tracking_method,
+                self._tracking_record(), self.config.absolute if absolute else self.config.eye, self.config.ui.eye_source)
+            self.gesture = (GestureEngine(self.vision, config=self.config.gesture, calibration=runtime,
+                            strategy=strategy, clock=self.clock, movement_only=ocular and not self._actions_ready())
+                            if strategy is not None else None)
         else:
             self.gesture = None
 
@@ -306,16 +327,15 @@ class ApplicationController:
             raise RuntimeError("El motor terminó antes de entregar el primer resultado")
         status = self.camera_status()
         self.message = f"Iniciando cámara: {status['stage']} · {status.get('operation','')} · {self.clock()-self._camera_started_at:.1f} s"
-        if self.clock()-self._camera_started_at > self.config.vision.startup_timeout_s:
+        budget = self.config.vision.startup_timeout_s + status.get("startup_extension_s", 0)
+        if self.clock()-self._camera_started_at > budget:
             self.cancel_camera_startup()
-            raise TimeoutError(f"Inicio agotado tras {self.config.vision.startup_timeout_s:g} s: "
+            raise TimeoutError(f"Inicio agotado tras {budget:.1f} s: "
                 f"etapa {status['stage']}, operación {status.get('operation','')}; "
                 f"frames={status.get('captured_frames',0)}, resultados={status.get('processed_results',0)}")
         return False
 
     def start_camera(self, wait=True):
-        if self.synthetic_lab.is_set():
-            raise ValueError("Cerrá el laboratorio ocular antes de abrir la cámara")
         self._require_profile()
         if self.vision is not None:
             if self.camera_status().get("stop_requested"):
@@ -364,7 +384,14 @@ class ApplicationController:
 
     def stop_control(self, reason=None):
         self.emergency_stop()
+        if self.geometric_joystick:
+            self.geometric_joystick.close()
+            self.geometric_joystick = None
+            self.gesture = None
         if self.state == "DIRECTION_DIAGNOSTIC":
+            close = getattr(self.direction_diagnostic, "close", None)
+            if close is not None:
+                close()
             self.direction_diagnostic = None
             self.state = "PREVIEW" if self.vision else "HOME"
         try:
@@ -421,8 +448,9 @@ class ApplicationController:
             raise RuntimeError("No se pudieron cerrar todos los recursos: " + "; ".join(str(e) for e in errors))
 
     def activate_control(self, confirmed=False, screen_context=None, automatic=False):
-        if self.synthetic_lab.is_set():
-            raise ValueError("Cerrá el laboratorio ocular antes de activar el control")
+        joystick_mode = self._uses_geometric_joystick()
+        if self.config.ui.tracking_method in ("eye_absolute", "eye_joystick") and automatic:
+            raise ValueError("El control ocular requiere confirmación explícita.")
         if self.session_guard is not None and not self.session_guard():
             raise ValueError("La sesión de Windows está bloqueada o no permite controlar el escritorio")
         logging.getLogger(__name__).info("Activación solicitada: método=%s banco=%s confirmada=%s emergencia=%s cámara=%s acciones_validadas=%s",
@@ -443,23 +471,30 @@ class ApplicationController:
             context = (self._tracking_record() or {}).get("camera_context")
             if context and context != self._relative_camera_context():
                 raise ValueError("Cambió la cámara o resolución: recalibrá el tracking ocular de esta fuente")
-        if self.config.ui.tracking_method != "nose":
+        if joystick_mode:
+            self._prepare_geometric_activation(screen_context)
+        elif self.config.ui.tracking_method != "nose":
             face = self.vision.get_face_data()
             ref=self.config.eye.vertical_reference if self.config.ui.tracking_method=="eye" else (self._tracking_record() or {}).get("vertical_reference","eyelids")
             if not face.fresh(self.config.gesture.stale_after_s, self.clock()) or eye_coordinates(face, self.config.ui.eye_source,ref) is None:
                 raise ValueError("Iris seleccionado no detectado o frame vencido. Verificá el diagnóstico seguro antes de activar.")
+            if self.config.ui.tracking_method == "eye_absolute":
+                strategy = self.gesture.strategy
+                if strategy.position(face) is None:
+                    raise ValueError(f"No se activó el control ocular: {strategy.reason}. "
+                                     "Volvé a la postura de calibración o revisá Calibración → Ojos.")
         if self.emergency.is_set():
             return  # F8/STOP durante inicialización no puede ser anulado
         voice_warning = ""
         if not self.control:
             backend = self.backend_factory() if self.backend_factory else None
-            movement_only=self.config.ui.tracking_method!="nose" and not self._actions_ready()
+            movement_only=(self.config.ui.tracking_method!="nose" and not self._actions_ready()) or (joystick_mode and self.geometric_joystick.reduced)
             if movement_only:
                 voice_warning = " Sólo movimiento; clics y acciones faciales pendientes."
             elif not automatic:
                 voice_warning = self._start_dictation()
             bounds=None
-            if self.config.ui.tracking_method=="eye_absolute":
+            if self.config.ui.tracking_method=="eye_absolute" or joystick_mode:
                 from screen_mapping import screen_display
                 bounds=screen_display(screen_context)["physical_rect"]
             self.control = ControlEngine(self.vision, self.gesture, self.config.control,
@@ -545,6 +580,27 @@ class ApplicationController:
         return (control is not None and self.state == "CONTROL" and control.output_allowed.is_set()
                 and not control.paused and not self.emergency.is_set()
                 and (self.session_guard is None or self.session_guard()))
+
+    def keyboard_input_allowed(self):
+        if not self._dictation_allowed():
+            return False
+        joystick = self.geometric_joystick
+        return not self._uses_geometric_joystick() or bool(joystick and joystick.actions_allowed(
+            joystick.vision.get_face_data(), self.clock()))
+
+    def ocular_keyboard_dwell_allowed(self):
+        if not self.config.ui.ocular_keyboard_dwell or not self._dictation_allowed():
+            return False
+        joystick = self.geometric_joystick
+        now = self.clock()
+        if joystick:
+            return joystick.dwell_allowed(now)
+        if self.config.ui.tracking_method == "eye_absolute" and self.gesture and self.vision:
+            face = self.vision.get_face_data()
+            return bool(face.fresh(min(.25, self.config.gesture.stale_after_s), now)
+                        and self.gesture.strategy.model
+                        and self.gesture.strategy.model.evaluate(face)[0] is not None)
+        return False
 
     def refresh_microphones(self):
         from dictation import input_devices
@@ -739,6 +795,10 @@ class ApplicationController:
             [k for k,r in loaded.get("gesture_modes",{}).get(bank,{}).get("gesture_calibrations",{}).items() if r.get("enabled")])
 
     def _require_tracking_calibration(self):
+        if self._uses_geometric_joystick():
+            if not self.geometric_snapshot()["ready"]:
+                raise ValueError(self.geometric_snapshot()["message"])
+            return
         record = self._tracking_record()
         if self.config.ui.tracking_method == "eye_absolute":
             if not record or not record.get("validated"):
@@ -755,7 +815,7 @@ class ApplicationController:
                 raise ValueError("La calibración corresponde a otra cámara: recalibrá la fuente seleccionada")
 
     def _tracking_record(self):
-        if self.config.ui.tracking_method == "nose":
+        if self.config.ui.tracking_method in ("nose", "eye_joystick"):
             return None
         return calibration_for(self.profile, self.config.ui.tracking_method, self.config.ui.eye_source)
 
@@ -785,43 +845,6 @@ class ApplicationController:
         self.state = "EYE_CALIBRATING"
         self.message = "Modo experimental: calibración de tracking ocular, con el control desactivado."
 
-    def start_direction_diagnostic(self, screen_context=None):
-        from direction_diagnostic import DirectionDiagnostic
-        from screen_mapping import same_context
-
-        self.stop_control()
-        if self.experiment and self.experiment.active:
-            self.experiment.cancel()
-        self.jitter = self.eye_calibration = self.gaze_calibration = None
-        self.vertical_diagnostic = self._vertical_trace = None
-        self.start_camera()
-        source = self.config.ui.eye_source
-        models = {}
-        relative = calibration_for(self.profile, "eye", source)
-        if relative and relative.get("camera_context") in (None, self._relative_camera_context()):
-            settings = deepcopy(self.config.eye)
-            settings.vertical_reference = relative.get("vertical_reference", "eyelids")
-            try:
-                models["relative_model"] = create_strategy("eye", relative, settings, source)
-            except ValueError:
-                pass
-        absolute = calibration_for(self.profile, "eye_absolute", source)
-        if absolute and screen_context is not None:
-            try:
-                if same_context(absolute["context"], self._camera_context(screen_context)):
-                    model = create_strategy("eye_absolute", absolute, self.config.absolute, source)
-                    if model.model.record["validated"]:
-                        models["absolute_model"] = model
-            except (KeyError, ValueError):
-                pass
-        thresholds = gesture_profile(self.profile, "eyes").get("thresholds", {})
-        limits = {side: thresholds.get(f"blink_{side}", DEFAULT_THRESHOLDS[f"blink_{side}"])
-                  for side in ("left", "right")}
-        self.direction_diagnostic = DirectionDiagnostic(
-            self.clock, max_age=self.config.gesture.stale_after_s, limits=limits, models=models)
-        self.state = "DIRECTION_DIAGNOSTIC"
-        self.message = "Diagnóstico de dirección ocular iniciado."
-
     def ack_direction_target(self, session_id, index, attempt, viewport=None):
         if self.state == "DIRECTION_DIAGNOSTIC":
             self.direction_diagnostic.acknowledge(session_id, index, attempt, viewport)
@@ -832,21 +855,135 @@ class ApplicationController:
 
     def cancel_direction_diagnostic(self):
         if self.state == "DIRECTION_DIAGNOSTIC":
-            self.stop_control()
+            self.save_direction_report()
+        if self.state == "DIRECTION_DIAGNOSTIC":
+            self.stop_camera()
+
+    def _direction_blink_limits(self):
+        return {side: DEFAULT_THRESHOLDS[f"blink_{side}"] for side in ("left", "right")}
+
+    def _uses_geometric_joystick(self):
+        return self.config.ui.tracking_method == "eye_joystick"
+
+    @property
+    def _geometric_path(self):
+        return self._geometric_directory / (self.config.ui.eye_source + ".json")
+
+    @property
+    def _geometric_directory(self):
+        return self.data_dir / "ocular-calibrations" / self.profile["user_id"]
+
+    def _load_geometric_record(self):
+        from geometric_calibration import read_record
+        self.geometric_record = None
+        if self.profile:
+            try:
+                legacy = self.data_dir / "experiments" / "geometric-joystick" / self.profile["user_id"] / "calibration.json"
+                path = self._geometric_path if self._geometric_path.exists() else legacy
+                record = read_record(json.loads(path.read_bytes()))
+                if record["context"].get("source") == self.config.ui.eye_source:
+                    self.geometric_record = record
+            except (OSError, ValueError, TypeError, KeyError, AttributeError):
+                pass
+
+    def start_geometric(self, mode, screen_context, multipose=False, axis=None):
+        from geometric_calibration import GeometricSession
+        from screen_mapping import screen_display
+        if self.control or self.direction_diagnostic or self.state in (
+                "CALIBRATING", "EYE_CALIBRATING", "GAZE_CALIBRATING", "VERTICAL_DIAGNOSTIC", "JITTER"):
+            raise ValueError("Detené el control o cerrá la medición actual primero.")
+        if mode not in ("fit", "recenter", "repair") or (mode == "repair" and axis not in (0,1)):
+            raise ValueError("Prueba geométrica no disponible.")
+        self._require_profile()
+        screen_display(screen_context)
+        saved = self.geometric_record
+        if mode != "fit" and not saved:
+            raise ValueError("Calibrá primero el joystick con cinco direcciones.")
+        self.stop_control()
+        self.start_camera()
+        try:
+            context = self._geometric_context(screen_context)
+            if context["camera"] is None:
+                raise ValueError("Esperá a que la cámara entregue un fotograma.")
+            if mode != "fit" and saved["context"] != context:
+                raise ValueError("Cambió la cámara, la pantalla, la fuente ocular o los umbrales. Calibrá de nuevo.")
+            self.direction_diagnostic = GeometricSession(self.clock, context, mode, saved, multipose, axis)
+            self.state = "DIRECTION_DIAGNOSTIC"
+        except Exception:
+            self.stop_camera()
+            raise
+
+    def continue_geometric_pose(self):
+        if getattr(self.direction_diagnostic, "pose_round_pause", False):
+            self.direction_diagnostic.pose_round_pause = False
+
+    def retry_geometric_axis(self, axis):
+        if self.direction_diagnostic:
+            self.cancel_direction_diagnostic()
+        if not self.geometric_record:
+            raise ValueError("Primero calibrá el joystick.")
+        self.start_geometric("repair", self.geometric_record["context"]["screen"], axis=axis)
+
+    def revert_geometric_center(self):
+        from user_storage import write_json
+        if self.control or self.direction_diagnostic or self.geometric_joystick:
+            raise ValueError("Cerrá la medición antes de revertir el centro.")
+        previous = (self.geometric_record or {}).get("previous")
+        if not previous:
+            raise ValueError("No hay un recentrado anterior para revertir.")
+        write_json(self._geometric_path, previous)
+        self.geometric_record = previous
+        self.message = "Centro anterior recuperado."
+
+    def _geometric_context(self, screen):
+        from screen_mapping import capture_host_id
+        return dict(profile=self.profile["user_id"], camera=self._relative_camera_context(), screen=screen,
+                    host=capture_host_id(), backend=self.camera_status().get("backend_effective"),
+                    source=self.config.ui.eye_source, blink_limits=self._direction_blink_limits(),
+                    mirrored=self.vision.get_face_data().gaze_mirrored)
+
+    def _prepare_geometric_activation(self, screen):
+        from geometric_joystick import GeometricJoystick
+        if not self.global_stop_available or self.session_guard is None:
+            raise ValueError("F8 global debe estar disponible. Cerrá las otras instancias de HeadMouse.")
+        if self.geometric_record["context"] != self._geometric_context(screen):
+            raise ValueError("Cambió la cámara, la pantalla o la fuente ocular. Calibrá nuevamente.")
+        joystick = GeometricJoystick(self.vision, self.geometric_record, self.config.eye,
+                                    self.config.gesture.stale_after_s, self.clock)
+        now = self.clock()
+        joystick.update(self.vision.get_face_data(), now)
+        if not joystick.reason.startswith("Centro"):
+            raise ValueError("Mirá al centro en una postura calibrada para activar. " + joystick.reason)
+        self.geometric_joystick = joystick
+        self._make_gesture()
+
+    def geometric_snapshot(self):
+        from geometric_joystick import calibration_message, calibration_quality
+        record = self.geometric_record
+        data = dict(saved=bool(record), ready=False, reduced=False, repair_axes=[],
+                    message="Calibrá el joystick con cinco puntos.")
+        if record:
+            ranges = calibration_quality(record, self.config.eye)[3]
+            data.update(ready=any(ranges), reduced=any(ranges) and not all(ranges),
+                        repair_axes=[axis for axis, pair in enumerate(ranges) if pair is None],
+                        screen=record["context"]["screen"], previous=bool(record.get("previous")),
+                        message=calibration_message(ranges))
+        return data
 
     def save_direction_report(self):
         from user_storage import write_json
-
         session = self.direction_diagnostic
         if self.state != "DIRECTION_DIAGNOSTIC" or session.state != "ready" or session.path:
             return
-        path = self.data_dir / "experiments" / "ocular-direction" / f"{session.session_id}.json"
+        if not session.checkpoint:
+            return
         try:
-            write_json(path, session.record())
+            write_json(self._geometric_path, session.checkpoint)
         except OSError:
             session.save_error = True
         else:
-            session.path = str(path)
+            self.geometric_record = session.checkpoint
+            session.path = str(self._geometric_path)
             session.save_error = False
 
     def start_vertical_diagnostic(self):
@@ -965,8 +1102,7 @@ class ApplicationController:
         self.gaze_calibration = GazeCalibrationSession(context, self.clock,
             self.config.gesture.stale_after_s,
             eye_limits=(thresholds.get("blink_left", .045), thresholds.get("blink_right", .045)), relative=relative,
-            eye_source=self.config.ui.eye_source)
-        self.gaze_calibration.vertical_reference=self.config.eye.vertical_reference if relative else "eyelids"
+            eye_source=self.config.ui.eye_source, vertical_reference=self.config.eye.vertical_reference)
         self._gaze_logged = None
         self.state, self.message = "GAZE_CALIBRATING", "Captura guiada sin salida al mouse. Escape cancela."
 
@@ -1107,9 +1243,14 @@ class ApplicationController:
     def step(self):
         if self.control and self.session_guard is not None and not self.session_guard():
             self.emergency_stop("Sesión bloqueada: control detenido")
+        if self._uses_geometric_joystick() and self.control and self.emergency.is_set():
+            self.stop_camera()
+            return
         if self._camera_starting:
             return
         if self.state == "ERROR":
+            if self.vision is not None and not self.vision.is_alive():
+                self.fail(self.message)
             return  # conservar el diagnóstico original; nunca procesar acciones tras fallar
         if self.emergency.is_set() and self.control:
             self.stop_control(self._pending_stop_reason)
@@ -1244,7 +1385,15 @@ class ApplicationController:
         if not self._actions_ready():
             text="Gestos pendientes de validar para este método"+("; sólo movimiento, sin clics" if self.config.ui.tracking_method!="nose" else "")
             (warnings if self.config.ui.tracking_method!="nose" else conditions).append(text)
-        if self.config.ui.tracking_method != "nose":
+        if self._uses_geometric_joystick():
+            geometric = self.geometric_snapshot()
+            if not geometric["ready"]:
+                conditions.append(geometric["message"])
+            elif geometric["reduced"]:
+                warnings.append(geometric["message"])
+            if not self.global_stop_available:
+                conditions.append("F8 global no disponible.")
+        elif self.config.ui.tracking_method != "nose":
             if not record:
                 conditions.append("Sin calibración para el método y fuente seleccionados")
             elif not compatible or (self.config.ui.tracking_method == "eye_absolute" and not record.get("validated")):
@@ -1273,19 +1422,26 @@ class ApplicationController:
             conditions.append("Control pausado")
         tracking_ready=self.config.ui.tracking_method=="nose" or bool(record and compatible and
             (record.get("validated") if self.config.ui.tracking_method=="eye_absolute" else True))
+        if self._uses_geometric_joystick():
+            tracking_ready = geometric["ready"]
+        else:
+            geometric = {}
         profile_status=self.profiles.status(profile) if profile else "Sin perfil"
         if profile and self.config.ui.unified_eyes and self.config.ui.tracking_method!="nose":
             profile_status="Ojos · Movimiento "+("calibrado" if tracking_ready else "pendiente o incompatible")+" · Gestos "+("validados" if self._actions_ready() else "pendientes")
         return dict(state=self.state, message=self.message, profile=profile,
                     calibration_saved_revision=self._saved_calibrations,
                     public_method="nose" if self.config.ui.tracking_method=="nose" else "eyes",
-                    ocular_response="posición en pantalla" if self.config.ui.ocular_engine=="eye_absolute" else "dirección conservada del perfil anterior",
+                    ocular_response={"eye_absolute": "posición en pantalla", "eye_joystick": "joystick geométrico calibrado",
+                                     "eye": "joystick geométrico clásico"}[self.config.ui.ocular_engine],
+                    geometric=geometric,
                     profile_status=profile_status,
                     settings=asdict(self.config), camera=self.vision is not None,
                     mediapipe="Listo" if camera_status.get("ready") else camera_status["stage"],
                     camera_status=camera_status,
                     activation_conditions=conditions+warnings,
                     activation_blockers=blockers, activation_warnings=warnings,
+                    global_stop_available=self.global_stop_available,
                     capture_context=capture_context,
                     actions_ready=self._actions_ready(),
                     face=face, detected=fresh, fps=self.vision.get_fps() if self.vision else 0,

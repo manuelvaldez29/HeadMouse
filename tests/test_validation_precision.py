@@ -2,9 +2,10 @@
 import math
 import unittest
 from copy import deepcopy
+from dataclasses import replace
 import numpy as np
 from gaze_mapping import (GazeCalibrationSession, GazeModel, TRAIN_TARGETS,
-                          VALIDATION_TARGETS, position_errors, precision_summary, features)
+                          VALIDATION_TARGETS, position_errors, precision_summary)
 from test_gaze_mapping import CONTEXT, completed_session, target_face
 
 
@@ -48,16 +49,20 @@ class ValidationPrecisionTests(unittest.TestCase):
             self.assertIn('predicted_mean_px',p)
 
     def test_incoherent_vertical_signal_blocks_before_validation(self):
-        s=completed_session()
-        s.phase='training';s.validation_points.clear()
         # Hay rango Y y señal estable, pero su patrón no codifica la fila objetivo.
         ys=(.3,.65,.4,.7,.3,.6,.45,.66,.3)
-        for i,y in enumerate(ys):
-            s.points[i]['features']=features(target_face((TRAIN_TARGETS[i][0],y))).tolist()
-            # También corromper comisuras: ninguna referencia debe codificar Y.
-            for source in ('left','right','both'):
-                s.points[i]['reference_comparison'][source+'_canthi']['median']=.5+.2*(y-.5)
-        s._advance()
+        now = [1.]
+        s = GazeCalibrationSession(CONTEXT, clock=lambda: now[0], countdown_s=0,
+                                   settle_s=0, duration_s=.2, min_samples=5)
+        for _ in range(120):
+            if s.state in ("ready", "invalid", "error") or s.phase == "validation":
+                break
+            x, _ = TRAIN_TARGETS[s.index]
+            y = ys[s.index]
+            now[0] += .05
+            face = target_face((x, y), int(now[0] * 1000))
+            corner_y = .5 + .2 * (y - .5)
+            s.update(replace(face, left_canthi_y=corner_y, right_canthi_y=corner_y))
         self.assertEqual(s.state,'invalid')
         self.assertEqual(s.outcome,'training_rejected')
         self.assertEqual(s.phase,'training')

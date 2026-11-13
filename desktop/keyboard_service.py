@@ -185,9 +185,10 @@ class KeyboardService(QObject):
 
                     def control_allows_input():
                         live = self.controller.profile or {}
+                        authorized = getattr(self.controller, "keyboard_input_allowed", self.controller._dictation_allowed)
                         return (not self.closed.is_set() and live.get("user_id") == profile
                                 and getattr(self.controller,"control",None) is control
-                                and self.controller._dictation_allowed())
+                                and authorized())
 
                     def allowed():
                         return control_allows_input() and probe.focused() == target and control_allows_input()

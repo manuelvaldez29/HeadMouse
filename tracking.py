@@ -4,6 +4,17 @@ from face_data import FaceData
 from gaze_source import gaze_position, validate_source
 
 
+def ocular_delta(position, config, zones=None):
+    zones = zones or tuple(config.dead_zone if zone is None else zone
+                          for zone in (config.dead_zone_x, config.dead_zone_y))
+    movement = []
+    for value, zone in zip(position, zones):
+        d = max(0., abs(value)-zone)*(1 if value >= 0 else -1)
+        movement.append(max(-config.max_delta, min(config.max_delta,
+                        d*config.sensitivity+d*abs(d)*config.acceleration)))
+    return tuple(movement)
+
+
 @runtime_checkable
 class TrackingStrategy(Protocol):
     def position(self, face: FaceData) -> tuple[float, float] | None: ...
@@ -69,8 +80,7 @@ class AbsoluteGazeTrackingStrategy:
         if not self.model or not self.model.record["validated"] or self.model.eye_source != self.eye_source:
             self.reason = "falta calibración absoluta validada"
             return None
-        position = self.model.predict(face)
-        self.reason = "" if position else "iris, postura o predicción fuera del dominio calibrado"
+        position, self.reason = self.model.evaluate(face)
         return position
 
 

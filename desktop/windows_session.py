@@ -42,6 +42,12 @@ class WindowsSession(QAbstractNativeEventFilter):
             self.keyboard_hotkey=bool(self.user.RegisterHotKey(self.handle,self.KEYBOARD_HOTKEY,0x4003,ord("K")))
         self.registered=bool(self.wts.WTSRegisterSessionNotification(self.handle,0))
 
+    def retry_hotkeys(self):
+        if self.handle and not self.hotkey:
+            self.hotkey = bool(self.user.RegisterHotKey(self.handle, self.HOTKEY, 0x4000, 0x77))
+        if self.handle and self.on_keyboard and not self.keyboard_hotkey:
+            self.keyboard_hotkey = bool(self.user.RegisterHotKey(self.handle, self.KEYBOARD_HOTKEY, 0x4003, ord("K")))
+
     def dispatch(self,message,wparam):
         if message==0x0312 and wparam==self.HOTKEY:self.on_stop();return True
         if message==0x0312 and wparam==self.KEYBOARD_HOTKEY and self.on_keyboard:

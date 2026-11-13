@@ -147,6 +147,7 @@ class Resident:
         if self.native:
             QApplication.instance().installNativeEventFilter(self.native)
             self.bridge.controller.session_guard=desktop_unlocked
+            self.bridge.controller.global_stop_available=self.native.hotkey
         self.timer=QTimer(window);self.timer.setInterval(100);self.timer.timeout.connect(self.tick);self.timer.start()
         self.last_revision=0;self.prompt_open=False;self.next_registry_check=0.;self.start_profile_id=None
         if autostart:QTimer.singleShot(0,self.begin)
@@ -202,6 +203,9 @@ class Resident:
         if time.monotonic()>=self.next_registry_check:
             self.next_registry_check=time.monotonic()+2
             self.controls.refresh_registration()
+            if self.native and self.bridge.controller._uses_geometric_joystick():
+                self.native.retry_hotkeys()
+                self.bridge.controller.global_stop_available = self.native.hotkey
         self.controls.refresh_profiles()
         self.tray.setToolTip("HeadMouse · "+("pausado" if s.get("paused") else "activo") if s.get("control_enabled") else "HeadMouse · control desactivado")
         revision=s.get("calibration_saved_revision",0)

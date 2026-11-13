@@ -1,7 +1,7 @@
 """HeadMouse — aplicación Windows, tesis V0.2."""
 import argparse
 import sys
-from config import ROOT, configure_logging
+from config import configure_logging
 from app_paths import data_root,VERSION
 
 
@@ -66,6 +66,9 @@ def main(argv=None):
         assert bridge.controller.vision is None and bridge.controller.control is None
         write_json(data_root()/"logs"/"resident-check.json",dict(result="passed",camera=False,control=False,
             tray_available=resident.tray_available,global_f8=resident.native.hotkey,
+            global_keyboard=resident.native.keyboard_hotkey,
+            ocular_modes=[window.home_ocular.itemData(i) for i in range(window.home_ocular.count())],
+            pointer_modes=[window.home_method.itemData(i) for i in range(window.home_method.count())],
             session_notifications=resident.native.registered,version=VERSION))
         QTimer.singleShot(800,window.exit_application)
     elif args.check:

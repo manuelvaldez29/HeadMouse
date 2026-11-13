@@ -1,6 +1,6 @@
 # HeadMouse — Guía rápida
 
-1. Ejecutar HeadMouse-Setup-0.5.1-win64.exe e instalar para el usuario actual.
+1. Ejecutar HeadMouse-Setup-0.5.2-win64.exe e instalar para el usuario actual.
 2. Abrir HeadMouse desde Inicio o el escritorio. No se necesita Python.
 3. Crear o elegir un perfil y seleccionar Nariz u Ojos.
 4. Entrar en Calibración y completar la medición y validación del método.

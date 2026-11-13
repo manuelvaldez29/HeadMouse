@@ -24,6 +24,8 @@ def fingerprint(profile):
 
 def prepared(profile):
     c=load_config(overrides=profile.get("settings",{}))
+    if c.ui.tracking_method in ("eye_absolute", "eye_joystick"):
+        return False  # ambos modos oculares requieren confirmación en cada sesión
     if c.ui.tracking_method=="nose":
         p=gesture_profile(profile,method_bank(c))
         return p.get("status")!="draft" and p.get("validation",{}).get("passed") is True

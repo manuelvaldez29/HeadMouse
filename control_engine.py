@@ -90,6 +90,8 @@ class ControlEngine:
 
         self.vision  = vision
         self.gesture = gesture
+        strategy = gesture.strategy
+        self.ocular_joystick = strategy if getattr(strategy, "name", None) == "eye_joystick" else None
         self.config  = config or ControlConfig()
         self.config.__post_init__()
         self._clock = clock if callable(clock) else (lambda: time.monotonic())
@@ -380,9 +382,22 @@ class ControlEngine:
         fresh = fd.fresh(self.gesture.config.stale_after_s, now)
         self.gesture.both_brows_anywhere = self.paused
         events = self.gesture.update(fd)
+        joystick = self.ocular_joystick
+        if joystick is not None:
+            interfering = any(self.gesture.last_active.values()) or fd.timestamp_ms < self.gesture._eye_hold_until
+            action_ready = joystick.actions_allowed(fd, now)
+            movement = joystick.update(fd, now, paused=self.paused or not self.output_allowed.is_set(),
+                                       gesture=interfering or bool(events))
+            if movement is not None:
+                events.append(movement)
+            if not action_ready or not joystick.actions_allowed(fd, now):
+                events = [event for event in events if event.type == EV_CURSOR_MOVE or
+                          (self._paused and fresh and self.mapping.resolve(event).type == "PAUSE")]
         self.last_events = tuple(events)
         self.last_actions = ()
         new_frame = fd.timestamp_ms != self._fraction_frame
+        if joystick is not None and joystick.movement != (0., 0.):
+            new_frame = False  # keep fractional pixels while awaiting the next inference
         if not fresh or self.paused or (new_frame and not any(e.type == EV_CURSOR_MOVE for e in events)):
             self._fraction = [0., 0.]
         self._fraction_frame = fd.timestamp_ms
@@ -571,7 +586,7 @@ class ControlEngine:
                      min(self.config.max_cursor_delta, ev.dx))
             dy = max(-self.config.max_cursor_delta,
                      min(self.config.max_cursor_delta, ev.dy))
-            if getattr(self.gesture.strategy, "name", None) == "eye":
+            if getattr(self.gesture.strategy, "name", None) in ("eye", "eye_joystick"):
                 # Sumar únicamente deltas nuevos; nunca integrar la posición del EMA.
                 dx, dy = dx+self._fraction[0], dy+self._fraction[1]
                 ix, iy = math.trunc(dx), math.trunc(dy)
@@ -579,7 +594,18 @@ class ControlEngine:
             else:
                 ix, iy = int(dx), int(dy)  # conservar la fórmula nasal histórica
             if ix != 0 or iy != 0:
+                if self.ocular_joystick is not None and self.screen_bounds is not None:
+                    ox, oy, width, height = self.screen_bounds
+                    x, y = self.backend.position()
+                    if not (ox <= x < ox+width and oy <= y < oy+height):
+                        raise ValueError("El cursor salió del monitor calibrado. Detené y volvé a activar.")
+                    ix = max(ox, min(ox+width-1, x+ix)) - x
+                    iy = max(oy, min(oy+height-1, y+iy)) - y
+                if not self.output_allowed.is_set() and self.ocular_joystick is not None:
+                    return
                 self.backend.moveRel(ix, iy, _pause=False)
+                if self.ocular_joystick is not None and ev.source_timestamp_ms:
+                    self.ocular_joystick.latency.append(max(0., (self._clock() - ev.source_timestamp_ms/1000) * 1000))
                 if self.metrics:
                     self.metrics.action(ev)
             return   # no loguear CURSOR_MOVE para no spamear

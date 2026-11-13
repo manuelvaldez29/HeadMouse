@@ -260,15 +260,21 @@ class UIConfig:
     eye_source: str = "both"
     ocular_engine: str = "eye_absolute"  # implementación interna; no selector público
     unified_eyes: bool = False  # migración explícita al banco público Ojos
+    ocular_keyboard_dwell: bool = False
+    ocular_keyboard_dwell_ms: int = 1000
 
     def __post_init__(self):
         from gaze_source import validate_source
         validate_source(self.eye_source)
         if type(self.show_overlay) is not bool or type(self.show_landmarks) is not bool:
             raise ValueError("Overlays y landmarks deben ser booleanos")
-        if self.tracking_method not in ("nose", "eye", "eye_absolute"):
+        if type(self.ocular_keyboard_dwell) is not bool:
+            raise ValueError("Selección por permanencia inválida")
+        bounded("ocular_keyboard_dwell_ms", self.ocular_keyboard_dwell_ms, 500, 3000, integer=True)
+        if self.tracking_method not in ("nose", "eye", "eye_absolute", "eye_joystick"):
             raise ValueError("Método de tracking desconocido")
-        if self.ocular_engine not in ("eye","eye_absolute") or type(self.unified_eyes) is not bool:
+        if (self.ocular_engine not in ("eye","eye_absolute", "eye_joystick") or type(self.unified_eyes) is not bool
+                or self.tracking_method == "eye_joystick" and not self.unified_eyes):
             raise ValueError("Configuración interna de Ojos inválida")
 
 
@@ -329,7 +335,7 @@ class AppConfig:
     metrics_enabled: bool = True
 
     def __post_init__(self):
-        if not isinstance(self.methods, dict) or self.methods.keys() - {"nose", "eyes", "eye", "eye_absolute"}:
+        if not isinstance(self.methods, dict) or self.methods.keys() - {"nose", "eyes", "eye", "eye_absolute", "eye_joystick"}:
             raise ValueError("Configuraciones por modalidad inválidas")
         for record in self.methods.values():
             if not isinstance(record, dict) or record.keys() - set(METHOD_SECTIONS):
@@ -370,6 +376,8 @@ METHOD_SECTIONS = ("gesture", "control", "calibration", "actions", "eye", "absol
 
 
 def method_bank(config):
+    if config.ui.tracking_method == "eye_joystick":
+        return "eye_joystick"
     return "eyes" if config.ui.unified_eyes and config.ui.tracking_method!="nose" else config.ui.tracking_method
 
 
@@ -386,9 +394,12 @@ def settings_for_save(current, incoming):
     for method in ("nose", "eye", "eye_absolute"):
         banks.setdefault(method, {key: deepcopy(old[key]) for key in METHOD_SECTIONS})
     banks[method_bank(current)] = {key: deepcopy(data[key]) for key in METHOD_SECTIONS}
-    selected = "eyes" if data["ui"].get("unified_eyes") and data["ui"]["tracking_method"]!="nose" else data["ui"]["tracking_method"]
+    selected = method_bank(load_config(overrides=data))
+    if selected == "eye_joystick" and selected not in banks:
+        banks[selected] = deepcopy(banks.get("eyes", banks["eye"]))
     if selected=="eyes" and selected not in banks:
-        banks[selected]=deepcopy(banks[data["ui"]["tracking_method"]])
+        legacy = data["ui"]["tracking_method"]
+        banks[selected]=deepcopy(banks["eye_absolute" if legacy == "eye_joystick" else legacy])
     if selected not in banks:
         raise ValueError("Método de tracking desconocido")
     data.update(deepcopy(banks[selected]))
@@ -405,6 +416,19 @@ def load_config(path=None, overrides=None):
     if overrides is not None:
         layers.append(overrides)
     for layer in layers:
+        if isinstance(layer, dict):
+            layer = dict(layer)
+            layer.pop("openvino_eye", None)  # compatibility with saved experimental profiles
+            if isinstance(layer.get("ui"), dict):
+                ui = layer["ui"] = dict(layer["ui"])
+                for key in ("tracking_method", "ocular_engine"):
+                    if ui.get(key) in ("eye_openvino", "eye_mobilegaze"):
+                        ui[key] = "eye_joystick"
+                        ui["unified_eyes"] = True
+                for suffix in ("", "_ms"):
+                    old = "openvino_keyboard_dwell" + suffix
+                    if old in ui:
+                        ui.setdefault("ocular_keyboard_dwell" + suffix, ui.pop(old))
         if not isinstance(layer, dict) or layer.keys() - data.keys():
             raise ValueError("Secciones de configuración inválidas")
         for name, value in layer.items():

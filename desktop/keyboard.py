@@ -3,11 +3,13 @@ import ctypes
 from ctypes import wintypes
 import os
 import sys
+import time
 
 from PySide6.QtCore import Qt, QTimer
+from PySide6.QtGui import QCursor
 from PySide6.QtWidgets import (QApplication, QDialog, QGridLayout, QHBoxLayout, QLabel,
                                QListWidget, QMessageBox, QPushButton, QVBoxLayout, QWidget,
-                               QPlainTextEdit, QSizePolicy)
+                               QPlainTextEdit, QProgressBar, QSizePolicy)
 
 from desktop.keyboard_service import KeyboardService
 
@@ -336,11 +338,66 @@ class VirtualKeyboard(QWidget):
         self.main_layout.addLayout(bottom)
         self.main_layout.addLayout(navigation)
 
+        self.dwell_bar = QProgressBar()
+        self.dwell_bar.setAccessibleName("Progreso de selección por permanencia")
+        self.dwell_bar.setRange(0, 100)
+        self.dwell_bar.setTextVisible(False)
+        self.dwell_bar.setMaximumHeight(5)
+        self.dwell_bar.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self.dwell_bar.hide()
+        self.dwell_bar.setGeometry(10, self.height()-6, max(1, self.width()-20), 5)
+        self.dwell_button = self.dwell_anchor = self.dwell_since = self.dwell_latched = None
+        self.dwell_click_revision = 0
+        self.dwell_token = None
+        self.dwell_timer = QTimer(self)
+        self.dwell_timer.setInterval(50)
+        self.dwell_timer.timeout.connect(self._advance_dwell)
+
         self.topmost_timer = QTimer(self)
         self.topmost_timer.setInterval(250)
         self.topmost_timer.timeout.connect(self._check_topmost_order)
 
         self.set_mode("ABC")
+
+    def _advance_dwell(self):
+        controller = self.bridge.controller
+        ui = self.bridge.snapshot().get("settings", {}).get("ui", {})
+        allowed = getattr(controller, "ocular_keyboard_dwell_allowed", None)
+        if (not ui.get("ocular_keyboard_dwell") or ui.get("tracking_method") not in ("eye_joystick", "eye_absolute")
+                or not self.isVisible() or not self.state.get("usable")):
+            self.dwell_bar.hide()
+            self.dwell_button = self.dwell_latched = None
+            return
+        point = self.mapFromGlobal(QCursor.pos())
+        child = self.childAt(point)
+        button = child if isinstance(child, QPushButton) and child.isEnabled() else None
+        token = self.state.get("token")
+        if token != self.dwell_token:
+            self.dwell_token = token
+            self.dwell_latched = button  # entering a new field requires leaving the initial key
+            self.dwell_button = None
+        pointer_click = getattr(controller.control, "pointer_click", (0, None, 0))[0]
+        wink_clicked = pointer_click != self.dwell_click_revision
+        self.dwell_click_revision = pointer_click
+        if button is not self.dwell_latched:
+            self.dwell_latched = None
+        if wink_clicked:
+            self.dwell_latched = button
+        if button is None or button is self.dwell_latched or not (allowed and allowed()):
+            self.dwell_button = None
+            self.dwell_bar.hide()
+            return
+        now = time.monotonic()
+        if self.dwell_button is not button or (point - self.dwell_anchor).manhattanLength() > 3:
+            self.dwell_button, self.dwell_anchor, self.dwell_since = button, point, now
+        elapsed_ms = (now - self.dwell_since) * 1000
+        self.dwell_bar.setValue(min(100, int(100 * elapsed_ms / ui["ocular_keyboard_dwell_ms"])))
+        self.dwell_bar.setGeometry(10, self.height()-6, max(1, self.width()-20), 5)
+        self.dwell_bar.show()
+        self.dwell_bar.raise_()
+        if self.dwell_bar.value() == 100 and allowed():
+            self.dwell_latched = button
+            button.click()
 
     def button(self, title, callback):
         button = QPushButton(title)
@@ -576,12 +633,16 @@ class VirtualKeyboard(QWidget):
     def hide_keyboard(self):
         self.hiding = True
         self.topmost_timer.stop()
+        self.dwell_timer.stop()
+        self.dwell_bar.hide()
+        self.dwell_button = self.dwell_latched = None
         self.composition.clear()
         self.hide()
         self.service.submit("hide")
 
     def closeEvent(self, event):
         self.topmost_timer.stop()
+        self.dwell_timer.stop()
         self.service.close()
         if self.coordinator.keyboard is self:
             self.coordinator.keyboard = None
@@ -592,6 +653,14 @@ class VirtualKeyboard(QWidget):
         super().closeEvent(event)
 
     def present(self, state):
+        ui = self.bridge.snapshot().get("settings", {}).get("ui", {})
+        if state["visible"] and ui.get("tracking_method") in ("eye_joystick", "eye_absolute") and ui.get("ocular_keyboard_dwell"):
+            if not self.dwell_timer.isActive():
+                self.dwell_timer.start()
+        else:
+            self.dwell_timer.stop()
+            self.dwell_bar.hide()
+            self.dwell_button = self.dwell_latched = None
         if self.hiding and state["visible"]:
             return
         target_changed = (self.state.get("target") != state.get("target") or
