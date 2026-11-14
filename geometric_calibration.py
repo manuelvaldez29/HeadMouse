@@ -159,7 +159,7 @@ def fit(rows, source, multipose, *, reserve=True):
 
 
 def repair_axis(saved, rows, axis):
-    """Keep the other axis frozen, and reserve five fresh validation targets."""
+    """Keep the other axis frozen and refit only the three measured targets."""
     channel = saved["selected"]
     old = saved["candidates"][channel]
     measured = {}
@@ -178,11 +178,9 @@ def repair_axis(saved, rows, axis):
     candidate = {k:v for k,v in old.items() if k not in ("adjustment", "ridge_validation", "adjusted_center_extent")}
     extent = list(old.get("center_extent", (0.,0.)))
     extent[axis] = max(abs(p[axis]-centers["center"][axis]) for p in measured["center"])
-    validation = [(label, [(gate_weighted(dict(values), saved.get("agreement")), pose) for values,pose in points])
-                  for label,points in rows[3:]]
     candidate.update(centers=centers, noise=noise, center_extent=extent,
                      axes=[pair is not None for pair in axis_ranges(model, noise)[1]],
-                     stats=score(validation, model, channel))
+                     stats=score((), model, channel))
     return {k:v for k,v in saved.items() if k not in ("validation", "previous")} | {
         "candidates": saved["candidates"] | {channel: candidate}}
 
@@ -207,16 +205,13 @@ def read_record(record):
 
 
 class GeometricSession(DirectionDiagnostic):
-    def __init__(self, clock, context, mode, saved=None, multipose=False, axis=None):
-        rounds = 3 if mode=="fit" and multipose else 1
-        super().__init__(clock, rounds=rounds, limits=context["blink_limits"])
-        self.context,self.mode,self.saved,self.multipose = context,mode,saved,multipose
+    def __init__(self, clock, context, mode, saved=None, axis=None):
+        super().__init__(clock, rounds=1, limits=context["blink_limits"])
+        self.context,self.mode,self.saved = context,mode,saved
         self.checkpoint = None
         self.summary = None
         self.axis = axis
-        self.pose_round_pause = False
-        self.pose_pause_done = False
-        if mode=="recenter":
+        if mode == "recenter":
             self.schedule=["center"]
         if mode=="repair":
             self.schedule=["center",*AXES[axis]]
@@ -235,11 +230,7 @@ class GeometricSession(DirectionDiagnostic):
         return self.saved["selected"] in gate_weighted(values, self.saved.get("agreement"))
 
     def update(self, face, fps):
-        if self.pose_round_pause:
-            return
         super().update(face,fps)
-        if self.multipose and self.mode=="fit" and self.index==5 and not self.pose_pause_done:
-            self.pose_pause_done = self.pose_round_pause = True
         if self.state!="ready" or self.summary is not None:
             return
         rows = []
@@ -265,7 +256,7 @@ class GeometricSession(DirectionDiagnostic):
                 if self.mode=="repair":
                     self.checkpoint = repair_axis(self.saved, rows, self.axis)
                 else:
-                    self.checkpoint = fit(rows,self.context["source"],self.multipose,reserve=self.multipose)
+                    self.checkpoint = fit(rows,self.context["source"],False,reserve=False)
                 self.checkpoint.update(context=self.context,session_id=self.session_id)
                 self.summary = []
                 selected = self.checkpoint["selected"]
@@ -308,15 +299,10 @@ class GeometricSession(DirectionDiagnostic):
 
     def snapshot(self):
         s=super().snapshot()
-        if s["target"] is not None:
-            s["geometric_status"] = ("Postura alternativa cómoda" if self.mode == "fit" and self.multipose
-                                     and 5 <= self.index < 10 else "Mantené una postura cómoda")
-        if self.pose_round_pause:
-            s.update(target=None,geometric_status="Acomodate un poco si te resulta cómodo o seguí en la misma postura.")
         if self.mode in ("fit", "repair") and self.checkpoint:
             selected = self.checkpoint["selected"]
             s["repair_axes"] = [i for i, good in enumerate(self.checkpoint["candidates"][selected]["axes"]) if not good]
-        s.update(pose_round_pause=self.pose_round_pause,geometric_summary=self.summary)
+        s["geometric_summary"] = self.summary
         return s
 
     def record(self):

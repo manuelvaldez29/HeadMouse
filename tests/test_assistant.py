@@ -28,6 +28,48 @@ class ParseTests(unittest.TestCase):
             with self.subTest(example):
                 self.assertIsNotNone(parse(example))
 
+    def test_mouse_commands_exist_only_while_the_eye_joystick_is_connected(self):
+        self.assertEqual(parse("Clic."), Command("click"))
+        self.assertEqual(parse("Hacé click"), Command("click"))
+        self.assertEqual(parse("Doble clic"), Command("double_click"))
+        self.assertEqual(parse("Clic derecho."), Command("right_click"))
+        self.assertEqual(parse("¡Quieto!"), Command("freeze"))
+        self.assertEqual(parse("Frená el mouse"), Command("freeze"))
+        self.assertEqual(parse("Mover"), Command("unfreeze"))
+        self.assertEqual(parse("Pausa"), Command("play_pause"))
+        assistant = Assistant(index=Mock(), keys=Mock())
+        done, message = assistant("Clic")  # con Nariz nadie conecta el puntero
+        self.assertFalse(done)
+        self.assertIn("solo con Ojos", message)
+        assistant.keys.click.assert_not_called()
+        assistant.pointer = Mock(return_value=True)
+        self.assertEqual(assistant("Doble clic"), (True, "Doble clic."))
+        assistant.pointer.assert_called_once_with("double_click")
+
+    def test_control_connects_voice_mouse_to_the_eye_joystick_and_not_to_the_nose(self):
+        from control_engine import ControlEngine
+        from gesture_engine import EV_LEFT_CLICK
+        def engine(strategy_name):
+            gesture, dictation, backend = Mock(), Mock(), Mock()
+            gesture.strategy.name = strategy_name
+            backend.size.return_value = (1920, 1080)
+            dictation.assistant = Assistant(index=Mock(), keys=Mock())
+            return ControlEngine(Mock(), gesture, backend=backend, dictation=dictation), dictation.assistant, backend
+        control, assistant, backend = engine("nose")
+        self.assertIsNone(assistant.pointer)
+        self.assertFalse(control.voice_pointer("click"))
+        control, assistant, backend = engine("eye_joystick")
+        control.output_allowed.set()
+        control._paused = False
+        self.assertEqual(assistant("Quieto"), (True, "Puntero quieto. Decí «mover» para liberarlo."))
+        self.assertIs(control.ocular_joystick.frozen, True)
+        assistant("Mover")
+        self.assertIs(control.ocular_joystick.frozen, False)
+        self.assertTrue(assistant("Clic")[0])
+        backend.click.assert_not_called()  # se ejecuta en el ciclo del control, no en el hilo de voz
+        control._run_voice_actions()
+        backend.click.assert_called_once()
+
     def test_rioplatense_variants_and_courtesy(self):
         self.assertEqual(parse("Che, abrime el Word por favor"), Command("open", "word"))
         self.assertEqual(parse("Abrí la calculadora."), Command("open", "calculadora"))

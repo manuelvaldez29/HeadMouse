@@ -10,7 +10,7 @@ COMMANDS = {"create_profile", "select_profile", "rename_profile", "delete_profil
             "select_control_method", "select_eye_source", "save_public_settings", "upgrade_ocular_response",
             "start_vertical_diagnostic", "repeat_vertical_point", "cancel_vertical_diagnostic",
             "select_ocular_mode", "ack_direction_target", "repeat_direction_target",
-            "cancel_direction_diagnostic", "save_direction_report", "revert_geometric_center", "retry_geometric_axis", "continue_geometric_pose",
+            "cancel_direction_diagnostic", "save_direction_report", "revert_geometric_center", "retry_geometric_axis",
             "start_geometric",
             "start_gaze_calibration", "review_gaze_training", "export_gaze_attempt", "record_gaze_viewport", "repeat_gaze_point", "save_gaze_calibration", "cancel_gaze_calibration",
             "start_eye_calibration", "save_eye_calibration", "cancel_eye_calibration",

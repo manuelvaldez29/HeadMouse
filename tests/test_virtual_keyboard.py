@@ -472,7 +472,7 @@ class VirtualKeyboardTests(unittest.TestCase):
 
         # 6. Full GUI click on prediction_buttons[0] (simulating Nose/Eye click in compact mode)
         app = QApplication.instance() or QApplication([])
-        settings = asdict(KeyboardConfig(size="compact"))
+        settings = asdict(KeyboardConfig(size="compact", learning=True))
         gui_buffer = Buffer()
         # Simulate COM BSTR returning None at end of field when caret is at end
         def uia_like_caret(suffix):
@@ -483,7 +483,7 @@ class VirtualKeyboardTests(unittest.TestCase):
             return (left[-1:] if left else None), (right if right else None)
 
         controller = SimpleNamespace(
-            profile={"user_id": "perfil_A"},
+            profile={"user_id": "perfil_gui"},
             dictation=None,
             data_dir=self.root,
             _dictation_allowed=lambda: True,
@@ -522,6 +522,10 @@ class VirtualKeyboardTests(unittest.TestCase):
         wait_for(lambda: gui_buffer.text == "hola " and panel.state.get("preview") == "hola ")
         self.assertEqual(gui_buffer.text, "hola ")
         self.assertEqual(panel.state.get("preview"), "hola ")
+        panel.close()
+        reopened = Dictionary(self.root, "perfil_gui")
+        self.addCleanup(reopened.close)
+        self.assertEqual(reopened.words(), ["hola"])
 
     def test_windows_search_flyout_detection_and_panel_bounds(self):
         from types import SimpleNamespace

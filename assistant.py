@@ -35,6 +35,9 @@ ASSISTANT_COMMANDS = (
     ("«captura de pantalla»", "abre el recorte de pantalla", "Captura de pantalla."),
     ("«escribir hola qué tal»", "escribe el texto donde está el cursor", "Escribir hola qué tal."),
     ("«qué hora es»", "muestra la hora", "¿Qué hora es?"),
+    ("«clic» · «doble clic» · «clic derecho»", "solo con Ojos · Joystick: hace clic donde está el puntero", "Clic."),
+    ("«quieto» · «mover»", "solo con Ojos · Joystick: deja el puntero quieto aunque mires los bordes, y lo libera",
+     "Quieto."),
 )
 
 EXCLUDED = ("desinstal", "uninstall", "setup", "install", "readme", "leame", "license", "licencia",
@@ -89,6 +92,14 @@ PATTERNS = (  # (regex sobre texto normalizado, tipo, grupo con el argumento)
     (r"^(?:captura|sacar captura|saca una captura|captura de pantalla|hacer captura)(?: de pantalla)?$", "screenshot"),
     (r"^(?:escribi|escribir|escribe) (.+)$", "type"),
     (r"^(?:que hora es|decime la hora|hora)$", "time"),
+    # Mouse por voz: solo con el joystick ocular (Assistant.pointer). El doble y el derecho van antes.
+    (r"^(?:doble (?:clic|click|clique)|(?:clic|click) doble|dos (?:clics|clicks|clic|click))$", "double_click"),
+    (r"^(?:(?:clic|click|boton) derecho|menu contextual)$", "right_click"),
+    (r"^(?:(?:hace|hacer|haz|dale) )?(?:clic|click|clique|klick)(?: izquierdo| aca| ahi)?$", "click"),
+    (r"^(?:quieto|quieta|frena|frenar|frenalo|alto|congela|congelar|deja(?:lo)? quieto)(?: (?:el )?(?:mouse|puntero|cursor))?$",
+     "freeze"),
+    (r"^(?:mover|move|movelo|segui|seguir|continua|continuar|libera|liberar|descongela|descongelar)"
+     r"(?: (?:el )?(?:mouse|puntero|cursor))?$", "unfreeze"),
 )
 
 
@@ -194,6 +205,9 @@ class Assistant:
         self.browse = browse
         self.own_window = own_window
         self.clock = clock
+        # Lo conecta el control solo mientras maneja el joystick ocular: recibe "click",
+        # "double_click", "right_click", "freeze" o "unfreeze". Con Nariz queda en None.
+        self.pointer = None
 
     def _keys(self):
         if self.keys is None:
@@ -264,6 +278,17 @@ class Assistant:
             return False, "No hay dónde escribir."
         self.typer.type_text(text)
         return True, f"Escrito: {text}"
+
+    def _pointer(self, kind, message):
+        if self.pointer is None or not self.pointer(kind):
+            return False, "Los comandos de mouse por voz funcionan solo con Ojos · Joystick activo."
+        return True, message
+
+    def _click(self, _): return self._pointer("click", "Clic.")
+    def _double_click(self, _): return self._pointer("double_click", "Doble clic.")
+    def _right_click(self, _): return self._pointer("right_click", "Clic derecho.")
+    def _freeze(self, _): return self._pointer("freeze", "Puntero quieto. Decí «mover» para liberarlo.")
+    def _unfreeze(self, _): return self._pointer("unfreeze", "Puntero liberado.")
 
     def _time(self, _):
         now = self.clock()

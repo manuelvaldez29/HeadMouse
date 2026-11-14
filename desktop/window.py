@@ -70,6 +70,9 @@ def status_message(s,event=None):
     if event:
         return event[0],event[2]
     if s.get("control_enabled"):
+        live = (s.get("geometric") or {}).get("live")
+        if live and not s.get("paused") and not s.get("dragging"):
+            return live + " · F8 para detener.", False
         g=gesture_hints(s)
         if not s.get("paused") and s.get("centering"):
             return "Buscando tu nariz: quedate quieto un momento y el centro queda donde estás.",False
@@ -271,7 +274,11 @@ class MainWindow(QMainWindow):
         self.mini_camera=MiniCameraWindow()
         # Sin dueño Qt no se destruyen solas: la ventana las lleva registradas y las
         # libera al cerrarse (y dispose_window), como pedía la corrección de ciclo de vida.
-        self.owned_overlays=(self.dictation_overlay,self.mini_camera)
+        from desktop.joystick_pad import JoystickPad
+        self.joystick_pad=JoystickPad()
+        self.joystick_pad.displayed.connect(lambda session,index,attempt,width,height:self.bridge.request(
+            "ack_direction_target",session_id=session,index=index,attempt=attempt,viewport=(width,height)))
+        self.owned_overlays=(self.dictation_overlay,self.mini_camera,self.joystick_pad)
         from desktop.overlay_layout import OverlayCoordinator
         self.overlay_layout=OverlayCoordinator(self)
         self.ui_prefs=UIPreferences()
@@ -315,7 +322,7 @@ class MainWindow(QMainWindow):
         self._preview_key=key
         index=self.stack.currentIndex()
         preview=self.preview if index==0 else self.diagnostic_preview if index==3 else None
-        if index==2:
+        if index==2 and self.ocular_content.currentWidget() is not self.direction_panel:
             preview=self.eye_preview if self.calibration_tabs.currentIndex()==1 and self.ocular_content.currentIndex()==0 else self.calibration_preview
         if preview:
             camera=s
@@ -366,6 +373,7 @@ class MainWindow(QMainWindow):
         self.mini_camera_check=QCheckBox("Mostrar mini cámara mientras controlo con la nariz")
         self.mini_camera_check.setToolTip("Una ventana chica abajo a la derecha con tu nariz, el centro y la zona quieta. "
                                           "No recibe clicks: los guiños hacen click en lo que está debajo.")
+        self.mini_camera_check.hide()
         side.addWidget(self.mini_camera_check)
         self.live_events=label("","Subtitle")
         side.addWidget(self.live_events)
@@ -395,10 +403,14 @@ class MainWindow(QMainWindow):
         if not p:
             return "Elegí un perfil","Hero",lambda:self.show_page(1)
         if s["settings"]["ui"]["tracking_method"]!="nose":
-            if s["state"] in ("CALIBRATING","EYE_CALIBRATING","GAZE_CALIBRATING","VERTICAL_DIAGNOSTIC","DIRECTION_DIAGNOSTIC","JITTER"):
+            if s.get("measuring"):
                 return "Terminá la medición en curso","Hero",None
+            if s["settings"]["ui"]["tracking_method"] == "eye_joystick" and not s.get("tracking_calibrated"):
+                return "Calibrar joystick · 5 puntos", "Hero", self.start_public_ocular_movement
             if not s.get("tracking_calibrated"):
                 return "Calibrar Ojos","Hero",self.open_eye_calibration
+            if s["settings"]["ui"]["tracking_method"] == "eye_joystick" and not s.get("geometric_stop_available"):
+                return "F8 global no disponible", "Hero", None
             return "▶  Iniciar HeadMouse","Hero",self.activate
         if p.get("status")=="draft":
             return "Calibrar mis gestos","Hero",self.start_calibration
@@ -421,10 +433,13 @@ class MainWindow(QMainWindow):
         self.home_method.setCurrentIndex(0 if s["settings"]["ui"]["tracking_method"]=="nose" else 1)
         self.home_method.blockSignals(False)
         ui = s["settings"]["ui"]
+        p=s.get("profile")
+        self.mini_camera_check.setVisible(bool(p) and ui["tracking_method"]=="nose")
+        self.mini_camera_settings_check.setVisible(bool(p))
         for widget in (self.home_ocular_label, self.home_ocular):
             widget.setVisible(ui["tracking_method"] != "nose")
         self.home_ocular.setCurrentIndex(int(ui["ocular_engine"] != "eye_absolute"))
-        self.home_ocular.setEnabled(bool(s.get("profile")))
+        self.home_ocular.setEnabled(bool(p))
         text,style,action=self._home_step(s)
         if self.home_action.text()!=text:
             self.home_action.setText(text)
@@ -434,7 +449,6 @@ class MainWindow(QMainWindow):
             self.home_action.style().unpolish(self.home_action)
             self.home_action.style().polish(self.home_action)
         self.home_action.setEnabled(action is not None)
-        p=s.get("profile")
         g=gesture_hints(s)
         if s["control_enabled"]:
             state="EN PAUSA" if s["paused"] else "ACTIVO"
@@ -742,15 +756,14 @@ class MainWindow(QMainWindow):
         self.eye_preview=CameraPreview("La cámara se abre al iniciar la calibración ocular")
         live=QHBoxLayout();live.addWidget(self.eye_preview,1)
         controls=QWidget();row=QVBoxLayout(controls)
-        row.addWidget(button("Calibrar movimiento",self.start_public_ocular_movement,"Primary"))
+        self.calibrate_eye_movement = button("Calibrar movimiento",self.start_public_ocular_movement,"Primary")
+        row.addWidget(self.calibrate_eye_movement)
         row.addWidget(button("Calibrar gestos",self.start_ocular_gestures))
         self.joystick_setup = QWidget()
         joystick_options = QVBoxLayout(self.joystick_setup)
         self.geometric_status = label("", "Subtitle")
         self.geometric_status.setWordWrap(True)
         joystick_options.addWidget(self.geometric_status)
-        self.geometric_multi = QCheckBox("Ajustar con otra postura")
-        joystick_options.addWidget(self.geometric_multi)
         self.geometric_recenter = button("Recentrar mirada", lambda: self.start_geometric("recenter"))
         self.geometric_revert = button("Revertir recentrado", lambda: self.bridge.request("revert_geometric_center"))
         joystick_options.addWidget(self.geometric_recenter)
@@ -761,8 +774,7 @@ class MainWindow(QMainWindow):
         ]
         for widget in self.geometric_repair:
             joystick_options.addWidget(widget)
-        self.direction_panel = DirectionDiagnosticPanel(self.bridge.request)
-        joystick_options.addWidget(self.direction_panel)
+        self.direction_panel = DirectionDiagnosticPanel(self.bridge.request, self.activate)
         body.addWidget(self.joystick_setup)
         center=QHBoxLayout()
         self.eye_start=button("Capturar centro",self.start_eye_tracking_calibration)
@@ -784,6 +796,7 @@ class MainWindow(QMainWindow):
         self.ocular_gesture_layout.setContentsMargins(0,2,0,0)
         self.ocular_gesture_layout.setSpacing(4)
         self.ocular_content.addWidget(gestures)
+        self.ocular_content.addWidget(self.direction_panel)
 
     def _voice_calibration_ui(self,layout):
         """Pestaña Voz: silencio de la sala, cuatro frases y la huella de voz."""
@@ -866,7 +879,8 @@ class MainWindow(QMainWindow):
         latest=self.bridge.snapshot() or self.snapshot
         method=latest.get("settings",{}).get("ui",{}).get("ocular_engine","eye_absolute")
         if method == "eye_joystick":
-            self.show_page(2)
+            self.open_eye_calibration()
+            self.ocular_content.setCurrentIndex(0)
             self.start_geometric("fit")
             return
         if not latest.get("settings",{}).get("ui",{}).get("unified_eyes"):
@@ -1049,8 +1063,32 @@ class MainWindow(QMainWindow):
             check.blockSignals(False)
         if self.snapshot: self._present_mini_camera(self.snapshot)
 
+    def _present_joystick_pad(self, calibration, live):
+        """Las marcas se ven solo mientras se calibra un punto o mientras el joystick controla."""
+        from joystick_pad import pad_rect
+        pad = self.joystick_pad
+        target = calibration and calibration["target"]
+        if not target and live is None:
+            if pad.isVisible():
+                pad.hide()
+            return
+        try:
+            pad.place(pad_rect(self.screen_context()))
+        except ValueError:
+            pad.hide()
+            return
+        if target:
+            step = dict(await_target="Preparando", transition="Mirá el punto amarillo",
+                        fixation="Mantené la mirada", retry="Faltaron muestras · revisá la ventana")
+            pad.present_target(target, calibration["token"],
+                               f"{calibration['done'] + 1} de {calibration['total']} · {step.get(calibration['state'], '')}")
+        else:
+            pad.present_live(live.get("zone"), live.get("axes", (True, True)), live.get("live") or "")
+        if not pad.isVisible():
+            pad.show()
+
     def _present_mini_camera(self,s):
-        wanted=(s.get("control_enabled") and s["settings"]["ui"]["tracking_method"]=="nose"
+        wanted=(s.get("profile") and s.get("control_enabled") and s["settings"]["ui"]["tracking_method"]=="nose"
                 and self.mini_camera_check.isChecked())
         if wanted:
             g=gesture_hints(s)
@@ -1096,8 +1134,7 @@ class MainWindow(QMainWindow):
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                 QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
             return
-        self.bridge.request("start_geometric", mode=mode, screen_context=context,
-                            multipose=self.geometric_multi.isChecked(), axis=axis)
+        self.bridge.request("start_geometric", mode=mode, screen_context=context, axis=axis)
 
     def _present_diagnostic(self,s):
         """Estado en lenguaje simple: rostro, hacia dónde iría el cursor y cada gesto."""
@@ -1248,6 +1285,7 @@ class MainWindow(QMainWindow):
         form.addRow(self.landmarks_check)
         section(form,"Cámara flotante")
         self.mini_camera_settings_check=QCheckBox("Mostrar cámara flotante al controlar con la nariz (se aplica al instante)")
+        self.mini_camera_settings_check.hide()
         form.addRow(self.mini_camera_settings_check)
         self.camera_corner=QComboBox()
         for title,key in (("Inferior derecha","bottom_right"),("Superior izquierda","top_left"),
@@ -1799,12 +1837,12 @@ class MainWindow(QMainWindow):
 
     def activate(self):
         geometric = self.snapshot.get("geometric") or {}
-        reduced = self.snapshot.get("settings", {}).get("ui", {}).get("tracking_method") == "eye_joystick" and geometric.get("reduced")
         message = "HeadMouse comenzará a controlar el puntero del sistema."
-        if reduced:
-            message = geometric["message"] + " Confirmá solo si podés detener el control con F8."
-        elif self.snapshot.get("settings", {}).get("ui", {}).get("tracking_method") == "eye_joystick":
-            message += " Después de confirmar, mirá al centro para armar el joystick."
+        if self.snapshot.get("settings", {}).get("ui", {}).get("tracking_method") == "eye_joystick":
+            if geometric.get("reduced"):
+                message = geometric["message"]
+            message += (" Mirá hacia un borde de la pantalla para mover el puntero hacia ese lado. "
+                        "Mirar la zona central lo deja quieto. F8 detiene el control.")
         if QMessageBox.question(self,"Activar control",message+" Usá Tab para elegir y Espacio para confirmar.",
                                 QMessageBox.StandardButton.Yes|QMessageBox.StandardButton.No,
                                 QMessageBox.StandardButton.No)==QMessageBox.StandardButton.Yes:
@@ -1881,7 +1919,7 @@ class MainWindow(QMainWindow):
                 compatible = False
             if not compatible:
                 self.stop_immediately()
-                self.show_error("Cambió la pantalla. Repetí la prueba segura.")
+                self.show_error("Cambió la pantalla. Calibrá de nuevo los cinco puntos.")
         name=p.get("display_name",p["user_id"]) if p else "Sin perfil seleccionado"
         self.home_profile.setText(f"Hola, {name}" if p else "Bienvenido a HeadMouse")
         self._present_home(s)
@@ -1895,15 +1933,20 @@ class MainWindow(QMainWindow):
             self.gesture_calibration_scroll.show()
         self.ocular_source_combo.setCurrentIndex(self.ocular_source_combo.findData(s["settings"]["ui"]["eye_source"]))
         joystick_mode = s["settings"]["ui"]["tracking_method"] == "eye_joystick"
+        self.calibrate_eye_movement.setText("Calibrar joystick · 5 puntos" if joystick_mode else "Calibrar movimiento")
         self.joystick_setup.setVisible(joystick_mode)
         geometric = s.get("geometric") or {}
         calibration = s.get("direction_diagnostic")
-        self.geometric_status.setText(geometric.get("message", ""))
-        self.geometric_recenter.setEnabled(bool(geometric.get("saved") and not calibration and not enabled))
-        self.geometric_revert.setEnabled(bool(geometric.get("previous") and not calibration and not enabled))
+        if calibration is not None:
+            self.ocular_content.setCurrentWidget(self.direction_panel)
+        elif self.ocular_content.currentWidget() is self.direction_panel:
+            self.ocular_content.setCurrentIndex(0)
+        busy = bool(calibration or enabled or s["state"] == "CAMERA_STARTING")
+        self.geometric_status.setText(geometric.get("live") or geometric.get("message", ""))
+        self.geometric_recenter.setEnabled(bool(geometric.get("saved") and not busy))
+        self.geometric_revert.setEnabled(bool(geometric.get("previous") and not busy))
         for axis, widget in enumerate(self.geometric_repair):
-            widget.setVisible(not calibration and not enabled and axis in geometric.get("repair_axes", ()))
-        self.direction_panel.present(calibration)
+            widget.setVisible(not busy and axis in geometric.get("repair_axes", ()))
         self.ocular_readiness.setText("Movimiento: "+("preparado" if s.get("tracking_calibrated") and not method_key[1] else "pendiente")+
             " · Gestos: "+("validados" if s.get("actions_ready") and not method_key[1] else "pendientes; clics deshabilitados")+
             "\nRespuesta guardada: "+s.get("ocular_response","posición en pantalla")+
@@ -1912,7 +1955,10 @@ class MainWindow(QMainWindow):
         self.activate_button.setToolTip(self.activation_requirements.text())
         self.activate_button.setEnabled(bool(p and (s["settings"]["ui"]["tracking_method"]!="nose" or p.get("validation",{}).get("passed")) and not enabled
                                             and s.get("tracking_calibrated",True)
-                                            and s["state"] not in ("CAMERA_STARTING","CALIBRATING","EYE_CALIBRATING","GAZE_CALIBRATING","VERTICAL_DIAGNOSTIC","DIRECTION_DIAGNOSTIC","JITTER")))
+                                            and s["state"] != "CAMERA_STARTING" and not s.get("measuring")
+                                            and (not joystick_mode or s.get("geometric_stop_available"))))
+        self.direction_panel.present(calibration, can_activate=joystick_mode and self.activate_button.isEnabled())
+        self._present_joystick_pad(calibration, geometric if enabled and joystick_mode else None)
         eye_session=s.get("eye_calibration")
         self.eye_save.setEnabled(bool(eye_session and eye_session["can_save"] and s["state"]=="EYE_CALIBRATING"))
         self.eye_start.setEnabled(bool(p and s["state"]!="CALIBRATING" and s["settings"]["ui"]["tracking_method"]=="eye"))

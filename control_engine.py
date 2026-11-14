@@ -29,6 +29,7 @@ Uso:
 
 from __future__ import annotations
 
+from collections import deque
 import logging
 import math
 import sys
@@ -111,6 +112,11 @@ class ControlEngine:
         self.metrics = metrics
         self.mapping = mapping or ActionMapping()
         self.dictation = dictation  # opcional: dictation.Dictation
+        # Mouse por voz: el asistente solo lo recibe con el joystick ocular, nunca con Nariz.
+        self._voice_actions = deque()
+        assistant = getattr(dictation, "assistant", None)
+        if assistant is not None:
+            assistant.pointer = self.voice_pointer if self.ocular_joystick is not None else None
         self.last_recenter = None   # resultado del último recentrado, para la GUI
         self._pinned_since = None   # cursor apretado contra un borde (centro mal ubicado)
         self._paused_at_ms = None   # cuándo se pausó con ambas cejas: el recentrado mira desde ahí
@@ -183,6 +189,9 @@ class ControlEngine:
             if self._thread.is_alive():
                 raise RuntimeError("ControlEngine no respondió al cierre")
         self._release_held_mouse()
+        assistant = getattr(self.dictation, "assistant", None)
+        if assistant is not None and getattr(assistant, "pointer", None) == self.voice_pointer:
+            assistant.pointer = None  # sin control activo, el mouse por voz no responde
         logger.info("[ControlEngine] Detenido.")
 
     CENTERING_TIMEOUT_S = 4.0
@@ -386,6 +395,7 @@ class ControlEngine:
         if joystick is not None:
             interfering = any(self.gesture.last_active.values()) or fd.timestamp_ms < self.gesture._eye_hold_until
             action_ready = joystick.actions_allowed(fd, now)
+            joystick.cursor = self._cursor_fraction()
             movement = joystick.update(fd, now, paused=self.paused or not self.output_allowed.is_set(),
                                        gesture=interfering or bool(events))
             if movement is not None:
@@ -417,6 +427,8 @@ class ControlEngine:
                 if not self._auto_paused:
                     self._auto_paused = True
                     logger.info("[ControlEngine] Sin cara — control auto-pausado.")
+
+        self._run_voice_actions()
 
         # ── Ejecutar eventos ──────────────────────────────────────────────────
         # Toggle tiene prioridad sobre todas las acciones del mismo frame.
@@ -546,6 +558,46 @@ class ControlEngine:
                 self._pinned_retry = now + 1.0  # cabeza en movimiento: volver a probar en 1 s
 
     # ── Ejecución de acciones ─────────────────────────────────────────────────
+
+    def _cursor_fraction(self):
+        """Puntero como fracción (0–1) del monitor calibrado, para que el joystick frene al llegar."""
+        if self.screen_bounds is None:
+            return None
+        from screen_mapping import physical_coordinates
+        try:
+            with physical_coordinates():
+                x, y = self.backend.position()
+        except (ValueError, OSError):
+            return None
+        ox, oy, width, height = self.screen_bounds
+        return (x - ox) / width, (y - oy) / height
+
+    def voice_pointer(self, kind):
+        """Orden de mouse dicha al asistente (llega desde su hilo). Solo con joystick ocular."""
+        joystick = self.ocular_joystick
+        if joystick is None or self.paused or not self.output_allowed.is_set():
+            return False
+        if kind in ("freeze", "unfreeze"):
+            joystick.frozen = kind == "freeze"
+            return True
+        action = dict(click=EV_LEFT_CLICK, double_click="DOUBLE_CLICK", right_click=EV_RIGHT_CLICK).get(kind)
+        if action is None:
+            return False
+        self._voice_actions.append(action)  # se ejecuta en el próximo ciclo del control
+        return True
+
+    def _run_voice_actions(self):
+        while self._voice_actions:
+            action = self._voice_actions.popleft()
+            if self.ocular_joystick is None or self.paused or not self.output_allowed.is_set():
+                continue
+            # Es una orden explícita: vale aunque los gestos de clic no estén validados.
+            if self.screen_bounds is not None:
+                from screen_mapping import physical_coordinates
+                with physical_coordinates():
+                    self._execute_event(GestureEvent(action))
+            else:
+                self._execute_event(GestureEvent(action))
 
     def _execute(self, ev: GestureEvent):
         if self.movement_only and ev.type not in (EV_CURSOR_MOVE,"CURSOR_ABSOLUTE"):

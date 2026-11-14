@@ -78,6 +78,37 @@ class MiniCameraTests(unittest.TestCase):
         self.assertFalse(window.mini_camera_check.isChecked())
         self.assertFalse(window.ui_prefs.data["mini_camera"])
 
+    def test_first_run_hides_option_until_a_profile_is_selected(self):
+        empty = self.snapshot(profile=None, profiles=[], camera=False, detected=False, frame=None)
+        window, bridge = self.window(empty)
+        window.set_mini_camera(True)
+        window.show()
+        for page in (0, 4, 0):
+            window.show_page(page)
+            window.refresh()
+            self.app.processEvents()
+            self.assertTrue(window.mini_camera_check.isHidden())
+            self.assertTrue(window.mini_camera_settings_check.isHidden())
+            self.assertFalse(window.mini_camera.isVisible())
+        self.assertEqual(window.home_action.text(), "Crear mi perfil")
+
+        bridge.data = self.snapshot()
+        window.refresh()
+        self.assertTrue(window.mini_camera_check.isVisible())
+        self.assertFalse(window.mini_camera_settings_check.isHidden())
+        self.assertTrue(window.mini_camera_check.isChecked())
+
+        bridge.data["settings"]["ui"]["tracking_method"] = "eye"
+        window.refresh()
+        self.assertTrue(window.mini_camera_check.isHidden())
+        self.assertFalse(window.mini_camera_settings_check.isHidden())
+
+        bridge.data = empty
+        window.refresh()
+        self.assertTrue(window.mini_camera_check.isHidden())
+        self.assertTrue(window.mini_camera_settings_check.isHidden())
+        self.assertTrue(window.ui_prefs.data["mini_camera"])
+
     def test_does_not_take_focus_or_clicks(self):
         from PySide6.QtCore import Qt
         window, _ = self.window(self.snapshot())
