@@ -48,6 +48,16 @@ class GeometricTests(unittest.TestCase):
             self.assertEqual(updated["candidates"]["local_both"]["centers"][label][0],TARGETS[label][0])
         self.assertNotIn("validation", updated)
 
+    def test_axis_repair_updates_every_signal_so_a_better_one_can_be_chosen(self):
+        record = self.record()
+        record["candidates"]["weighted"] = deepcopy(record["candidates"]["local_both"])
+        def rows(points):
+            return [(label, [({"local_both": points[label], "weighted": (points[label][0]*2, points[label][1])},
+                              (.5,.5,-1.4,0.,0.,0.))]*10) for label in ("center", "left", "right")]
+        updated = repair_axis(record, rows({k: TARGETS[k] for k in ("center", "left", "right")}), 0)
+        self.assertNotEqual(updated["candidates"]["weighted"]["centers"]["left"][0],
+                            record["candidates"]["weighted"]["centers"]["left"][0])
+
     def joystick(self, record=None, arm=True):
         clock = [100.]
         joystick = GeometricJoystick(Mock(_frame_size=(640,480)), record or self.record(), EyeTrackingConfig(), .25,

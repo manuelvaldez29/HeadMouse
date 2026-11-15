@@ -159,30 +159,34 @@ def fit(rows, source, multipose, *, reserve=True):
 
 
 def repair_axis(saved, rows, axis):
-    """Keep the other axis frozen and refit only the three measured targets."""
-    channel = saved["selected"]
-    old = saved["candidates"][channel]
-    measured = {}
-    for label, points in rows[:3]:
-        values = [gate_weighted(dict(v), saved.get("agreement")) for v, _ in points]
-        measured[label] = [v[channel] for v in values if channel in v]
-    if any(len(measured.get(label, ())) < MINIMUM for label in ("center", *AXES[axis])):
-        raise ValueError("Faltaron muestras del eje. Se conserva la calibración anterior.")
-    centers = {label: list(value) for label,value in old["centers"].items()}
-    shift = midpoint(measured["center"])[axis] - centers["center"][axis]
-    for label, center in centers.items():
-        center[axis] = midpoint(measured[label])[axis] if label in measured else center[axis] + shift
-    noise = list(old["noise"])
-    noise[axis] = 1.4826 * median(abs(p[axis]-centers["center"][axis]) for p in measured["center"])
-    model = DirectionClassifier(centers)
-    candidate = {k:v for k,v in old.items() if k not in ("adjustment", "ridge_validation", "adjusted_center_extent")}
-    extent = list(old.get("center_extent", (0.,0.)))
-    extent[axis] = max(abs(p[axis]-centers["center"][axis]) for p in measured["center"])
-    candidate.update(centers=centers, noise=noise, center_extent=extent,
-                     axes=[pair is not None for pair in axis_ranges(model, noise)[1]],
-                     stats=score((), model, channel))
-    return {k:v for k,v in saved.items() if k not in ("validation", "previous")} | {
-        "candidates": saved["candidates"] | {channel: candidate}}
+    """Keep the other axis frozen and refit the three measured targets in every signal.
+
+    Antes solo se corregía la señal elegida: las de ambos ojos quedaban con el eje viejo y
+    no podían volver a elegirse aunque la repetición las midiera mejor.
+    """
+    values = {label: [gate_weighted(dict(v), saved.get("agreement")) for v, _ in points] for label, points in rows[:3]}
+    candidates = dict(saved["candidates"])
+    for channel, old in saved["candidates"].items():
+        measured = {label: [v[channel] for v in group if channel in v] for label, group in values.items()}
+        if any(len(measured.get(label, ())) < MINIMUM for label in ("center", *AXES[axis])):
+            if channel == saved["selected"]:
+                raise ValueError("Faltaron muestras del eje. Se conserva la calibración anterior.")
+            continue
+        centers = {label: list(value) for label,value in old["centers"].items()}
+        shift = midpoint(measured["center"])[axis] - centers["center"][axis]
+        for label, center in centers.items():
+            center[axis] = midpoint(measured[label])[axis] if label in measured else center[axis] + shift
+        noise = list(old["noise"])
+        noise[axis] = 1.4826 * median(abs(p[axis]-centers["center"][axis]) for p in measured["center"])
+        model = DirectionClassifier(centers)
+        candidate = {k:v for k,v in old.items() if k not in ("adjustment", "ridge_validation", "adjusted_center_extent")}
+        extent = list(old.get("center_extent", (0.,0.)))
+        extent[axis] = max(abs(p[axis]-centers["center"][axis]) for p in measured["center"])
+        candidate.update(centers=centers, noise=noise, center_extent=extent,
+                         axes=[pair is not None for pair in axis_ranges(model, noise)[1]],
+                         stats=score((), model, channel))
+        candidates[channel] = candidate
+    return {k:v for k,v in saved.items() if k not in ("validation", "previous")} | {"candidates": candidates}
 
 
 def read_record(record):

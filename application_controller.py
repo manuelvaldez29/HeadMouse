@@ -1022,7 +1022,7 @@ class ApplicationController:
         if not session.checkpoint:
             return
         record = session.checkpoint
-        if session.mode == "fit":
+        if session.mode in ("fit", "repair"):
             record = select_usable_candidate(record, self.config.eye)
         try:
             write_json(self._geometric_path, record)
