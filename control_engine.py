@@ -396,6 +396,7 @@ class ControlEngine:
             interfering = any(self.gesture.last_active.values()) or fd.timestamp_ms < self.gesture._eye_hold_until
             action_ready = joystick.actions_allowed(fd, now)
             joystick.cursor = self._cursor_fraction()
+            joystick.interfering = tuple(key for key, value in self.gesture.last_active.items() if value)
             movement = joystick.update(fd, now, paused=self.paused or not self.output_allowed.is_set(),
                                        gesture=interfering or bool(events))
             if movement is not None:

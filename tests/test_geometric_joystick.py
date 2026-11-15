@@ -52,7 +52,7 @@ class GeometricTests(unittest.TestCase):
         clock = [100.]
         joystick = GeometricJoystick(Mock(_frame_size=(640,480)), record or self.record(), EyeTrackingConfig(), .25,
                                      lambda: clock[0])
-        def feed(point, detected=True, *, frame=True, ratio=.12):
+        def feed(point, detected=True, *, frame=True, ratio=.12, gesture=False):
             clock[0] += .075 if frame else .016
             stamp = int(clock[0]*1000) if frame else joystick.last_stamp
             fd=FaceData(detected,timestamp_ms=stamp,eye_left_ratio=ratio,eye_right_ratio=ratio,
@@ -60,7 +60,11 @@ class GeometricTests(unittest.TestCase):
                         head_pitch=0.,head_yaw=0.,head_roll=0.)
             with patch("geometric_joystick.observe_direction",return_value={"head":(.5,.5,.25,0.,0.,0.)}), \
                  patch("geometric_joystick.signals",return_value={"local_both":point}):
-                return joystick.update(fd,clock[0])
+                return joystick.update(fd,clock[0],gesture=gesture)
+        feed.face = lambda: FaceData(True,timestamp_ms=joystick.last_stamp,eye_left_ratio=.12,eye_right_ratio=.12,
+                                     nose_x=.5,nose_y=.5,face_scale=math.exp(-1.4),
+                                     head_pitch=0.,head_yaw=0.,head_roll=0.)
+        feed.now = lambda: clock[0]
         for _ in range(4 if arm else 0):
             feed(joystick.model.centers["center"])
         return joystick, feed
@@ -194,6 +198,22 @@ class GeometricTests(unittest.TestCase):
             joystick.cursor = (cursor_x, .5)
             return [feed(right) for _ in range(40)][-1].dx
         self.assertLess(speed(.8), speed(.2))
+
+    def test_a_long_wink_or_gesture_keeps_its_own_action_allowed(self):
+        # Sesiones reales: 13 s en «Guiño o gesto» y ningún clic, porque mientras duraba el
+        # gesto la última mirada válida envejecía más de 0,25 s y se descartaba la acción.
+        joystick, feed = self.joystick()
+        self.assertTrue(joystick.actions_allowed(feed.face(), feed.now()))
+        joystick.interfering = ("LEFT_WINK",)
+        for _ in range(8):  # 0,6 s de guiño
+            feed(TARGETS["center"], gesture=True)
+        face = replace(feed.face(), timestamp_ms=int(feed.now() * 1000))
+        self.assertTrue(joystick.actions_allowed(face, feed.now()))
+        self.assertEqual(joystick.movement, (0., 0.))
+        self.assertEqual(joystick.summary()["stopped_by_gesture"], {"LEFT_WINK": 8})
+        # Pero si la cara deja de ser válida durante el gesto, la acción no pasa.
+        far = replace(face, nose_x=.9)
+        self.assertFalse(joystick.actions_allowed(far, feed.now()))
 
     def test_summary_explains_where_the_session_spent_its_time(self):
         joystick, feed = self.joystick()

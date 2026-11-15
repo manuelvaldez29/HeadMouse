@@ -124,6 +124,8 @@ class GeometricJoystick:
         self.arrived = False
         self.gap = None
         self.extent = tuple(record["context"].get("pad", (0, 0, 1920, 1080))[2:])
+        self.interfering = ()      # gestos activos en este fotograma (los informa el control)
+        self.gestures = Counter()  # fotogramas detenidos por cada gesto, para el resumen
         self.frozen = False       # «quieto» por voz: se sigue leyendo la mirada, pero ningún borde mueve
         self.ready = False        # las zonas solo mandan después de pasar por el centro del recuadro
         self.center_since = None
@@ -281,6 +283,11 @@ class GeometricJoystick:
         stamp = face.timestamp_ms
         if gesture or not selected_eyes_open(face,self.eye_source,self.limits):
             self.reset("Guiño o gesto · puntero detenido", disarm=False, stamp=stamp)
+            self.gestures.update(self.interfering or ("parpadeo",))
+            # Con un ojo cerrado o la cara en un gesto no hay mirada que leer, pero el rostro
+            # sigue siendo válido: sin esto, un guiño de más de 0,25 s anulaba su propio clic.
+            if stamp != self.last_stamp and self.armed and self._posture_ok(face):
+                self.valid_stamp = stamp
             return None
         if stamp == self.last_stamp:
             return self._emit(now)  # entre fotogramas sigue el movimiento ya decidido
@@ -389,5 +396,6 @@ class GeometricJoystick:
                     calibrated_zones={name: [round(value, 1) for value in vector] for name, vector in self.vectors.items()},
                     mean_signal_by_zone={name: [round(value / self.samples[name], 1) for value in total]
                                          for name, total in self.sums.items()},
+                    stopped_by_gesture=dict(self.gestures),
                     face_losses=self.counts["losses"], movement_events=self.counts["moves"],
                     pixels_moved=round(self.pixels))
