@@ -126,6 +126,7 @@ class GeometricJoystick:
         self.extent = tuple(record["context"].get("pad", (0, 0, 1920, 1080))[2:])
         self.interfering = ()      # gestos activos en este fotograma (los informa el control)
         self.gestures = Counter()  # fotogramas detenidos por cada gesto, para el resumen
+        self.dropped = Counter()   # acciones de gestos descartadas, con el motivo
         self.frozen = False       # «quieto» por voz: se sigue leyendo la mirada, pero ningún borde mueve
         self.ready = False        # las zonas solo mandan después de pasar por el centro del recuadro
         self.center_since = None
@@ -369,6 +370,16 @@ class GeometricJoystick:
                 and 0 <= now - self.valid_stamp / 1000 <= self.max_age
                 and face.fresh(self.max_age, now) and self._posture_ok(face))
 
+    def block_reason(self, face, now):
+        """Por qué no se ejecutaría un gesto ahora (None si se ejecuta), en palabras simples."""
+        checks = (("calibración parcial", not self.reduced), ("control detenido", not self.closed),
+                  ("falta mirar el centro", self.armed and self.valid_stamp > 0),
+                  ("cambió la cámara", getattr(self.vision, "_frame_size", self.frame_size) == self.frame_size),
+                  ("mirada vieja", 0 <= now - self.valid_stamp / 1000 <= self.max_age),
+                  ("rostro ausente", face.fresh(self.max_age, now)),
+                  ("postura fuera de rango", self._posture_ok(face)))
+        return next((reason for reason, ok in checks if not ok), None)
+
     def dwell_allowed(self, now):
         return (self.actions_allowed(self.vision.get_face_data(), now) and self.reason.startswith("Centro")
                 and self.movement == (0., 0.))
@@ -397,5 +408,6 @@ class GeometricJoystick:
                     mean_signal_by_zone={name: [round(value / self.samples[name], 1) for value in total]
                                          for name, total in self.sums.items()},
                     stopped_by_gesture=dict(self.gestures),
+                    dropped_actions=dict(self.dropped),
                     face_losses=self.counts["losses"], movement_events=self.counts["moves"],
                     pixels_moved=round(self.pixels))

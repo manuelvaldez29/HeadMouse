@@ -402,8 +402,15 @@ class ControlEngine:
             if movement is not None:
                 events.append(movement)
             if not action_ready or not joystick.actions_allowed(fd, now):
-                events = [event for event in events if event.type == EV_CURSOR_MOVE or
-                          (self._paused and fresh and self.mapping.resolve(event).type == "PAUSE")]
+                kept = [event for event in events if event.type == EV_CURSOR_MOVE or
+                        (self._paused and fresh and self.mapping.resolve(event).type == "PAUSE")]
+                reason = joystick.block_reason(fd, now) or "mirada vieja al empezar el gesto"
+                for event in events:
+                    if event not in kept:
+                        key = f"{getattr(event, 'gesture', None) or event.type}: {reason}"
+                        joystick.dropped[key] += 1
+                        logger.info("[ControlEngine] Gesto descartado con joystick: %s", key)
+                events = kept
         self.last_events = tuple(events)
         self.last_actions = ()
         new_frame = fd.timestamp_ms != self._fraction_frame

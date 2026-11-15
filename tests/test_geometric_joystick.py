@@ -260,6 +260,13 @@ class GeometricTests(unittest.TestCase):
         snapshot["geometric"] = {"repair_axes": []}
         self.assertEqual(MainWindow._home_step(window, snapshot)[0], "▶  Iniciar HeadMouse")
 
+    def test_dropped_gestures_are_explained(self):
+        joystick, feed = self.joystick()
+        face = replace(feed.face(), timestamp_ms=int(feed.now() * 1000))
+        self.assertIsNone(joystick.block_reason(face, feed.now()))
+        self.assertEqual(joystick.block_reason(replace(face, nose_x=.9), feed.now()), "postura fuera de rango")
+        self.assertEqual(joystick.block_reason(face, feed.now() + 1), "mirada vieja")
+
     def test_summary_explains_where_the_session_spent_its_time(self):
         joystick, feed = self.joystick()
         for point in (TARGETS["center"],)*3 + (TARGETS["right"],)*5 + ((2.2,.5),)*2:
