@@ -28,6 +28,7 @@ from direction_diagnostic import DIRECTIONS  # noqa: E402
 from geometric_calibration import gate_weighted, signals  # noqa: E402
 from geometric_joystick import GeometricJoystick, select_usable_candidate  # noqa: E402
 
+WITH_SPREAD = "--fijos" not in sys.argv  # comparar contra los umbrales fijos viejos
 NAMES = dict(center="centro", left="izquierda", right="derecha", up="arriba", down="abajo")
 
 
@@ -62,6 +63,18 @@ def load(path):
                 record=record, labeled=labeled)
 
 
+def with_spread(record, labeled):
+    """Calibraciones viejas no guardaban el temblor por dirección: se calcula de sus puntos."""
+    from geometric_calibration import direction_spread
+    candidates = {}
+    for channel, candidate in record["candidates"].items():
+        if not candidate.get("spread"):
+            points = {label: [v[channel] for v in rows if channel in v] for label, rows in labeled.items()}
+            candidate = dict(candidate, spread=direction_spread(points))
+        candidates[channel] = candidate
+    return dict(record, candidates=candidates)
+
+
 def recognizer(record):
     record = select_usable_candidate(record, EyeTrackingConfig())
     joystick = GeometricJoystick(Mock(_frame_size=None), record, EyeTrackingConfig(), .25, lambda: 0.)
@@ -80,7 +93,8 @@ def recognizer(record):
 
 
 def evaluate(train, test):
-    joystick, classify = recognizer(train["record"])
+    record = with_spread(train["record"], train["labeled"]) if WITH_SPREAD else train["record"]
+    joystick, classify = recognizer(record)
     confusion = {target: Counter(classify(values) for values in rows) for target, rows in test["labeled"].items()}
     hits = {target: confusion[target][NAMES[target]] / max(1, sum(confusion[target].values()))
             for target in confusion}
@@ -114,7 +128,7 @@ def report(sessions, out=print):
 
 
 def main(argv=None):
-    argv = sys.argv[1:] if argv is None else argv
+    argv = [arg for arg in (sys.argv[1:] if argv is None else argv) if arg != "--fijos"]
     sources = argv or [data_root()]
     for source in sources:
         print(f"\n=== {source} ===")

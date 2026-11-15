@@ -310,6 +310,26 @@ class GeometricTests(unittest.TestCase):
         control._rewind_before_click(11.4)  # moviéndose hace más de 0,7 s: era a propósito
         backend.moveTo.assert_not_called()
 
+    def test_clicks_teach_where_the_person_rests_their_gaze(self):
+        joystick, feed = self.joystick()
+        left = joystick.vectors["left"][0]
+        drifted = (TARGETS["center"][0] + .6 * (TARGETS["left"][0] - TARGETS["center"][0]), TARGETS["center"][1])
+        # Mirando el puntero en el medio de la pantalla, la señal cae al 60 % de «izquierda».
+        for _ in range(6):
+            feed(drifted)
+        self.assertEqual(joystick.zone, "left")
+        for _ in range(8):
+            joystick.zone = None
+            joystick.still_raw = (.6 * left, 0.)
+            self.assertTrue(joystick.learn_from_click((.5, .5)))
+        self.assertLess(joystick.offset[0], .3 * left)  # aprendió el corrimiento, con tope
+        joystick.zone = None
+        for _ in range(6):
+            feed(drifted)
+        self.assertEqual(joystick.zone, "center")
+        self.assertEqual(joystick.summary()["clicks_learned"], 8)
+        self.assertFalse(joystick.learn_from_click(None))
+
     def test_summary_explains_where_the_session_spent_its_time(self):
         joystick, feed = self.joystick()
         for point in (TARGETS["center"],)*3 + (TARGETS["right"],)*5 + ((2.2,.5),)*2:

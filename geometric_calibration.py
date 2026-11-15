@@ -60,6 +60,15 @@ def signals(row, mirrored=True):
     return out
 
 
+def direction_spread(points_by_label):
+    """Cuánto tiembla la mirada de cada persona al sostener cada punto (MAD por eje)."""
+    spread = {}
+    for label, points in points_by_label.items():
+        if len(points) >= MINIMUM:
+            spread[label] = [1.4826 * median(abs(p[i] - median(q[i] for q in points)) for p in points) for i in range(2)]
+    return spread
+
+
 def agreement_limit(rows):
     return tuple(sorted(abs(left[i]-right[i]) for left,right in rows)[int(.95*(len(rows)-1))]
                  for i in range(2)) if rows else None
@@ -130,7 +139,11 @@ def fit(rows, source, multipose, *, reserve=True):
         lower,upper = [list(map(fn,zip(*poses))) for fn in (min,max)]
         stats = score(holdout, model, channel)
         ranges = axis_ranges(model,noise)[1]
+        by_label = {}
+        for (_, label), points in samples.items():
+            by_label.setdefault(label, []).extend(p[0] for p in points)
         candidate = dict(centers=model.centers, noise=noise, center_extent=center_extent,
+                         spread=direction_spread(by_label),
                          lower=lower, upper=upper, reference=midpoint(poses),
                          stats=stats, axes=[r is not None for r in ranges])
         if multipose and all(len(points) >= MINIMUM for points in samples.values()):
@@ -182,7 +195,10 @@ def repair_axis(saved, rows, axis):
         candidate = {k:v for k,v in old.items() if k not in ("adjustment", "ridge_validation", "adjusted_center_extent")}
         extent = list(old.get("center_extent", (0.,0.)))
         extent[axis] = max(abs(p[axis]-centers["center"][axis]) for p in measured["center"])
-        candidate.update(centers=centers, noise=noise, center_extent=extent,
+        spread = dict(old.get("spread") or {})
+        for label, value in direction_spread(measured).items():
+            spread[label] = [value[i] if i == axis else spread.get(label, value)[i] for i in range(2)]
+        candidate.update(centers=centers, noise=noise, center_extent=extent, spread=spread,
                          axes=[pair is not None for pair in axis_ranges(model, noise)[1]],
                          stats=score((), model, channel))
         candidates[channel] = candidate

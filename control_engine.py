@@ -494,6 +494,10 @@ class ControlEngine:
                         self._rewind_before_click(now)
                 else:
                     self._rewind_before_click(now)
+                point = self._cursor_px
+                if point is not None and self.screen_bounds is not None:
+                    ox, oy, width, height = self.screen_bounds
+                    joystick.learn_from_click(((point[0] - ox) / width, (point[1] - oy) / height))
             releasing_wink = (self._dragging and self._drag_release_armed
                               and self._is_gesture_active(self._drag_gesture))
             for ev in actions:

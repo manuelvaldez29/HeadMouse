@@ -12,8 +12,15 @@ from posture_adjustment import pose_features
 
 CLOSING = .8      # un ojo por debajo del 80 % de su apertura habitual: se está cerrando
 ENTER = (.55, .65)  # piso por eje de la fracción del recorrido centro→borde que hace falta para mover
-# Por dirección, medido en sesiones reales: abajo se infla solo (pide más) y arriba recorre poco (pide menos).
+# Solo para calibraciones viejas sin temblor medido (las de julian, donde abajo se inflaba solo).
 ENTER_BY_ZONE = dict(left=.55, right=.55, up=.65, down=.8)
+LEARN_RATE = .25  # cuánto corrige cada clic del corrimiento medido
+LEARN_LIMIT = .45 # corrimiento máximo aprendido, como fracción del recorrido más corto del eje
+# Piso por dirección: mirando abajo el párpado tapa parte del iris (pasa en cualquier persona),
+# así que abajo nunca arranca con menos de 3/4 del recorrido.
+ENTER_FLOOR = dict(left=.55, right=.55, up=.65, down=.75)
+SPREAD_WEIGHT = .5  # banco 15/11: abajo 44 → 69 % sin perder centro; 1.0 bajaba arriba
+ENTER_MAX = .85
 EXIT = (.7, .8)     # histéresis por eje: la zona activa se conserva hasta caer por debajo de ENTER·EXIT
 OUTSIDE = 3.      # recorridos más allá del punto calibrado: la mirada salió de la pantalla
 ARM_MS = 200      # mirar la zona central este tiempo habilita los bordes; salir de la pantalla los deshabilita
@@ -120,6 +127,9 @@ class GeometricJoystick:
         self.sigma, vectors = whiten(self.model, self.params["noise"])
         self.vectors = {name: vector for name, vector in vectors.items() if self.ranges[name in AXES[1]]}
         self.sums = {}
+        self.offset = (0., 0.)     # corrimiento del descanso aprendido con los clics
+        self.still_raw = None      # última mirada con el puntero quieto, sin corregir
+        self.enter = self._thresholds()
         self.recent = deque(maxlen=3)
         self.cursor = None        # puntero en la pantalla calibrada (0–1 por eje); lo informa el control
         self.arrived = False
@@ -196,6 +206,51 @@ class GeometricJoystick:
         self.posture_failed = failed
         return not failed
 
+    def learn_from_click(self, cursor):
+        """Cada clic dice dónde estaba mirando la persona: en el puntero.
+
+        Con la última mirada quieta antes del clic y la posición del puntero se corrige, de a
+        poco, el corrimiento del descanso de esa persona (el que hacía que «izquierda» se
+        disparara sola otro día). El corrimiento tiene tope para que un clic raro no lo desarme.
+        """
+        if cursor is None or self.still_raw is None:
+            return False
+        target = []
+        for axis in (0, 1):
+            offset = cursor[axis] - .5
+            progress = abs(offset) / REACH
+            name = AXES[axis][offset > 0]
+            vector = self.vectors.get(name)
+            if vector is None or progress > 1.2:
+                return False
+            target.append(progress * vector[axis] if progress > .05 else 0.)
+        bounds = [LEARN_LIMIT * min((abs(v[axis]) for n, v in self.vectors.items() if n in AXES[axis]), default=0.)
+                  for axis in (0, 1)]
+        self.offset = tuple(max(-bound, min(bound, shift + LEARN_RATE * ((raw - goal) - shift)))
+                            for raw, goal, shift, bound in zip(self.still_raw, target, self.offset, bounds))
+        self.counts["learned"] += 1
+        return True
+
+    def _thresholds(self):
+        """Umbral de cada dirección según cuánto tembló esa persona al sostenerla al calibrar.
+
+        Una dirección que se sostuvo firme arranca con poco recorrido; una que temblaba pide más,
+        para que ese temblor no la dispare sola. Sin datos (calibraciones viejas) se usan los
+        valores fijos medidos en las primeras sesiones.
+        """
+        spread = self.params.get("spread")
+        if not spread:
+            return dict(ENTER_BY_ZONE)
+        centers = self.model.centers
+        result = {}
+        for axis, pair in enumerate(AXES):
+            for name in pair:
+                reach = abs(centers[name][axis] - centers["center"][axis])
+                wobble = (spread.get(name) or [0., 0.])[axis]
+                rel = wobble / reach if reach > 1e-9 else 1.
+                result[name] = min(ENTER_MAX, max(ENTER_FLOOR[name], ENTER[axis] + SPREAD_WEIGHT * rel))
+        return result
+
     def _closing(self, face):
         """Un ojo empezando a cerrarse: la lectura del iris se corre antes de que el guiño se reconozca.
 
@@ -230,7 +285,7 @@ class GeometricJoystick:
         self.arrived = False
         for axis in (0, 1):
             for name in AXES[axis]:
-                limit = max(self.zones[axis], ENTER_BY_ZONE[name])
+                limit = max(self.zones[axis], self.enter[name])
                 vector = self.vectors.get(name)
                 if vector is None or not vector[axis]:
                     continue
@@ -337,7 +392,8 @@ class GeometricJoystick:
             self.movement = (0.,0.)
             return None
         center = self.model.centers["center"]
-        raw = tuple((value - ref) / sigma for value, ref, sigma in zip(point, center, self.sigma))
+        raw = tuple((value - ref) / sigma - shift for value, ref, sigma, shift
+                    in zip(point, center, self.sigma, self.offset))
         self.position = self._steady(raw)
         self.counts["valid"] += 1
         self._learn_open(face)
@@ -358,6 +414,7 @@ class GeometricJoystick:
             self.zone = seen
             self.candidate = None
             if seen == "center":
+                self.still_raw = tuple(value + shift for value, shift in zip(self.position, self.offset))
                 self.center_since = self.center_since or stamp
                 self.ready = self.ready or stamp - self.center_since >= ARM_MS
                 self.reason = ("Centro · quieto por voz, decí «mover»" if self.frozen else
@@ -420,6 +477,7 @@ class GeometricJoystick:
     def summary(self):
         """Resumen local, sin imágenes, de en qué estado pasó el tiempo la sesión."""
         return dict(channel=self.channel, usable_axes=[pair is not None for pair in self.ranges],
+                    thresholds_by_direction={name: round(value, 2) for name, value in self.enter.items()},
                     thresholds=[round(zone, 3) for zone in self.zones],
                     seconds_by_state={reason: round(value, 2) for reason, value in self.seconds.most_common()},
                     samples_by_zone=dict(self.samples), results=self.counts["results"], valid=self.counts["valid"],
@@ -432,5 +490,6 @@ class GeometricJoystick:
                     stopped_by_gesture=dict(self.gestures),
                     dropped_actions=dict(self.dropped),
                     clicks_put_back=self.counts["rewinds"],
+                    clicks_learned=self.counts["learned"], rest_offset=[round(v, 1) for v in self.offset],
                     face_losses=self.counts["losses"], movement_events=self.counts["moves"],
                     pixels_moved=round(self.pixels))
