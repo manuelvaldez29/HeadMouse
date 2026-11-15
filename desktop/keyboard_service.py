@@ -1,4 +1,5 @@
 """Sondeo de foco e inferencia léxica fuera de los hilos de cámara y GUI."""
+import logging
 import queue
 import sqlite3
 import threading
@@ -94,6 +95,7 @@ class KeyboardService(QObject):
         retry_count = 0
         preview_edited_at = 0.
         last_synced_key = None
+        last_decision = None
         try:
             while not self.closed.is_set():
                 try:
@@ -157,6 +159,14 @@ class KeyboardService(QObject):
                         click = (0, None, 0.)
                     visible = visibility.update(active, settings.get("auto_open",False), target, action, click, time.monotonic())
                     usable = bool(visible and target and (target.editable or (visibility.manual and target.unknown)))
+                    decision = (active, target is not None, bool(target and target.editable), visible,
+                                (snapshot.get("settings", {}).get("ui", {}) or {}).get("tracking_method"))
+                    if decision != last_decision:
+                        last_decision = decision
+                        # Sin texto ni nombres de ventana: solo por qué el teclado se mostró o no.
+                        logging.getLogger(__name__).info(
+                            "Teclado: control_activo=%s foco=%s editable=%s visible=%s auto=%s modo=%s",
+                            active, decision[1], decision[2], visible, settings.get("auto_open"), decision[4])
                     if not visible:
                         session.save_current_field()
                         session.reset()
