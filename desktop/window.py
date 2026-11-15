@@ -411,6 +411,12 @@ class MainWindow(QMainWindow):
                 return "Calibrar Ojos","Hero",self.open_eye_calibration
             if s["settings"]["ui"]["tracking_method"] == "eye_joystick" and not s.get("geometric_stop_available"):
                 return "F8 global no disponible", "Hero", None
+            repair = (s.get("geometric") or {}).get("repair_axes") if s["settings"]["ui"]["tracking_method"] == "eye_joystick" else None
+            if repair:
+                # Un eje bloqueado deja flechas grises: el paso siguiente es medirlo de nuevo, no activar.
+                axis = repair[0]
+                return (("Repetir izquierda y derecha · 3 puntos" if axis == 0 else "Repetir arriba y abajo · 3 puntos"),
+                        "Hero", lambda: (self.open_eye_calibration(), self.start_geometric("repair", axis)))
             return "▶  Iniciar HeadMouse","Hero",self.activate
         if p.get("status")=="draft":
             return "Calibrar mis gestos","Hero",self.start_calibration

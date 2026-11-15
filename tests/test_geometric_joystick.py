@@ -246,6 +246,20 @@ class GeometricTests(unittest.TestCase):
         self.assertIsNone(horizontal)
         self.assertIsNotNone(vertical)
 
+    def test_home_offers_to_repeat_a_blocked_axis_before_starting(self):
+        from desktop.window import MainWindow
+        window = Mock(open_eye_calibration=Mock(), start_geometric=Mock())
+        snapshot = dict(control_enabled=False, state="PREVIEW", profiles=[1], profile={"user_id": "a"},
+                        settings={"ui": {"tracking_method": "eye_joystick"}}, measuring=False,
+                        tracking_calibrated=True, geometric_stop_available=True,
+                        geometric={"repair_axes": [0]})
+        text, _style, action = MainWindow._home_step(window, snapshot)
+        self.assertEqual(text, "Repetir izquierda y derecha · 3 puntos")
+        action()
+        window.start_geometric.assert_called_once_with("repair", 0)
+        snapshot["geometric"] = {"repair_axes": []}
+        self.assertEqual(MainWindow._home_step(window, snapshot)[0], "▶  Iniciar HeadMouse")
+
     def test_summary_explains_where_the_session_spent_its_time(self):
         joystick, feed = self.joystick()
         for point in (TARGETS["center"],)*3 + (TARGETS["right"],)*5 + ((2.2,.5),)*2:
