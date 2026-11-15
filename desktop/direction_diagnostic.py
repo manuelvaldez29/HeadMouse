@@ -139,7 +139,8 @@ class DirectionDiagnosticPanel(QWidget):
                 status += " · " + ("Señal válida" if session["valid"] else "Señal ausente o inválida")
         if state == "retry":
             status += " · Acomodate frente a la cámara y tocá Repetir captura."
-        self.status.setText(status)
+        tips = session.get("camera_tips") or []
+        self.status.setText(status + ("\n" + "\n".join("• " + tip for tip in tips) if tips else ""))
         self.result.setVisible(state == "ready")
         if state == "ready":
             lines = list(session.get("geometric_summary") or _summary(session["report"]))

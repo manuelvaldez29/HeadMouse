@@ -83,9 +83,12 @@ def calibration_message(ranges):
         works, fails = (("izquierda y derecha", "arriba y abajo") if ranges[0]
                         else ("arriba y abajo", "izquierda y derecha"))
         return (f"Calibración parcial: mirar los bordes mueve el puntero hacia {works}. La cámara todavía no "
-                f"distingue {fails}; podés repetir ese eje. Los clics quedan deshabilitados.")
+                f"distingue {fails}; repetí ese eje con el botón de abajo, mirando cada punto hasta el fondo. "
+                f"Si no mejora, podés usarlo así (solo {works}), controlar con Nariz o mover el puntero "
+                f"con la voz. Los clics quedan deshabilitados.")
     return ("La cámara todavía no distingue tu mirada al centro de la mirada a los bordes. "
-            "Repetí los cinco puntos moviendo solo los ojos, con la cabeza quieta.")
+            "Repetí los cinco puntos moviendo solo los ojos, con la cabeza quieta y buena luz de frente. "
+            "Si sigue igual, usá Nariz: esta cámara no ve bien tus ojos.")
 
 
 def select_usable_candidate(record, config):

@@ -1033,6 +1033,17 @@ class ApplicationController:
         data = session.snapshot()
         if session.path and session.mode in ("fit", "repair"):
             data["repair_axes"] = self.geometric_snapshot()["repair_axes"]
+        if self.vision is not None and data.get("target") is not None:
+            now = self.clock()
+            cached = getattr(self, "_camera_tips", None)
+            if cached is None or now - cached[0] >= 1.:  # una vez por segundo alcanza para un consejo
+                from camera_tips import camera_tips
+                try:
+                    tips = camera_tips(self.vision.get_face_data(), self.vision.get_frame(), self.vision.get_fps())
+                except Exception:
+                    tips = []
+                self._camera_tips = cached = (now, tips)
+            data["camera_tips"] = cached[1]
         return data
 
     def save_direction_report(self):

@@ -562,3 +562,20 @@ class BenchTests(unittest.TestCase):
         self.assertEqual(summary, dict(centro=1., arriba=1., abajo=1., izquierda=1., derecha=1.))
         drifted = banco_joystick.report([session("a", 0.), session("b", -.3)], out=lines.append)
         self.assertLess(drifted["centro"], 1.)  # un descanso corrido otro día se nota en el banco
+
+
+class CameraTipsTests(unittest.TestCase):
+    def test_tips_for_distance_light_and_frame_rate(self):
+        import numpy as np
+        from camera_tips import camera_tips
+        face = FaceData(True, face_scale=.25)
+        good = np.full((480, 640, 3), 120, dtype=np.uint8)
+        self.assertEqual(camera_tips(face, good, 25.), [])
+        self.assertIn("No se ve tu cara", camera_tips(FaceData(False), good, 25.)[0])
+        self.assertIn("lejos", " ".join(camera_tips(replace(face, face_scale=.1), good, 25.)))
+        self.assertIn("Falta luz", " ".join(camera_tips(face, np.full((480, 640, 3), 20, dtype=np.uint8), 25.)))
+        backlit = good.copy()
+        backlit[:] = 230
+        backlit[120:360, 160:480] = 90
+        self.assertIn("de atrás", " ".join(camera_tips(face, backlit, 25.)))
+        self.assertIn("pocos cuadros", " ".join(camera_tips(face, good, 7.)))
