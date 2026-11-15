@@ -19,7 +19,7 @@ COMMANDS = {"create_profile", "select_profile", "rename_profile", "delete_profil
             "save_calibration", "start_experiment", "experiment_input", "cancel_experiment",
             "start_jitter", "prepare_model", "refresh_metrics", "shutdown", "set_calibration_gesture", "prepare_voice_model",
             "start_voice_calibration", "cancel_voice_calibration", "save_voice_calibration", "prepare_speaker_model",
-            "refresh_microphones", "remember_current_profile"}
+            "refresh_microphones", "remember_current_profile", "export_diagnostic"}
 CAMERA_COMMANDS = {"start_camera", "start_calibration", "validate_calibration", "repeat_calibration",
     "start_vertical_diagnostic", "start_geometric",
     "start_eye_calibration", "start_gaze_calibration", "start_diagnostic", "activate_control", "start_jitter", "start_experiment"}

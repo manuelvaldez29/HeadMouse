@@ -525,3 +525,20 @@ class GeometricGuiTests(unittest.TestCase):
         self.assertEqual(self.backend.moveRel.call_count, moved)
         self.window.stop_immediately()
         self.wait(lambda: not self.bridge.snapshot()["camera"])
+
+
+class BenchTests(unittest.TestCase):
+    def test_bench_scores_each_direction_on_other_sessions(self):
+        sys_path = __import__("sys").path
+        tools = str(__import__("pathlib").Path(__file__).resolve().parents[1] / "tools")
+        if tools not in sys_path:
+            sys_path.insert(0, tools)
+        import banco_joystick
+        record = GeometricTests.record(None)
+        session = lambda name, shift: dict(name=name, mode="fit", record=record, labeled={
+            target: [{"local_both": (TARGETS[target][0] + shift, TARGETS[target][1])}] * 10 for target in DIRECTIONS})
+        lines = []
+        summary = banco_joystick.report([session("a", 0.), session("b", 0.)], out=lines.append)
+        self.assertEqual(summary, dict(centro=1., arriba=1., abajo=1., izquierda=1., derecha=1.))
+        drifted = banco_joystick.report([session("a", 0.), session("b", -.3)], out=lines.append)
+        self.assertLess(drifted["centro"], 1.)  # un descanso corrido otro día se nota en el banco

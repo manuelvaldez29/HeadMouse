@@ -883,6 +883,28 @@ class ApplicationController:
         from joystick_pad import pad_rect
         return pad_rect(record["context"]["screen"])
 
+    def export_diagnostic(self, path):
+        """Un .zip con registros y señales numéricas para revisar fallos en otra PC. Sin imágenes."""
+        import zipfile
+        from app_paths import VERSION
+        target = Path(path)
+        logs = self.data_dir / "logs"
+        files = sorted(logs.glob("joystick-*.json")) + [logs / "headmouse.log"] + sorted((self.data_dir / "metrics").glob("*.json"))
+        about = dict(version=VERSION, exported_at=time.strftime("%Y-%m-%dT%H:%M:%S"),
+                     tracking_method=self.config.ui.tracking_method, eye_source=self.config.ui.eye_source,
+                     settings=asdict(self.config),
+                     joystick=self.geometric_snapshot() if self._uses_geometric_joystick() else None)
+        try:
+            with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED) as archive:
+                archive.writestr("acerca.json", json.dumps(about, ensure_ascii=False, indent=2, default=str))
+                for item in files:
+                    if item.is_file():
+                        archive.write(item, Path(item.parent.name) / item.name)
+        except OSError as exc:
+            self.message = f"No se pudo exportar el diagnóstico: {exc}"
+            raise ValueError(self.message) from exc
+        self.message = f"Diagnóstico guardado en {target}. No incluye imágenes de la cámara."
+
     def _save_joystick_evidence(self, kind, data):
         """Números de la señal ocular para diagnosticar, sin imágenes y solo en este equipo."""
         from user_storage import write_json

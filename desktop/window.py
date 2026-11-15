@@ -1015,6 +1015,7 @@ class MainWindow(QMainWindow):
         page.addWidget(scroll,1)
         row=QHBoxLayout()
         row.addWidget(button("Iniciar diagnóstico",lambda:self.bridge.request("start_diagnostic"),"Primary"),2)
+        row.addWidget(button("Exportar diagnóstico",self.export_diagnostic),1)
         row.addWidget(button("Medir estabilidad · 10 s",lambda:self.bridge.request("start_jitter")),1)
         self.vertical_diagnostic_button=button("Diagnóstico vertical de Ojos",self.start_vertical_diagnostic)
         row.addWidget(self.vertical_diagnostic_button,1)
@@ -1470,6 +1471,15 @@ class MainWindow(QMainWindow):
         row.addWidget(button("Restaurar valores predeterminados",self.restore_defaults))
         row.addWidget(button("Guardar configuración",self.save_settings,"Primary"))
         layout.addLayout(row)
+
+    def export_diagnostic(self):
+        from PySide6.QtWidgets import QFileDialog
+        from pathlib import Path
+        import time
+        default=str(Path.home()/"Desktop"/f"HeadMouse-diagnostico-{time.strftime('%Y%m%d-%H%M')}.zip")
+        path,_=QFileDialog.getSaveFileName(self,"Exportar diagnóstico",default,"Archivo comprimido (*.zip)")
+        if path:
+            self.bridge.request("export_diagnostic",path=path)
 
     def start_eye_tracking_calibration(self):
         self.open_eye_calibration()
