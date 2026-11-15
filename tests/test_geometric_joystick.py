@@ -267,6 +267,39 @@ class GeometricTests(unittest.TestCase):
         self.assertEqual(joystick.block_reason(replace(face, nose_x=.9), feed.now()), "postura fuera de rango")
         self.assertEqual(joystick.block_reason(face, feed.now() + 1), "mirada vieja")
 
+    def test_an_eye_starting_to_close_freezes_the_pointer(self):
+        joystick, feed = self.joystick()
+        for _ in range(4):
+            feed(TARGETS["center"])
+        self.assertIsNotNone(joystick.open_ratio)
+        # El ojo baja al 70 % de su apertura: la lectura se corre a la izquierda, pero no mueve.
+        for _ in range(3):
+            self.assertIsNone(feed(TARGETS["left"], ratio=.084))
+        self.assertEqual(joystick.movement, (0., 0.))
+        self.assertIn("ojo cerrándose", joystick.summary()["stopped_by_gesture"])
+
+    def test_click_goes_back_to_where_the_pointer_was_still(self):
+        from control_engine import ControlEngine
+        from gesture_engine import EV_LEFT_CLICK, GestureEvent
+        gesture, backend = Mock(), Mock()
+        joystick = GeometricJoystick(Mock(_frame_size=(640,480)), self.record(), EyeTrackingConfig(), .25, lambda: 0.)
+        gesture.strategy = joystick
+        backend.size.return_value = (1920, 1080)
+        backend.position.return_value = (900, 500)
+        control = ControlEngine(Mock(), gesture, backend=backend, screen_bounds=(0, 0, 1920, 1080))
+        joystick.reason, joystick.movement = "Centro · el puntero ya está donde mirás", (0., 0.)
+        control._cursor_px = (900, 500)
+        control._track_still(joystick, 10.)
+        joystick.reason, joystick.movement = "Moviendo a la izquierda", (-12., 0.)
+        control._cursor_px = (860, 500)
+        control._track_still(joystick, 10.2)
+        control._rewind_before_click(10.4)  # el guiño llegó 0,2 s después del corrimiento
+        backend.moveTo.assert_called_once_with(900, 500, _pause=False)
+        backend.moveTo.reset_mock()
+        control._cursor_px = (300, 500)
+        control._rewind_before_click(11.4)  # moviéndose hace más de 0,7 s: era a propósito
+        backend.moveTo.assert_not_called()
+
     def test_summary_explains_where_the_session_spent_its_time(self):
         joystick, feed = self.joystick()
         for point in (TARGETS["center"],)*3 + (TARGETS["right"],)*5 + ((2.2,.5),)*2:

@@ -10,6 +10,7 @@ from direction_diagnostic import observe_direction, DirectionClassifier
 from posture_adjustment import PoseAdjustment
 from posture_adjustment import pose_features
 
+CLOSING = .8      # un ojo por debajo del 80 % de su apertura habitual: se está cerrando
 ENTER = (.55, .65)  # piso por eje de la fracción del recorrido centro→borde que hace falta para mover
 # Por dirección, medido en sesiones reales: abajo se infla solo (pide más) y arriba recorre poco (pide menos).
 ENTER_BY_ZONE = dict(left=.55, right=.55, up=.65, down=.8)
@@ -127,6 +128,7 @@ class GeometricJoystick:
         self.interfering = ()      # gestos activos en este fotograma (los informa el control)
         self.gestures = Counter()  # fotogramas detenidos por cada gesto, para el resumen
         self.dropped = Counter()   # acciones de gestos descartadas, con el motivo
+        self.open_ratio = None     # apertura habitual de los ojos mientras se mira normalmente
         self.frozen = False       # «quieto» por voz: se sigue leyendo la mirada, pero ningún borde mueve
         self.ready = False        # las zonas solo mandan después de pasar por el centro del recuadro
         self.center_since = None
@@ -193,6 +195,24 @@ class GeometricJoystick:
                   if not lo - margin <= val <= hi + margin]
         self.posture_failed = failed
         return not failed
+
+    def _closing(self, face):
+        """Un ojo empezando a cerrarse: la lectura del iris se corre antes de que el guiño se reconozca.
+
+        Medido en sesiones reales: en los 2-3 fotogramas previos a cada guiño la mirada saltaba
+        hacia la izquierda y el puntero se iba de lo que se quería clickear.
+        """
+        ratios = [getattr(face, f"eye_{side}_ratio", None) for side in ("left", "right")]
+        if self.open_ratio is None or any(r is None for r in ratios):
+            return False
+        return min(ratios) < CLOSING * self.open_ratio
+
+    def _learn_open(self, face):
+        ratios = [getattr(face, f"eye_{side}_ratio", None) for side in ("left", "right")]
+        if any(r is None for r in ratios):
+            return
+        value = min(ratios)
+        self.open_ratio = value if self.open_ratio is None else self.open_ratio + .05 * (value - self.open_ratio)
 
     def _account(self, now):
         if self.accounted is not None:
@@ -282,9 +302,10 @@ class GeometricJoystick:
             self.reset("Cambió la resolución de cámara")
             return None
         stamp = face.timestamp_ms
-        if gesture or not selected_eyes_open(face,self.eye_source,self.limits):
+        closing = self._closing(face)
+        if gesture or closing or not selected_eyes_open(face,self.eye_source,self.limits):
             self.reset("Guiño o gesto · puntero detenido", disarm=False, stamp=stamp)
-            self.gestures.update(self.interfering or ("parpadeo",))
+            self.gestures.update(self.interfering or (("ojo cerrándose",) if closing else ("parpadeo",)))
             # Con un ojo cerrado o la cara en un gesto no hay mirada que leer, pero el rostro
             # sigue siendo válido: sin esto, un guiño de más de 0,25 s anulaba su propio clic.
             if stamp != self.last_stamp and self.armed and self._posture_ok(face):
@@ -319,6 +340,7 @@ class GeometricJoystick:
         raw = tuple((value - ref) / sigma for value, ref, sigma in zip(point, center, self.sigma))
         self.position = self._steady(raw)
         self.counts["valid"] += 1
+        self._learn_open(face)
         self.valid_stamp = stamp
         seen = self._classify(self.position)
         if self.frozen and seen in VECTORS:
@@ -409,5 +431,6 @@ class GeometricJoystick:
                                          for name, total in self.sums.items()},
                     stopped_by_gesture=dict(self.gestures),
                     dropped_actions=dict(self.dropped),
+                    clicks_put_back=self.counts["rewinds"],
                     face_losses=self.counts["losses"], movement_events=self.counts["moves"],
                     pixels_moved=round(self.pixels))

@@ -114,6 +114,7 @@ class ControlEngine:
         self.dictation = dictation  # opcional: dictation.Dictation
         # Mouse por voz: el asistente solo lo recibe con el joystick ocular, nunca con Nariz.
         self._voice_actions = deque()
+        self._cursor_px = self._still_point = self._moving_since = None
         assistant = getattr(dictation, "assistant", None)
         if assistant is not None:
             assistant.pointer = self.voice_pointer if self.ocular_joystick is not None else None
@@ -396,6 +397,7 @@ class ControlEngine:
             interfering = any(self.gesture.last_active.values()) or fd.timestamp_ms < self.gesture._eye_hold_until
             action_ready = joystick.actions_allowed(fd, now)
             joystick.cursor = self._cursor_fraction()
+            self._track_still(joystick, now)
             joystick.interfering = tuple(key for key, value in self.gesture.last_active.items() if value)
             movement = joystick.update(fd, now, paused=self.paused or not self.output_allowed.is_set(),
                                        gesture=interfering or bool(events))
@@ -485,6 +487,13 @@ class ControlEngine:
             self.last_actions = (toggle,)
         elif fresh and not self.paused and self.output_allowed.is_set():
             self._update_hold_click(now)
+            if joystick is not None and any(ev.type in (EV_LEFT_CLICK, EV_RIGHT_CLICK, "DOUBLE_CLICK") for ev in actions):
+                if self.screen_bounds is not None:
+                    from screen_mapping import physical_coordinates
+                    with physical_coordinates():
+                        self._rewind_before_click(now)
+                else:
+                    self._rewind_before_click(now)
             releasing_wink = (self._dragging and self._drag_release_armed
                               and self._is_gesture_active(self._drag_gesture))
             for ev in actions:
@@ -577,8 +586,38 @@ class ControlEngine:
                 x, y = self.backend.position()
         except (ValueError, OSError):
             return None
+        self._cursor_px = (x, y)
         ox, oy, width, height = self.screen_bounds
         return (x - ox) / width, (y - oy) / height
+
+    REWIND_S = .7       # un movimiento más corto que esto justo antes del clic se considera arrastre del guiño
+    REWIND_PX = 250
+
+    def _track_still(self, joystick, now):
+        """Recuerda dónde estaba quieto el puntero mientras se lo miraba, antes de cualquier guiño."""
+        point = getattr(self, "_cursor_px", None)
+        if point is None:
+            return
+        if joystick.reason.startswith("Centro") and joystick.movement == (0., 0.):
+            self._still_point, self._moving_since = (now, point), None
+        elif joystick.movement != (0., 0.) and self._moving_since is None:
+            self._moving_since = now
+
+    def _rewind_before_click(self, now):
+        """Si el puntero se corrió en el instante previo al gesto, el clic va donde estaba quieto."""
+        still = getattr(self, "_still_point", None)
+        point = getattr(self, "_cursor_px", None)
+        moving = getattr(self, "_moving_since", None)
+        if still is None or point is None or now - still[0] > 1.5:
+            return
+        if moving is not None and now - moving > self.REWIND_S:
+            return  # se estaba moviendo a propósito: el clic va donde quedó
+        x, y = still[1]
+        if point != (x, y) and math.dist(point, (x, y)) <= self.REWIND_PX:
+            self.backend.moveTo(x, y, _pause=False)
+            self._cursor_px = (x, y)
+            if self.ocular_joystick is not None:
+                self.ocular_joystick.counts["rewinds"] += 1
 
     def voice_pointer(self, kind):
         """Orden de mouse dicha al asistente (llega desde su hilo). Solo con joystick ocular."""
