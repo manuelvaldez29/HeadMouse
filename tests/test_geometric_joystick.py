@@ -349,6 +349,11 @@ class GeometricGuiTests(unittest.TestCase):
         self.controller.vision_factory = EyeVision
         self.window.refresh()
         self.assertEqual(self.window.home_action.text(), "Calibrar joystick · 5 puntos")
+        self.window.open_eye_calibration()
+        self.window.refresh()
+        self.assertTrue(self.window.calibrate_eye_movement.isVisible())
+        for widget in self.window.classic_eye_widgets + (self.window.geometric_recenter, self.window.geometric_revert):
+            self.assertFalse(widget.isVisible())  # sin calibración guardada no hay nada que recentrar
         self.window.home_action.click()
         self.wait(lambda: self.bridge.snapshot()["direction_diagnostic"] is not None)
         self.controller.direction_diagnostic.fixation_s = .65
@@ -358,6 +363,9 @@ class GeometricGuiTests(unittest.TestCase):
             gaze_x, gaze_y = TARGETS[target]
             self.assertFalse(self.window.direction_panel.activate.isVisible())
         self.wait(lambda: self.window.direction_panel.activate.isVisible())
+        self.assertEqual(self.window.direction_panel.map.schedule, list(targets))
+        self.assertEqual(self.window.direction_panel.map.done, 5)
+        self.assertTrue(self.window.direction_panel.result.isVisible())
         session = self.bridge.snapshot()["direction_diagnostic"]
         self.assertEqual((session["done"], session["total"]), (5, 5))
         self.assertFalse(self.window.joystick_pad.isVisible())

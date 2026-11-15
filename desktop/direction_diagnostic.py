@@ -1,5 +1,9 @@
 """Qt presentation for the ocular direction diagnostic."""
-from PySide6.QtWidgets import QLabel, QHBoxLayout, QProgressBar, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtCore import QPointF, QRectF, Qt
+from PySide6.QtGui import QColor, QFont, QPainter, QPen
+from PySide6.QtWidgets import QLabel, QHBoxLayout, QProgressBar, QPushButton, QSizePolicy, QVBoxLayout, QWidget
+
+from direction_diagnostic import TARGETS
 
 LABELS = dict(center="Centro", up="Arriba", down="Abajo", left="Izquierda", right="Derecha")
 SOURCES = dict(left="izquierdo", right="derecho", both="ambos ojos")
@@ -14,6 +18,48 @@ def _channel_label(name):
     return f"{REFERENCES[reference]} · {SOURCES[source]}"
 
 
+class TargetMap(QWidget):
+    """Pantalla en miniatura: qué puntos ya se midieron, cuál toca ahora y cuáles faltan."""
+
+    def __init__(self):
+        super().__init__()
+        self.setMinimumSize(260, 150)
+        self.setMaximumSize(620, 350)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self.schedule, self.done, self.current = [], 0, None
+
+    def present(self, schedule, done, current):
+        state = (list(schedule), done, current)
+        if state != (self.schedule, self.done, self.current):
+            self.schedule, self.done, self.current = state
+            self.update()
+
+    def paintEvent(self, event):
+        width = min(self.width(), self.height() * 16 / 9)
+        height = width * 9 / 16
+        frame = QRectF((self.width() - width) / 2, (self.height() - height) / 2, width, height).adjusted(2, 2, -2, -2)
+        with QPainter(self) as painter:
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+            painter.setPen(QPen(QColor("#30465b"), 2))
+            painter.setBrush(QColor("#091220"))
+            painter.drawRoundedRect(frame, 12, 12)
+            font = QFont(painter.font())
+            font.setPixelSize(12)
+            painter.setFont(font)
+            for index, name in enumerate(self.schedule):
+                x, y = TARGETS[name]
+                point = QPointF(frame.left() + x * frame.width(), frame.top() + y * frame.height())
+                measured, now = index < self.done, name == self.current and index == self.done
+                color = QColor("#57d4c3" if measured else "#ffd477" if now else "#3d566e")
+                painter.setPen(QPen(color, 2))
+                painter.setBrush(color if measured or now else QColor("#091220"))
+                painter.drawEllipse(point, 11 if now else 8, 11 if now else 8)
+                painter.setPen(QColor("#c4d3e8" if measured or now else "#6f8399"))
+                text = LABELS[name] + (" ✓" if measured else "")
+                box = QRectF(point.x() - 60, point.y() + (14 if y < .8 else -32), 120, 18)
+                painter.drawText(box, Qt.AlignmentFlag.AlignCenter, text)
+
+
 class DirectionDiagnosticPanel(QWidget):
     def __init__(self, request, activate):
         super().__init__()
@@ -26,7 +72,14 @@ class DirectionDiagnosticPanel(QWidget):
         self.instruction = QLabel()
         self.instruction.setWordWrap(True)
         layout.addWidget(self.instruction)
-        layout.addStretch(1)
+        self.result = QLabel()
+        self.result.setWordWrap(True)
+        self.result.setObjectName("Subtitle")
+        layout.addWidget(self.result)
+        self.map = TargetMap()
+        stage = QHBoxLayout()
+        stage.addWidget(self.map, 1)
+        layout.addLayout(stage, 1)
         self.status = QLabel()
         self.status.setWordWrap(True)
         layout.addWidget(self.status)
@@ -55,9 +108,6 @@ class DirectionDiagnosticPanel(QWidget):
             widget.clicked.connect(lambda checked=False, value=axis: request("retry_geometric_axis", axis=value))
             axis_row.addWidget(widget)
         layout.addLayout(axis_row)
-        self.result = QLabel()
-        self.result.setWordWrap(True)
-        layout.addWidget(self.result)
         self.hide()
 
     def present(self, session, *, can_activate=False):
@@ -72,6 +122,7 @@ class DirectionDiagnosticPanel(QWidget):
             "que puedas: así la cámara ve más diferencia entre un punto y otro.")
         target = session["target"]
         self.instruction.setVisible(target is not None)
+        self.map.present(session.get("schedule", ()), session["done"], target)
         self.progress.setRange(0, session["total"])
         self.progress.setValue(session["done"])
         self.retry.setVisible(state == "retry")

@@ -761,6 +761,8 @@ class MainWindow(QMainWindow):
         row.addWidget(button("Calibrar gestos",self.start_ocular_gestures))
         self.joystick_setup = QWidget()
         joystick_options = QVBoxLayout(self.joystick_setup)
+        joystick_options.setContentsMargins(0,4,0,0)
+        row.addWidget(self.joystick_setup)
         self.geometric_status = label("", "Subtitle")
         self.geometric_status.setWordWrap(True)
         joystick_options.addWidget(self.geometric_status)
@@ -775,18 +777,22 @@ class MainWindow(QMainWindow):
         for widget in self.geometric_repair:
             joystick_options.addWidget(widget)
         self.direction_panel = DirectionDiagnosticPanel(self.bridge.request, self.activate)
-        body.addWidget(self.joystick_setup)
         center=QHBoxLayout()
         self.eye_start=button("Capturar centro",self.start_eye_tracking_calibration)
         self.eye_save=button("Guardar centro",lambda:self.bridge.request("save_eye_calibration"),"Primary")
         self.eye_save.setEnabled(False)
         center.addWidget(self.eye_start);center.addWidget(self.eye_save)
         row.addLayout(center)
-        row.addWidget(button("Cancelar captura",lambda:self.bridge.request("cancel_eye_calibration")))
+        self.eye_cancel=button("Cancelar captura",lambda:self.bridge.request("cancel_eye_calibration"))
+        row.addWidget(self.eye_cancel)
         self.eye_status=label("Centro ocular: sin capturar","Subtitle")
         self.eye_progress=QProgressBar();self.eye_progress.setRange(0,100)
         row.addWidget(self.eye_status);row.addWidget(self.eye_progress)
-        row.addWidget(button("Diagnóstico vertical",self.start_vertical_diagnostic))
+        self.vertical_button=button("Diagnóstico vertical",self.start_vertical_diagnostic)
+        row.addWidget(self.vertical_button)
+        # Del modo ocular clásico: con el joystick no se usan y confundían.
+        self.classic_eye_widgets=(self.eye_start,self.eye_save,self.eye_cancel,self.eye_status,
+                                  self.eye_progress,self.vertical_button)
         row.addStretch()
         controls_scroll=QScrollArea();controls_scroll.setWidgetResizable(True);controls_scroll.setWidget(controls)
         controls_scroll.setMinimumWidth(300)
@@ -1935,6 +1941,8 @@ class MainWindow(QMainWindow):
         joystick_mode = s["settings"]["ui"]["tracking_method"] == "eye_joystick"
         self.calibrate_eye_movement.setText("Calibrar joystick · 5 puntos" if joystick_mode else "Calibrar movimiento")
         self.joystick_setup.setVisible(joystick_mode)
+        for widget in self.classic_eye_widgets:
+            widget.setVisible(not joystick_mode)
         geometric = s.get("geometric") or {}
         calibration = s.get("direction_diagnostic")
         if calibration is not None:
@@ -1943,8 +1951,10 @@ class MainWindow(QMainWindow):
             self.ocular_content.setCurrentIndex(0)
         busy = bool(calibration or enabled or s["state"] == "CAMERA_STARTING")
         self.geometric_status.setText(geometric.get("live") or geometric.get("message", ""))
-        self.geometric_recenter.setEnabled(bool(geometric.get("saved") and not busy))
-        self.geometric_revert.setEnabled(bool(geometric.get("previous") and not busy))
+        self.geometric_recenter.setVisible(bool(geometric.get("saved")))
+        self.geometric_recenter.setEnabled(not busy)
+        self.geometric_revert.setVisible(bool(geometric.get("previous")))
+        self.geometric_revert.setEnabled(not busy)
         for axis, widget in enumerate(self.geometric_repair):
             widget.setVisible(not busy and axis in geometric.get("repair_axes", ()))
         self.ocular_readiness.setText("Movimiento: "+("preparado" if s.get("tracking_calibrated") and not method_key[1] else "pendiente")+

@@ -318,5 +318,6 @@ class DirectionDiagnostic:
     def snapshot(self):
         current = self.samples[-1] if self.samples else None
         return dict(token=self.token, target=self.schedule[self.index] if self.index < len(self.schedule) else None,
+                    schedule=list(self.schedule),
                     done=self.index, total=len(self.schedule), state=self.state, path=self.path, save_error=self.save_error,
                     valid=current["rejected"] is None if current else None, report=self.report)
