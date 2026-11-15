@@ -652,8 +652,13 @@ class ControlEngine:
                     x, y = self.backend.position()
                     if not (ox <= x < ox+width and oy <= y < oy+height):
                         raise ValueError("El cursor salió del monitor calibrado. Detené y volvé a activar.")
-                    ix = max(ox, min(ox+width-1, x+ix)) - x
-                    iy = max(oy, min(oy+height-1, y+iy)) - y
+                    nx = max(ox, min(ox+width-1, x+ix))
+                    ny = max(oy, min(oy+height-1, y+iy))
+                    # Mirando una esquina el puntero llegaba al píxel exacto del rincón y PyAutoGUI
+                    # cortaba todo con su fail-safe. Con el joystick el freno es F8: se deja un píxel.
+                    if nx in (ox, ox+width-1) and ny in (oy, oy+height-1):
+                        nx += 1 if nx == ox else -1
+                    ix, iy = nx - x, ny - y
                 if not self.output_allowed.is_set() and self.ocular_joystick is not None:
                     return
                 self.backend.moveRel(ix, iy, _pause=False)

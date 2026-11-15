@@ -18,7 +18,7 @@ OUTSIDE = 3.      # recorridos más allá del punto calibrado: la mirada salió 
 ARM_MS = 200      # mirar la zona central este tiempo habilita los bordes; salir de la pantalla los deshabilita
 HOLD_MS = 110     # la zona debe repetirse en fotogramas consecutivos antes de mover
 RESUME_MS = 500   # un parpadeo breve no reinicia la rampa de velocidad
-USABLE = .65      # umbral máximo aceptable: por encima, el ruido se come el recorrido
+USABLE = .42      # umbral máximo aceptable: por encima, el ruido se come el recorrido
 MOVING = dict(left="Moviendo a la izquierda", right="Moviendo a la derecha",
               up="Moviendo hacia arriba", down="Moviendo hacia abajo")
 POSE_NAMES = ("nariz_x", "nariz_y", "distancia", "inclinación", "giro", "ladeo")

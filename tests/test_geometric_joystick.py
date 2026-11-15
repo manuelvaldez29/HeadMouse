@@ -130,7 +130,7 @@ class GeometricTests(unittest.TestCase):
         record = self.record()
         candidate = record["candidates"]["local_both"]
         candidate["centers"] = {name: (.5 + dx, .5 + dy) for name, (dx, dy) in offsets.items()}
-        candidate["noise"] = (.0047, .0013)
+        candidate["noise"] = (.002, .001)  # el recuadro chico medía con más ruido: hoy no alcanzaría
         self.assertTrue(all(calibration_quality(record, EyeTrackingConfig())[3]))
         for zone in ("up", "down", "left", "right"):
             joystick, feed = self.joystick(record)
@@ -214,6 +214,37 @@ class GeometricTests(unittest.TestCase):
         # Pero si la cara deja de ser válida durante el gesto, la acción no pasa.
         far = replace(face, nose_x=.9)
         self.assertFalse(joystick.actions_allowed(far, feed.now()))
+
+    def test_joystick_never_parks_the_pointer_on_a_fail_safe_corner(self):
+        from control_engine import ControlEngine
+        from gesture_engine import EV_CURSOR_MOVE, GestureEvent
+        gesture, backend = Mock(), Mock()
+        gesture.strategy = GeometricJoystick(Mock(_frame_size=(640,480)), self.record(), EyeTrackingConfig(), .25,
+                                             lambda: 100.)
+        backend.size.return_value = (1920, 1080)
+        backend.position.return_value = (960, 540)
+        control = ControlEngine(Mock(), gesture, backend=backend, screen_bounds=(0, 0, 1920, 1080))
+        control.output_allowed.set()
+        for start, delta in (((3, 2), (-40, -40)), ((1915, 1077), (40, 40)), ((2, 1078), (-40, 40))):
+            backend.position.return_value = start
+            control._fraction = [0., 0.]
+            control._execute(GestureEvent(EV_CURSOR_MOVE, dx=delta[0], dy=delta[1]))
+            dx, dy = backend.moveRel.call_args.args
+            end = (start[0] + dx, start[1] + dy)
+            self.assertNotIn(end, ((0, 0), (1919, 0), (0, 1079), (1919, 1079)))
+            self.assertTrue(0 <= end[0] <= 1919 and 0 <= end[1] <= 1079)
+
+    def test_a_weak_direction_blocks_its_axis_instead_of_firing_by_itself(self):
+        # Calibración real del 15/11: mirar a la izquierda movió la señal 4 veces el ruido
+        # (derecha 13). Con eso «izquierda» se disparaba sola y mirar abajo se leía como izquierda.
+        record = self.record()
+        candidate = record["candidates"]["local_both"]
+        zones = dict(left=(-4.0, 1.0), right=(13.0, -6.1), up=(-2.0, -17.8), down=(-2.7, 11.6))
+        candidate["centers"] = {"center": (.5, .5)} | {k: (.5 + x/1000, .5 + y/1000) for k, (x, y) in zones.items()}
+        candidate["noise"] = (.001, .001)
+        horizontal, vertical = calibration_quality(record, EyeTrackingConfig())[3]
+        self.assertIsNone(horizontal)
+        self.assertIsNotNone(vertical)
 
     def test_summary_explains_where_the_session_spent_its_time(self):
         joystick, feed = self.joystick()
