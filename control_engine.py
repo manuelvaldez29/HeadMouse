@@ -762,7 +762,7 @@ class ControlEngine:
             if self.dictation is not None and hasattr(self.dictation, "start_assistant"):
                 self.dictation.start_assistant()
             else:
-                logger.info("[ControlEngine] Asistente no disponible: activá el dictado por voz en Configuración")
+                logger.info("[ControlEngine] Gema no disponible: activá el dictado por voz en Configuración")
             self._log_event("ASSISTANT")
         elif ev.type in ("KEY_ENTER", "KEY_ESCAPE", "KEY_SPACE"):
             self.backend.press({"KEY_ENTER": "enter", "KEY_ESCAPE": "esc", "KEY_SPACE": "space"}[ev.type], _pause=False)

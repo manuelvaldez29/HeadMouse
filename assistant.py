@@ -1,4 +1,5 @@
-"""Asistente de voz, etapa 1: comandos en español sin IA generativa. Sin Qt ni micrófono.
+"""Gema, la asistente de voz de CONFA. Etapa 1: comandos en español sin IA generativa.
+Sin Qt ni micrófono.
 
 Se activa con la acción ASSISTANT (un gesto) y reutiliza el dictado para escuchar:
 micrófono, detector de voz, huella de voz, aviso flotante, guiño para terminar y
@@ -18,12 +19,27 @@ import sys
 import threading
 import time
 import unicodedata
+
+from app_paths import ASSISTANT_NAME
 from dataclasses import dataclass
 from difflib import SequenceMatcher
 
 logger = logging.getLogger(__name__)
 
 # Lo que se muestra en la ayuda (Gestos y acciones) y verifican los tests.
+def as_gema(message):
+    """Respuesta tal como se muestra: «Gema: abriendo Bloc de notas.»
+
+    Las respuestas ya están en primera persona («No encontré…», «No entendí…»). Va en
+    minúscula después de los dos puntos, salvo siglas y marcas (CONFA, WhatsApp)."""
+    message = message.strip()
+    start = 1 if message[:1] in "¿¡" else 0
+    word = message[start:].split(" ", 1)[0]
+    if word[:1].isupper() and (len(word) == 1 or word[1:].islower()):
+        message = message[:start] + word[0].lower() + message[start + 1:]
+    return f"{ASSISTANT_NAME}: {message}"
+
+
 ASSISTANT_COMMANDS = (
     ("«abrir Bloc de notas» · «abrí WhatsApp»", "abre un programa del menú Inicio", "Abrí el bloc de notas."),
     ("«buscar recetas de empanadas»", "busca en Google con el navegador", "Buscar recetas de empanadas."),

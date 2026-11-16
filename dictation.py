@@ -16,7 +16,7 @@ ni texto. La transcripción es local; el modelo se descarga una sola vez:
 Las partes puras (Endpointer, Dictation) no dependen de Windows ni de audio y
 se prueban con dobles; los adaptadores reales se cargan solo al usarlos.
 """
-from app_paths import RESOURCE_ROOT, data_root
+from app_paths import RESOURCE_ROOT, data_root, ASSISTANT_NAME
 import argparse
 import importlib.util
 import logging
@@ -370,7 +370,7 @@ class Dictation:
             self._cancel.clear()
             self._finish.clear()
             self._request = (kind, self.clock(), expected_runtime)
-            self._set("arming", "Asistente: preparando el micrófono…" if kind == "assistant" else "Buscando campo de texto…")
+            self._set("arming", f"{ASSISTANT_NAME}: preparando el micrófono…" if kind == "assistant" else "Buscando campo de texto…")
         self._wake.set()
 
     def _set(self, state, message=""):
@@ -429,14 +429,14 @@ class Dictation:
             return
         if (info is None and not assistant) or self._cancel.is_set() or not self.output_allowed():
             with self._lock:
-                self.message = ("" if kind == "click" else "Asistente no disponible ahora." if assistant
+                self.message = ("" if kind == "click" else f"{ASSISTANT_NAME} no está disponible ahora." if assistant
                                 else "No hay un campo de texto con el foco.")
             return
         started = self.clock()
         self.cue("start")
         with self._lock:
             h = self.hints
-            self._set("listening", ("Asistente: decí un comando, por ejemplo «abrir Bloc de notas». " if assistant
+            self._set("listening", (f"{ASSISTANT_NAME} te escucha: decí un comando, por ejemplo «abrir Bloc de notas». " if assistant
                                     else "Escuchando… hablá. ")
                       + (f"{h['finish'][:1].upper() + h['finish'][1:]}: terminar ya · " if h["finish"] else "")
                       + ("" if assistant else "decí «borrar» para corregir · ")
@@ -472,7 +472,7 @@ class Dictation:
         if self._cancel.is_set():
             self.cue("cancel")
             with self._lock:
-                self.message = "Asistente cancelado." if assistant else "Dictado cancelado."
+                self.message = f"{ASSISTANT_NAME}: pedido cancelado." if assistant else "Dictado cancelado."
             self._record(dict(result="cancelled", listen_s=self.clock() - started))
             return
         if endpoint.state == "timeout":
@@ -522,20 +522,21 @@ class Dictation:
                           characters=len(text.strip()), sent=send))
 
     def _assistant_reply(self, text, **timing):
+        from assistant import as_gema
         if self._cancel.is_set() or not self.output_allowed():
             with self._lock:
-                self.message = "Asistente cancelado: el control ya no está activo."
+                self.message = f"{ASSISTANT_NAME}: pedido cancelado, el control ya no está activo."
             self._record(dict(result="cancelled", **timing))
             return
         if self.assistant is None:
-            done, message = False, "El asistente no está disponible."
+            done, message = False, "No estoy disponible: falta preparar el asistente."
         else:
             done, message = self.assistant(text)
         # Sin el texto dicho en el log ni en las métricas: puede ser personal.
         logger.info("Asistente: %s", "acción hecha" if done else "sin acción")
         with self._lock:
             self.last_text = ""
-            self.message = message
+            self.message = as_gema(message)
         self._record(dict(result="assistant" if done else "assistant_unknown", **timing))
 
     def _command(self, name, count, **timing):

@@ -1,7 +1,15 @@
-# Asistente de voz (etapa 1, 2026-11-11)
+# Gema, la asistente de voz de CONFA (etapa 1, 2026-11-11)
+
+**Gema** (con una m: `app_paths.ASSISTANT_NAME`) es la asistente de voz de CONFA,
+nombre elegido por el equipo el 2026-11-13. En la app se presenta así: mientras
+escucha muestra «Gema te escucha…» y firma cada respuesta («Gema: abriendo Bloc de
+notas.»). Las respuestas están en primera persona («No encontré…», «No entendí…»);
+`assistant.as_gema` las pone en minúscula después de los dos puntos sin tocar siglas
+ni marcas (CONFA, WhatsApp). La activación por voz «Oye Gema» es el paso siguiente;
+por ahora Gema se llama con un gesto.
 
 Comandos dichos en español para manejar Windows, sin IA generativa: todo corre en
-la PC, sin Internet ni costo. Se activa con la acción **Asistente de voz**, que se
+la PC, sin Internet ni costo. Se activa con la acción **Hablar con Gema**, que se
 asigna a un gesto en "Gestos y acciones". Para escuchar reutiliza el dictado:
 micrófono, detector de voz, huella de voz, aviso flotante, el gesto de click para
 terminar y el gesto de pausa para cancelar. Por eso el dictado por voz tiene que

@@ -7,6 +7,7 @@ RESOURCE_ROOT = Path(__file__).resolve().parent
 VERSION = "0.6.0"
 APP_NAME = "CONFA"
 APP_FULL_NAME = "Controlador Facial y Asistente de voz"
+ASSISTANT_NAME = "Gema"  # asistente de voz de CONFA; con una m (Gemma es otra cosa, de Google)
 LEGACY_APP_NAME = "HeadMouse"  # nombre hasta noviembre de 2026: carpeta de datos y registro de inicio
 
 _resolved = {}

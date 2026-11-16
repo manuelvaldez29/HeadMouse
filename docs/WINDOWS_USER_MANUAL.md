@@ -211,6 +211,20 @@ Buscar micrófonos. El botón Permisos de micrófono en Windows abre la configur
 de privacidad. Activá el acceso al micrófono para aplicaciones de escritorio
 si querés dictar. Podés seguir usando Nariz y Ojos con el dictado desmarcado.
 
+## Gema, la asistente de voz
+
+Gema maneja Windows con comandos dichos en español: abrir programas del menú
+Inicio, buscar en Google, cerrar o minimizar ventanas, cambiar el volumen, pausar
+la música, escribir un texto o decir la hora. Funciona sin Internet y sólo entiende
+una lista cerrada de comandos: nunca ejecuta otra cosa.
+
+Para usarla, el dictado por voz tiene que estar activado. En Gestos y acciones,
+asigná «Hablar con Gema» a un gesto. Con el control activo, hacé ese gesto: vas a
+ver «Gema te escucha…». Decí el comando, por ejemplo «abrir Bloc de notas», y
+Gema responde en el aviso («Gema: abriendo Bloc de notas.»). El gesto de click
+termina la escucha y el de pausa la cancela, igual que en el dictado. La lista
+completa de comandos está en Gestos y acciones.
+
 ## Datos, importación y actualización
 
 Los datos están en `%LOCALAPPDATA%\CONFA` (si venís de HeadMouse, la carpeta `%LOCALAPPDATA%\HeadMouse` se renombra sola la primera vez que abrís CONFA): profiles, último perfil, métricas,

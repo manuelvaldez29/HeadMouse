@@ -1,4 +1,4 @@
-"""Asistente de voz, etapa 1 (2026-11-11): comandos en español, sin IA generativa ni Windows real."""
+"""Gema, la asistente de voz (etapa 1, 2026-11-11): comandos en español, sin IA generativa ni Windows real."""
 import time
 import unittest
 from types import SimpleNamespace
@@ -158,6 +158,9 @@ class DictationAssistantModeTests(unittest.TestCase):
         transcriber.transcribe.return_value = "Abrí el bloc de notas."
         d = Dictation(VoiceConfig(enabled=True, after_dictation_ms=0), FakeFocus(FocusInfo(False)),
                       lambda: FakeRecorder(test_dictation.DictationTests.PHRASE), transcriber, typer, assistant=assistant)
+        seen = []
+        original_set = d._set
+        d._set = lambda state, message="": (seen.append(message), original_set(state, message))
         d.start()
         self.addCleanup(d.close)
         d.start_assistant()
@@ -168,7 +171,22 @@ class DictationAssistantModeTests(unittest.TestCase):
             time.sleep(.01)
         assistant.assert_called_once_with("Abrí el bloc de notas.")
         typer.type_text.assert_not_called()
-        self.assertEqual(d.snapshot()["message"], "Abriendo Bloc de notas.")
+        # Gema se presenta mientras escucha y firma la respuesta.
+        self.assertTrue(any(m.startswith("Gema te escucha") for m in seen), seen)
+        self.assertEqual(d.snapshot()["message"], "Gema: abriendo Bloc de notas.")
+
+
+class GemaTests(unittest.TestCase):
+    def test_replies_are_signed_by_gema_without_breaking_names(self):
+        from assistant import as_gema
+        self.assertEqual(as_gema("Abriendo Bloc de notas."), "Gema: abriendo Bloc de notas.")
+        self.assertEqual(as_gema("¿Qué querés que escriba?"), "Gema: ¿qué querés que escriba?")
+        self.assertEqual(as_gema("CONFA no se cierra por voz."), "Gema: CONFA no se cierra por voz.")
+        self.assertEqual(as_gema("WhatsApp abierto."), "Gema: WhatsApp abierto.")
+
+    def test_name_is_gema_with_one_m(self):
+        from app_paths import ASSISTANT_NAME
+        self.assertEqual(ASSISTANT_NAME, "Gema")
 
 
 class ActionTests(unittest.TestCase):
@@ -178,7 +196,7 @@ class ActionTests(unittest.TestCase):
         from gesture_engine import GestureEvent
         self.assertEqual(mapping.resolve(GestureEvent("MOUTH_OPEN")).type, "ASSISTANT")
         from desktop.window import ACTION_LABELS
-        self.assertEqual(ACTION_LABELS["ASSISTANT"], "Asistente de voz")
+        self.assertEqual(ACTION_LABELS["ASSISTANT"], "Hablar con Gema")
 
     def test_control_starts_the_assistant_on_the_dictation(self):
         from control_engine import ControlEngine
