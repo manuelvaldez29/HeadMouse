@@ -200,13 +200,16 @@ class VoiceConfig:
     after_dictation_ms: float = 600   # gestos bloqueados al terminar (cola del habla)
     detector: str = "neural"          # "neural" (Silero) o "energy" (volumen, el de antes)
     speaker_check: bool = True        # con calibración de voz: terminar cuando deja de hablar el usuario
+    # «Oye Gema» (wake_word.py): el micrófono escucha mientras el control está activo
+    # y sin pausa. Apagado por defecto: es un micrófono siempre abierto y lo elige el usuario.
+    wake_word: bool = False
     # Palabras que Whisper favorece (hotwords). Con la voz del usuario, el 2026-11-11,
     # "yerba" salía "hierba" y "Julián" "Julianne": con la lista, 95 % → 97 % de palabras
     # bien. Corta a propósito: una lista larga hace que aparezcan donde no se dijeron.
     vocabulary: str = "yerba, mate, colectivo, turno, facultad, kiosco, remís"
 
     def __post_init__(self):
-        for name in ("enabled", "append_space", "sound_cues", "commands", "speaker_check"):
+        for name in ("enabled", "append_space", "sound_cues", "commands", "speaker_check", "wake_word"):
             if type(getattr(self, name)) is not bool:
                 raise ValueError(f"{name} debe ser true o false")
         if self.model not in WHISPER_MODELS:

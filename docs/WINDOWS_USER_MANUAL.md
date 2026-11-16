@@ -225,6 +225,17 @@ Gema responde en el aviso («Gema: abriendo Bloc de notas.»). El gesto de click
 termina la escucha y el de pausa la cancela, igual que en el dictado. La lista
 completa de comandos está en Gestos y acciones.
 
+También podés llamarla con la voz. En Configuración → Básico → Dictado por voz,
+marcá «Activar a Gema diciendo «Oye Gema»» y guardá. Con el control activo y sin
+pausa, decí «Oye Gema» y esperá el pitido, o decí todo junto: «Oye Gema, subí el
+volumen». Los pedidos simples (volumen, hora, ventanas, música) se hacen enseguida;
+abrir, buscar y escribir tardan unos segundos más porque Gema vuelve a escuchar la
+frase con más precisión. Mientras escucha, la línea de estado dice «Decí «Oye Gema»
+para hablarle a Gema» y Windows muestra el micrófono en uso. En pausa, con F8 o sin
+control activo, el micrófono se cierra. Sólo se revisan frases cortas, en esta PC,
+y nunca se guarda audio. Hacé la calibración de voz: así Gema sólo te responde a
+vos y no a la tele o a otras personas.
+
 ## Datos, importación y actualización
 
 Los datos están en `%LOCALAPPDATA%\CONFA` (si venís de HeadMouse, la carpeta `%LOCALAPPDATA%\HeadMouse` se renombra sola la primera vez que abrís CONFA): profiles, último perfil, métricas,

@@ -5,8 +5,7 @@ nombre elegido por el equipo el 2026-11-13. En la app se presenta así: mientras
 escucha muestra «Gema te escucha…» y firma cada respuesta («Gema: abriendo Bloc de
 notas.»). Las respuestas están en primera persona («No encontré…», «No entendí…»);
 `assistant.as_gema` las pone en minúscula después de los dos puntos sin tocar siglas
-ni marcas (CONFA, WhatsApp). La activación por voz «Oye Gema» es el paso siguiente;
-por ahora Gema se llama con un gesto.
+ni marcas (CONFA, WhatsApp). También se la llama diciendo «Oye Gema» (abajo).
 
 Comandos dichos en español para manejar Windows, sin IA generativa: todo corre en
 la PC, sin Internet ni costo. Se activa con la acción **Hablar con Gema**, que se
@@ -72,3 +71,52 @@ abre con `explorer.exe shell:AppsFolder\<AppID>`.
 - Frase de activación ("Oye …") con openWakeWord.
 - Opcional: pedidos libres con IA en la nube, mediante una lista cerrada de
   herramientas.
+
+## «Oye Gema» (2026-11-15)
+
+Opcional y apagado por defecto (`voice.wake_word`, Configuración → Dictado por voz):
+es un micrófono abierto y lo elige el usuario. Código en `wake_word.py`, conectado al
+dictado en `Dictation.wake_allowed` / `wake_heard`.
+
+**Cuándo escucha.** Sólo con el control activo, sin pausa, sin F8 y sin otro dictado o
+pedido en curso (`_dictation_allowed` + `Dictation.busy`). Fuera de eso cierra el
+micrófono. La línea de estado avisa «Decí «Oye Gema» para hablarle a Gema».
+
+**Cómo decide, de lo barato a lo caro.**
+
+1. Silero VAD corta frases: pausa de 0,7 s, entre 0,35 y 6 s de voz. Con 0,45 s la
+   pausa natural después de «Oye Gema,» partía la frase y el pedido se perdía.
+2. Con calibración de voz, la huella (WeSpeaker) descarta otras voces antes de Whisper
+   (umbral calibrado − 0,1: la frase es más corta que las ventanas de la calibración).
+3. Whisper chico: `base` si está instalado (lo trae el instalador), con «Gema» como
+   hotword. «Oye Gema» como hotword hacía que Whisper se comiera la frase.
+4. `find_wake` compara por sonido (`sound_key`): h muda; g/c ante e/i, j, k y qu son
+   una sola letra; ll = y; letras dobles cuentan una. El fragmento tiene que empezar y
+   terminar en borde de palabra («oye, gemelos» y «yo y Gema» no pasan).
+
+**Después de «Oye Gema».**
+
+- Con pedido en la misma frase: si es simple (volumen, hora, ventanas, música, mouse)
+  se hace con lo que entendió `base`. Si es `open`, `search` o `type` (`PRECISE_KINDS`)
+  la frase se vuelve a transcribir con el modelo del dictado.
+- Sin pedido: Gema escucha como con el gesto, empezando por el audio que llegó
+  mientras se revisaba la frase, para no perder el comienzo si el usuario siguió hablando.
+- Las métricas cuentan `assistant_oye_gema` / `assistant_unknown_oye_gema` aparte.
+
+**Mediciones** (voces sintéticas de Windows, 36 frases a tres velocidades, esta PC):
+
+| Modelo | Por frase | Comentario |
+|---|---|---|
+| tiny | ~0,45 s | escribe «hoy e gema», «oye quema» |
+| base | ~0,85 s | 15/15 activaciones, 0/21 sin querer con frases parecidas |
+| small | ~2,7 s | casi perfecto, demasiado lento para escuchar todo el tiempo |
+
+- Cadena completa: pedidos simples en menos de 1 s después de hablar; abrir, buscar y
+  escribir en unos 3 s.
+- Escucha en silencio: 3,4 % de un núcleo.
+- Límites conocidos: «Oye, Emma» suena igual que «Oye Hema» y activa a Gema. Sin
+  calibración de voz cualquier voz puede activarla, y la tele hablando hace trabajar
+  a Whisper.
+- Falta medir con voces reales y ruido: `python tools/banco_oye_gema.py --microfono`
+  (guion de frases) y `--libre 120` (activaciones sin querer con la tele o una charla).
+

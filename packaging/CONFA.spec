@@ -48,7 +48,7 @@ for distribution in ('mediapipe','opencv-contrib-python','numpy','PySide6','PyAu
     datas+=copy_metadata(distribution)
 a=Analysis([str(root/'app.py')],pathex=[str(root)],binaries=binaries,datas=datas,
     hiddenimports=hidden+['PySide6.QtNetwork','PySide6.QtSvg','pyautogui._pyautogui_win',
-                          'dictation','speaker','voice_calibration','sounddevice','comtypes.client','comtypes.stream'],
+                          'dictation','speaker','voice_calibration','assistant','wake_word','sounddevice','comtypes.client','comtypes.stream'],
     excludes=['pytest','IPython','PySide6.QtWebEngineCore','PySide6.QtWebEngineWidgets','PySide6.QtPdf'],
     hooksconfig={'matplotlib': {'backends': ['Agg']}},
     noarchive=False)

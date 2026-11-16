@@ -337,6 +337,8 @@ class DistributionVoiceTests(unittest.TestCase):
         for package in ('faster_whisper','ctranslate2','onnxruntime','_sounddevice_data','comtypes.client','sherpa_onnx'):
             self.assertIn(f"'{package}'",spec)
         self.assertIn('models/whisper',spec)
+        for module in ('dictation','speaker','voice_calibration','assistant','wake_word'):  # se importan tarde
+            self.assertIn(f"'{module}'",spec)
         lock=(RESOURCE_ROOT/'packaging'/'requirements-windows-py312-build.lock.txt').read_text(encoding='utf-8')
         for pin in ('faster-whisper==','ctranslate2==','comtypes==','sounddevice==','sherpa-onnx=='):
             self.assertIn(pin,lock)

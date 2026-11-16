@@ -310,6 +310,7 @@ class Dictation:
         self._closed = threading.Event()
         self._quiet_until = 0.
         self._thread = None
+        self.wake = None  # wake_word.WakeListener si «Oye Gema» está activado
 
     # ── API para el ciclo de control ───────────────────────────────────────────
 
@@ -318,11 +319,15 @@ class Dictation:
         self._thread.start()
         if hasattr(self.transcriber, "preload"):
             threading.Thread(target=self.transcriber.preload, name="WhisperLoad", daemon=True).start()
+        if self.wake is not None:
+            self.wake.start()
 
     def close(self):
         self._cancel.set()
         self._closed.set()
         self._wake.set()
+        if self.wake is not None:
+            self.wake.close()
         if self._thread and self._thread is not threading.current_thread():
             self._thread.join(timeout=3)
 
@@ -344,6 +349,23 @@ class Dictation:
         """Acción ASSISTANT: escuchar un comando ("abrir Bloc de notas") en vez de dictar."""
         self._arm("assistant")
 
+    def wake_allowed(self):
+        """«Oye Gema» escucha sólo con el control activo, sin pausa y sin otro dictado."""
+        return (self.config.enabled and self.config.wake_word and not self._closed.is_set()
+                and self.state == "idle" and not self.busy and self.output_allowed())
+
+    def wake_heard(self, audio, rest, after=None):
+        """Llegó «Oye Gema». Con pedido en la misma frase («Oye Gema, abrí el bloc de notas»)
+        se vuelve a transcribir con el modelo del dictado, más preciso. Si no, Gema escucha,
+        empezando por lo que se dijo mientras se revisaba la frase (`after`)."""
+        if rest:
+            from assistant import PRECISE_KINDS, parse
+            command = parse(rest)
+            quick = command is not None and command.kind not in PRECISE_KINDS  # volumen, hora, ventanas…
+            self._arm("wake_command", audio=None if quick else audio, rest=rest)
+        else:
+            self._arm("assistant", prefix=after)
+
     def cancel(self):
         with self._lock:
             if self.state != "idle":
@@ -357,11 +379,12 @@ class Dictation:
 
     def snapshot(self):
         with self._lock:
-            return dict(state=self.state, message=self.message, last_text=self.last_text)
+            return dict(state=self.state, message=self.message, last_text=self.last_text,
+                        wake=self.wake.snapshot() if self.wake is not None else None)
 
     # ── Hilo de trabajo ────────────────────────────────────────────────────────
 
-    def _arm(self, kind, expected_runtime=None):
+    def _arm(self, kind, expected_runtime=None, **payload):
         if not self.config.enabled or self._closed.is_set():
             return
         with self._lock:
@@ -369,8 +392,9 @@ class Dictation:
                 return
             self._cancel.clear()
             self._finish.clear()
-            self._request = (kind, self.clock(), expected_runtime)
-            self._set("arming", f"{ASSISTANT_NAME}: preparando el micrófono…" if kind == "assistant" else "Buscando campo de texto…")
+            self._request = (kind, self.clock(), expected_runtime, payload)
+            self._set("arming", f"{ASSISTANT_NAME}: preparando el micrófono…" if kind == "assistant" else
+                      f"{ASSISTANT_NAME}: te escuché…" if kind == "wake_command" else "Buscando campo de texto…")
         self._wake.set()
 
     def _set(self, state, message=""):
@@ -389,8 +413,12 @@ class Dictation:
             request, self._request = self._request, None
             if request is None:
                 continue
+            kind, since, expected_runtime, payload = request
             try:
-                self._session(*request)
+                if kind == "wake_command":
+                    self._wake_command(**payload)
+                else:
+                    self._session(kind, since, expected_runtime, **payload)
             except Exception as exc:
                 logger.exception("Dictado interrumpido")
                 self._record(dict(result="error"))
@@ -420,7 +448,7 @@ class Dictation:
                 return None
             time.sleep(.05)
 
-    def _session(self, kind, since, expected_runtime=None):
+    def _session(self, kind, since, expected_runtime=None, prefix=None):
         assistant = kind == "assistant"  # sin campo de texto: lo dicho es un comando
         info = None if assistant else self._wait_focus(kind, since)
         if expected_runtime is not None and (info is None or info.runtime_id != expected_runtime):
@@ -446,6 +474,8 @@ class Dictation:
                               detector=self.detector_factory() if self.detector_factory else None,
                               speaker=self.speaker_factory() if self.speaker_factory else None)
         with self.recorder_factory() as recorder:
+            if prefix is not None and len(prefix):
+                endpoint.feed(prefix)  # lo dicho justo después de «Oye Gema», antes de abrir este micrófono
             last_audio = self.clock()
             while endpoint.state not in ("done", "timeout"):
                 if self._cancel.is_set() or not self.output_allowed():
@@ -521,6 +551,25 @@ class Dictation:
                           audio_s=len(audio) / SAMPLE_RATE, transcribe_s=latency,
                           characters=len(text.strip()), sent=send))
 
+    def _wake_command(self, audio, rest):
+        """«Oye Gema, abrí el bloc de notas» en una sola frase: el pedido ya está grabado."""
+        from wake_word import WAKE_HOTWORDS, find_wake
+        if self._cancel.is_set() or not self.output_allowed():
+            return
+        started = self.clock()
+        self.cue("end")
+        command = rest
+        if audio is not None:
+            with self._lock:
+                self._set("transcribing", f"{ASSISTANT_NAME}: te escuché…")
+            hotwords = ", ".join(w for w in (WAKE_HOTWORDS, self.config.vocabulary) if w)
+            text = self.transcriber.transcribe(audio, self.config.language, hotwords=hotwords)
+            # El modelo del dictado entiende mejor el pedido; si justo no reconoce «Oye Gema»,
+            # vale lo que entendió el modelo chico de la activación.
+            command = find_wake(text) or rest
+        self._assistant_reply(command, listen_s=0., audio_s=0. if audio is None else len(audio) / SAMPLE_RATE,
+                              transcribe_s=self.clock() - started, wake=True)
+
     def _assistant_reply(self, text, **timing):
         from assistant import as_gema
         if self._cancel.is_set() or not self.output_allowed():
@@ -537,7 +586,9 @@ class Dictation:
         with self._lock:
             self.last_text = ""
             self.message = as_gema(message)
-        self._record(dict(result="assistant" if done else "assistant_unknown", **timing))
+        # Las métricas separan lo pedido con «Oye Gema» de lo pedido con el gesto.
+        suffix = "_oye_gema" if timing.pop("wake", False) else ""
+        self._record(dict(result=("assistant" if done else "assistant_unknown") + suffix, **timing))
 
     def _command(self, name, count, **timing):
         if name == "last":
@@ -987,10 +1038,21 @@ def create_dictation(config: VoiceConfig, metrics=None, voiceprint=None, output_
                            "Preparalo en Configuración.")
     from assistant import Assistant
     typer = SendInputTyper()
-    return Dictation(config, UIAFocusProbe(), lambda: SoundDeviceRecorder(config.microphone), WhisperTranscriber(config.model),
-                     typer, metrics=metrics, cue=sound_cue if config.sound_cues else None, assistant=Assistant(typer=typer),
-                     detector_factory=detector_factory(config), speaker_factory=speaker_factory(config, voiceprint),
-                     output_allowed=output_allowed, hints=hints)
+    detector = detector_factory(config)
+    dictation = Dictation(config, UIAFocusProbe(), lambda: SoundDeviceRecorder(config.microphone),
+                          WhisperTranscriber(config.model), typer, metrics=metrics,
+                          cue=sound_cue if config.sound_cues else None, assistant=Assistant(typer=typer),
+                          detector_factory=detector, speaker_factory=speaker_factory(config, voiceprint),
+                          output_allowed=output_allowed, hints=hints)
+    if config.wake_word:
+        if detector is None:
+            logger.warning("«Oye Gema» necesita el detector neuronal de voz: queda apagado")
+        else:
+            from wake_word import WakeListener, voice_check, wake_transcriber
+            dictation.wake = WakeListener(lambda: SoundDeviceRecorder(config.microphone), detector,
+                                          wake_transcriber(config), dictation.wake_heard, dictation.wake_allowed,
+                                          voice_check=voice_check(config, voiceprint), language=config.language)
+    return dictation
 
 
 def speaker_factory(config, voiceprint):

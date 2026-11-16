@@ -89,11 +89,16 @@ class Command:
     argument: str = ""
 
 
+# Con «Oye Gema, …» el pedido llega leído por el modelo chico de la activación. Para estos
+# tipos el texto exacto importa (qué programa, qué buscar, qué escribir) y se vuelve a
+# transcribir con el modelo del dictado (~2,7 s); los demás se hacen enseguida.
+PRECISE_KINDS = ("open", "search", "type")
+
 ARTICLES = ("el ", "la ", "los ", "las ", "un ", "una ", "mi ", "programa ", "aplicacion ", "app ")
 PATTERNS = (  # (regex sobre texto normalizado, tipo, grupo con el argumento)
     # Sin "poné": "poné pausa" buscaría un programa llamado "pausa".
-    (r"^(?:abri|abrir|abre|abrime|abrilo|ejecuta|ejecutar|ejecutame|inicia|iniciar|lanza|lanzar)(?: (.+))?$", "open"),
-    (r"^(?:busca|buscar|buscame|googlea|googlear)(?: en (?:google|internet))? (.+?)(?: en (?:google|internet))?$", "search"),
+    (r"^(?:abri|abrir|abre|abria|abrime|abrilo|ejecuta|ejecutar|ejecutame|inicia|iniciar|lanza|lanzar)(?: (.+))?$", "open"),
+    (r"^(?:busca|buscas|buscar|buscame|googlea|googlear)(?: en (?:google|internet))? (.+?)(?: en (?:google|internet))?$", "search"),
     (r"^(?:cerra|cerrar|cierra)(?: (?:la |el |esta |este )?(?:ventana|programa|esto|aplicacion))?$", "close"),
     (r"^(?:minimiza|minimizar|achica|achicar)(?: (?:la |esta )?ventana)?$", "minimize"),
     (r"^(?:maximiza|maximizar|agranda|agrandar)(?: (?:la |esta )?ventana)?$", "maximize"),
@@ -107,7 +112,7 @@ PATTERNS = (  # (regex sobre texto normalizado, tipo, grupo con el argumento)
     (r"^(?:anterior)(?: cancion| tema| video)?$", "previous_track"),
     (r"^(?:captura|sacar captura|saca una captura|captura de pantalla|hacer captura)(?: de pantalla)?$", "screenshot"),
     (r"^(?:escribi|escribir|escribe) (.+)$", "type"),
-    (r"^(?:que hora es|decime la hora|hora)$", "time"),
+    (r"^(?:que hora es|que horas son|que horas|que hora|decime la hora|hora)$", "time"),
     # Mouse por voz: solo con el joystick ocular (Assistant.pointer). El doble y el derecho van antes.
     (r"^(?:doble (?:clic|click|clique)|(?:clic|click) doble|dos (?:clics|clicks|clic|click))$", "double_click"),
     (r"^(?:(?:clic|click|boton) derecho|menu contextual)$", "right_click"),

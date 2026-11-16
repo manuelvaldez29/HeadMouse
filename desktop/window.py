@@ -60,6 +60,16 @@ def gesture_hints(s):
     return dict(pause=hint("PAUSE"),pause_short=hint("PAUSE",True),click=hint("LEFT_CLICK"),click_short=hint("LEFT_CLICK",True))
 
 
+def wake_hint(s):
+    """«Oye Gema» en la línea de estado: que se sepa cuándo el micrófono está escuchando."""
+    wake=(s.get("dictation") or {}).get("wake") or {}
+    if wake.get("state") in ("listening","checking"):
+        return " · Decí «Oye Gema» para hablarle a Gema."
+    if wake.get("state")=="error":
+        return " · "+wake.get("message","«Oye Gema» no puede usar el micrófono.")
+    return ""
+
+
 NO_PAUSE_GESTURE="No tenés un gesto calibrado para Pausar / reanudar: asignalo en Gestos y acciones. F8 o el botón rojo detienen."
 
 
@@ -81,8 +91,9 @@ def status_message(s,event=None):
                     +(f"{g['click']} de nuevo para soltar." if g["click"] else "detené con F8 para soltar.")),False
         if not g["pause"]:
             return NO_PAUSE_GESTURE,s.get("paused")
-        return ((f"{capitalized(g['pause'])} para empezar a mover el cursor." if s.get("paused") else
-                 f"{capitalized(g['pause_short'])}: pausar · F8 o el botón rojo: detener."),False)
+        if s.get("paused"):
+            return f"{capitalized(g['pause'])} para empezar a mover el cursor.",False
+        return f"{capitalized(g['pause_short'])}: pausar · F8 o el botón rojo: detener."+wake_hint(s),False
     for condition in s.get("activation_conditions",[]):
         if condition.startswith("Iris") and not s.get("camera"):
             continue  # con la cámara apagada no se puede saber
@@ -1289,6 +1300,13 @@ class MainWindow(QMainWindow):
         self.voice_vocabulary.setToolTip("El dictado las escribe bien aunque suenen parecido a otras: nombres, "
                                          "lugares, palabras de tu zona. Pocas y frecuentes funcionan mejor que una lista larga.")
         form.addRow("Palabras que usás seguido (separadas por comas)",self.voice_vocabulary)
+        self.voice_wake=QCheckBox("Activar a Gema diciendo «Oye Gema»")
+        self.voice_wake.setAccessibleName("Activar a Gema diciendo Oye Gema")
+        self.voice_wake.setToolTip("También podés decir el pedido de una: «Oye Gema, abrí el bloc de notas».")
+        form.addRow(self.voice_wake)
+        form.addRow(label("Con esta opción el micrófono queda escuchando mientras el control está activo y sin pausa. "
+                          "Sólo se revisan frases cortas, en esta PC, y no se guarda nada. Con la calibración de voz, "
+                          "Gema sólo te responde a vos.","Subtitle"))
         form.addRow(label("Comandos: «borrar», «borrar N palabras», «borrar N letras», «borrar todo», «deshacer». "
                           "Decí solo el comando. La lista completa está en Gestos y acciones.","Subtitle"))
         section(form,"Vista de cámara")
@@ -1637,6 +1655,7 @@ class MainWindow(QMainWindow):
         settings["voice"]["detector"]=self.voice_detector.currentData()
         settings["voice"]["send_word"]=self.voice_send.currentText().strip().lower()
         settings["voice"]["vocabulary"]=self.voice_vocabulary.text().strip()
+        settings["voice"]["wake_word"]=self.voice_wake.isChecked()
         settings["keyboard"]={key:check.isChecked() for key,check in self.keyboard_checks.items()}
         preview_mode=self.keyboard_preview_mode.currentData()
         settings["keyboard"].update(size=self.keyboard_size.currentData(),position=self.keyboard_position.currentData(),
@@ -2040,6 +2059,7 @@ class MainWindow(QMainWindow):
             self.voice_detector.setCurrentIndex(max(0,self.voice_detector.findData(s["settings"]["voice"].get("detector","neural"))))
             self.voice_send.setCurrentText(s["settings"]["voice"]["send_word"])
             self.voice_vocabulary.setText(s["settings"]["voice"].get("vocabulary",""))
+            self.voice_wake.setChecked(s["settings"]["voice"].get("wake_word",False))
             keyboard=s["settings"].get("keyboard")
             if keyboard:
                 for key,check in self.keyboard_checks.items():
