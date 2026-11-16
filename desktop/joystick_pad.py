@@ -19,7 +19,7 @@ class JoystickPad(QWidget):
                          Qt.WindowType.WindowTransparentForInput)
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-        self.setWindowTitle("HeadMouse · marcas del joystick")
+        self.setWindowTitle("CONFA · marcas del joystick")
         self.setAccessibleName("Marcas del joystick ocular")
         self.target = self.token = self.painted = None
         self.zone = None

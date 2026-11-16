@@ -1,8 +1,8 @@
 """
 dictation.py
-HeadMouse — Dictado por voz local
+CONFA — Dictado por voz local
 
-Cuando un click de HeadMouse deja el foco en un campo de texto editable (y no
+Cuando un click de CONFA deja el foco en un campo de texto editable (y no
 es una contraseña), se abre el micrófono, se detecta el fin de la frase por
 silencio, se transcribe localmente con faster-whisper y el texto se escribe en
 el campo con SendInput Unicode (respeta tildes y ñ, no toca el portapapeles).
@@ -332,7 +332,7 @@ class Dictation:
         return self.state != "idle" or self.clock() < self._quiet_until
 
     def on_click(self):
-        """Click ejecutado por HeadMouse: dictar si el foco queda en un campo de texto."""
+        """Click ejecutado por CONFA: dictar si el foco queda en un campo de texto."""
         if self.click_allowed():
             self._arm("click")
 
@@ -980,7 +980,7 @@ def create_dictation(config: VoiceConfig, metrics=None, voiceprint=None, output_
                if importlib.util.find_spec(name) is None]
     if missing:
         raise RuntimeError("Faltan dependencias de dictado: " + ", ".join(missing) +
-                           ". Revisá la instalación de HeadMouse.")
+                           ". Revisá la instalación de CONFA.")
     if installed_model(config.model) is None:
         raise RuntimeError(f"Falta el modelo de voz '{config.model}'. "
                            "Preparalo en Configuración.")
@@ -1022,7 +1022,7 @@ def detector_factory(config):
 # ══════════════════════════════════════════════════════════════════════════════
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description="Dictado local de HeadMouse: preparar y probar")
+    parser = argparse.ArgumentParser(description="Dictado local de CONFA: preparar y probar")
     parser.add_argument("--download-model", action="store_true", help="Descargar el modelo (requiere Internet)")
     parser.add_argument("--test", action="store_true", help="Grabar una frase y mostrar la transcripción")
     parser.add_argument("--model", choices=("tiny", "base", "small", "medium"), default=VoiceConfig().model)

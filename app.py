@@ -1,4 +1,4 @@
-"""HeadMouse — aplicación Windows, tesis V0.2."""
+"""CONFA (Controlador Facial y Asistente de voz) — aplicación Windows, tesis UNSTA 2026."""
 import argparse
 import sys
 from config import configure_logging
@@ -27,7 +27,7 @@ def main(argv=None):
     from desktop.window import MainWindow
     from desktop.style import apply_style
     application=QApplication.instance() or QApplication(sys.argv[:1])
-    application.setApplicationName("HeadMouse")
+    application.setApplicationName("CONFA")
     application.setApplicationVersion(VERSION)
     apply_style(application)
     from user_storage import migrate_legacy
@@ -93,7 +93,7 @@ if __name__=="__main__":
         raise SystemExit(main())
     except Exception:
         import logging
-        logging.exception("No se pudo iniciar HeadMouse")
+        logging.exception("No se pudo iniciar CONFA")
         if any(flag in sys.argv for flag in ("--check","--verify-runtime","--check-resident")):
             raise SystemExit(1)
         raise

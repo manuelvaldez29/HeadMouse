@@ -59,7 +59,7 @@ a.binaries=[row for row in a.binaries if Path(row[0]).name.lower() not in ('icuu
 a.datas=[row for row in a.datas if "__pycache__" not in Path(row[0]).parts and
          Path(row[0]).suffix.lower() not in (".pyc",".pyo",".lib")]
 pyz=PYZ(a.pure)
-exe=EXE(pyz,a.scripts,[],exclude_binaries=True,name='HeadMouse',debug=False,
+exe=EXE(pyz,a.scripts,[],exclude_binaries=True,name='CONFA',debug=False,
     bootloader_ignore_signals=False,strip=False,upx=False,console=False,
-    icon=str(root/'assets/headmouse.ico'),version=str(version_file))
-coll=COLLECT(exe,a.binaries,a.datas,strip=False,upx=False,name='HeadMouse')
+    icon=str(root/'assets/confa.ico'),version=str(version_file))
+coll=COLLECT(exe,a.binaries,a.datas,strip=False,upx=False,name='CONFA')

@@ -1,4 +1,11 @@
-# HEADMOUSE v0.3.1 — ROBUST ADAPTIVE FACIAL CALIBRATION
+# CONFA — Controlador Facial y Asistente de voz
+
+Tesis de Ingeniería en Informática, UNSTA 2026 (Bloj · Domfrocht · Petrelli · Valdez).
+Hasta noviembre de 2026 el proyecto se llamó **HeadMouse**; el repositorio conserva ese nombre.
+Al abrir CONFA por primera vez, `%LOCALAPPDATA%\HeadMouse` se renombra solo a
+`%LOCALAPPDATA%\CONFA` con todos los perfiles, modelos y métricas.
+
+## Calibración facial adaptativa (v0.3.1)
 
 Control local de PC con movimiento de cabeza y gestos faciales.
 Tesis UNSTA 2026 — Bloj · Domfrocht · Petrelli · Valdez.
@@ -6,9 +13,9 @@ Tesis UNSTA 2026 — Bloj · Domfrocht · Petrelli · Valdez.
 ## Aplicación instalable para Windows
 
 La distribución de tesis **0.6.0** se construye en la rama integrada `tesis-v0.2`.
-El instalador `HeadMouse-Setup-0.6.0-win64.exe` incluye el entorno de ejecución y los modelos de voz;
+El instalador `CONFA-Setup-0.6.0-win64.exe` incluye el entorno de ejecución y los modelos de voz;
 el usuario final no necesita Python ni una terminal. Los perfiles se conservan en
-`%LOCALAPPDATA%\HeadMouse`, fuera del programa. Inicio con Windows y activación
+`%LOCALAPPDATA%\CONFA`, fuera del programa. Inicio con Windows y activación
 automática son opciones independientes y desactivadas inicialmente; la segunda
 exige calibración, autorización y comprobaciones de seguimiento/sesión.
 
@@ -61,7 +68,7 @@ Ver [método, compatibilidad y pruebas físicas pendientes](docs/CALIBRATION_V03
 
 ## Abrir la aplicación
 
-Después de preparar el entorno, hacé doble clic en **HeadMouse.vbs**. También
+Después de preparar el entorno, hacé doble clic en **CONFA.vbs**. También
 podés ejecutar desde este repositorio:
 
 ```powershell
@@ -72,7 +79,7 @@ Con el entorno activado, funciona `python app.py`. Creá o seleccioná un perfil
 elegí Nariz u Ojos, completá su calibración, probá el diagnóstico y confirmá **Activar control**.
 El control real comienza desactivado. **Detener control**, F8 o Escape detienen
 el control y cierran la cámara, también durante la vista previa. Los atajos
-requieren que HeadMouse reciba el teclado.
+requieren que CONFA reciba el teclado.
 
 La [guía visual](docs/GUI.md) explica el flujo completo. Los
 [experimentos](docs/EXPERIMENTS.md) guardan JSONL en `data/experiments/` sin

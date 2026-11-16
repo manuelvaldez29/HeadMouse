@@ -1,6 +1,6 @@
 """
 debug_cursor.py
-HeadMouse — Diagnóstico del cursor
+CONFA — Diagnóstico del cursor
 Muestra en tiempo real los valores de la nariz y el delta calculado
 SIN mover el cursor real. Sirve para verificar que los valores son
 correctos antes de activar el control.
@@ -146,7 +146,7 @@ def _preview(vision, gesture, neutral_x, neutral_y):
                     (10, h - 25), cv2.FONT_HERSHEY_SIMPLEX,
                     0.48, C_GRAY, 1, cv2.LINE_AA)
 
-        cv2.imshow("HeadMouse — Diagnostico cursor  (Q = salir)", frame)
+        cv2.imshow("CONFA — Diagnostico cursor  (Q = salir)", frame)
         if cv2.waitKey(1) & 0xFF == ord("q"):
             break
 

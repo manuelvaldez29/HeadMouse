@@ -25,7 +25,7 @@ def physical_coordinates():
     setter.argtypes, setter.restype = [ctypes.c_void_p], ctypes.c_void_p
     previous = setter(ctypes.c_void_p(-4))  # PER_MONITOR_AWARE_V2
     if not previous:
-        raise ValueError("Windows no permite verificar coordenadas físicas. Revisá el escalado de pantalla y reiniciá HeadMouse.")
+        raise ValueError("Windows no permite verificar coordenadas físicas. Revisá el escalado de pantalla y reiniciá CONFA.")
     try:
         yield
     finally:
@@ -80,10 +80,10 @@ def primary_context(qt, monitors=None):
     # expone DISPLAY1. Corroborar la selección primaria de ambas APIs y tamaño;
     # no confundir nombres pertenecientes a espacios de identidad distintos.
     if len(primary) != 1 or qt.get("primary") is not True or len(monitors) != qt["monitor_count"]:
-        raise ValueError("Qt y Windows no identifican el mismo monitor principal. Revisá cuál está marcado como principal y reiniciá HeadMouse.")
+        raise ValueError("Qt y Windows no identifican el mismo monitor principal. Revisá cuál está marcado como principal y reiniciá CONFA.")
     native = primary[0]["rect"]
     if len(native) != 4 or any(type(v) is not int for v in native) or any(abs(a-b) > 1 for a,b in zip(native[2:], (width,height))):
-        raise ValueError("El tamaño físico de Windows no coincide con el escalado Qt. Revisá el escalado/DPI y reiniciá HeadMouse.")
+        raise ValueError("El tamaño físico de Windows no coincide con el escalado Qt. Revisá el escalado/DPI y reiniciá CONFA.")
     context.update(width=native[2], height=native[3], display=dict(
         version=1, physical_rect=list(native), logical_rect=list(rect), device=primary[0]["screen"]))
     return context

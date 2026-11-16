@@ -16,7 +16,7 @@ class GazeOverlay(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent, Qt.WindowType.Window | Qt.WindowType.FramelessWindowHint)
-        self.setWindowTitle("HeadMouse · Mirada · Sin control real")
+        self.setWindowTitle("CONFA · Mirada · Sin control real")
         self.setAccessibleName("Calibración y diagnóstico ocular seguro en pantalla completa")
         self.session, self.prediction = None, None
         self._point_key = None

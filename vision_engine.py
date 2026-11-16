@@ -1,6 +1,6 @@
 """
 vision_engine.py
-HeadMouse — Módulo 1: Vision Engine
+CONFA — Módulo 1: Vision Engine
 Tesis UNSTA 2026 — Bloj · Domfrocht · Petrelli · Valdez
 
 Responsabilidad:

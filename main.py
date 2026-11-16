@@ -1,6 +1,6 @@
 """
 main.py
-HeadMouse — Punto de entrada principal
+CONFA — Punto de entrada principal
 Tesis UNSTA 2026 — Bloj · Domfrocht · Petrelli · Valdez
 
 Inicia los tres módulos en orden y muestra un overlay de estado
@@ -51,7 +51,7 @@ def draw_overlay(stats):
     font2 = cv2.FONT_HERSHEY_PLAIN
 
     # Título
-    cv2.putText(frame, "HeadMouse", (10, 26),
+    cv2.putText(frame, "CONFA", (10, 26),
                 font, 0.7, C_WHITE, 1, cv2.LINE_AA)
 
     # Estado principal
@@ -92,7 +92,7 @@ def draw_overlay(stats):
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description="HEADMOUSE v0.2 — BASELINE Y CONSOLIDACIÓN")
+    parser = argparse.ArgumentParser(description="CONFA v0.2 — BASELINE Y CONSOLIDACIÓN")
     parser.add_argument("--camera", type=int, help="Índice de cámara; sobreescribe configuración")
     parser.add_argument("--user", default="default", help="Perfil en data/profiles")
     parser.add_argument("--config", help="Archivo JSON de configuración")
@@ -180,7 +180,7 @@ def main(argv=None):
                     if not vision.is_alive():
                         raise RuntimeError("VisionEngine terminó inesperadamente")
                     if not args.no_overlay:
-                        cv2.imshow("HeadMouse — Estado", draw_overlay(control.get_stats()))
+                        cv2.imshow("CONFA — Estado", draw_overlay(control.get_stats()))
                         if cv2.waitKey(1) & 0xFF == ord("q"):
                             break
                     time.sleep(.05)
@@ -191,7 +191,7 @@ def main(argv=None):
         logger.info("Sesión finalizada: %s", metrics.snapshot())
         return 0
     except (OSError, ValueError, RuntimeError, ImportError, TimeoutError) as exc:
-        logger.error("No se pudo ejecutar HeadMouse: %s", exc)
+        logger.error("No se pudo ejecutar CONFA: %s", exc)
         if isinstance(exc, FileNotFoundError):
             logger.error("Preparación: main.py --download-model; luego calibrate.py --user %s", args.user)
         return 1

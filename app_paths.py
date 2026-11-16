@@ -5,14 +5,35 @@ import sys
 
 RESOURCE_ROOT = Path(__file__).resolve().parent
 VERSION = "0.6.0"
+APP_NAME = "CONFA"
+APP_FULL_NAME = "Controlador Facial y Asistente de voz"
+LEGACY_APP_NAME = "HeadMouse"  # nombre hasta noviembre de 2026: carpeta de datos y registro de inicio
+
+_resolved = {}
 
 
 def data_root():
-    override = os.environ.get("HEADMOUSE_DATA_DIR")
+    override = os.environ.get("CONFA_DATA_DIR") or os.environ.get("HEADMOUSE_DATA_DIR")
     if override:
         return Path(override).expanduser().resolve()
     base = Path(os.environ.get("LOCALAPPDATA", Path.home()/"AppData"/"Local")) if sys.platform == "win32" else Path.home()/".local"/"share"
-    return base/"HeadMouse"
+    if base not in _resolved:
+        _resolved[base] = adopt_legacy_root(base/APP_NAME, base/LEGACY_APP_NAME)
+    return _resolved[base]
+
+
+def adopt_legacy_root(current, legacy):
+    """La primera vez que abre CONFA, la carpeta de HeadMouse (perfiles, modelos, métricas) pasa a
+    llamarse CONFA. Se renombra, no se copia: los modelos pesan cientos de MB. Si no se puede
+    (por ejemplo, la versión anterior sigue abierta) se sigue usando la vieja y se reintenta
+    en el próximo inicio; nunca se mezclan ni se pisan dos carpetas."""
+    if current.exists() or not legacy.is_dir():
+        return current
+    try:
+        legacy.rename(current)
+    except OSError:
+        return legacy
+    return current
 
 
 def face_model_path(value="models/face_landmarker.task"):

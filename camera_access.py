@@ -1,4 +1,4 @@
-"""Camera ownership and startup errors for cooperating HeadMouse processes."""
+"""Camera ownership and startup errors for cooperating CONFA processes."""
 from contextlib import contextmanager
 import ctypes
 from ctypes import wintypes
@@ -23,6 +23,7 @@ def camera_session():
     kernel.WaitForSingleObject.argtypes = (wintypes.HANDLE, wintypes.DWORD)
     kernel.WaitForSingleObject.restype = wintypes.DWORD
     kernel.ReleaseMutex.argtypes = kernel.CloseHandle.argtypes = (wintypes.HANDLE,)
+    # Nombre interno previo a CONFA: una instalación vieja y una nueva comparten el candado.
     handle = kernel.CreateMutexW(None, False, r"Local\HeadMouse.CameraSession")
     if not handle:
         raise ctypes.WinError(ctypes.get_last_error())
@@ -30,7 +31,7 @@ def camera_session():
     try:
         status = kernel.WaitForSingleObject(handle, 0)
         if status == 258:  # WAIT_TIMEOUT
-            raise CameraStartupError("busy", "Cámara ocupada por otra instancia de HeadMouse. "
+            raise CameraStartupError("busy", "Cámara ocupada por otra instancia de CONFA. "
                                      "Cerrá su diagnóstico o detené su cámara y volvé a intentar.")
         acquired = status in (0, 128)  # WAIT_OBJECT_0 or WAIT_ABANDONED
         if not acquired:

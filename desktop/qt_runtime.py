@@ -22,7 +22,7 @@ def prepare_qt_platform_plugins():
     if not any(p.stat().st_flags & stat.UF_HIDDEN for p in plugins):
         return None
     # mkdtemp evita reutilizar archivos reemplazables por otros procesos/usuarios.
-    target = Path(tempfile.mkdtemp(prefix=f"headmouse-qt-{qVersion()}-"))
+    target = Path(tempfile.mkdtemp(prefix=f"confa-qt-{qVersion()}-"))
     try:
         for plugin in plugins:
             shutil.copyfile(plugin, target / plugin.name)

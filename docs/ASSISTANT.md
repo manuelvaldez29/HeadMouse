@@ -16,7 +16,7 @@ La lista sale de `assistant.ASSISTANT_COMMANDS` (la misma que se ve en la ayuda 
 |---|---|
 | «abrir Bloc de notas» · «abrí WhatsApp» · «abrime el navegador» | abre un programa del menú Inicio |
 | «buscar recetas de empanadas» | busca en Google con el navegador |
-| «cerrar ventana» | Alt+F4 en la ventana de adelante (nunca en HeadMouse) |
+| «cerrar ventana» | Alt+F4 en la ventana de adelante (nunca en CONFA) |
 | «minimizar» · «maximizar» · «mostrar escritorio» · «cambiar de ventana» | ventanas |
 | «subir volumen» · «bajar volumen» · «silenciar» | volumen (5 teclas, ~10 %) |
 | «pausa» · «siguiente canción» · «anterior» | teclas multimedia |

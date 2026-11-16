@@ -193,7 +193,7 @@ class DesktopBridge(QObject):
         self.controller = controller or ApplicationController()
         self.mailbox = Mailbox()
         self.thread = QThread(self)
-        self.thread.setObjectName("HeadMouseApplication")
+        self.thread.setObjectName("CONFAApplication")
         self.worker = ControllerWorker(self.controller, self.mailbox)
         self.worker.moveToThread(self.thread)
         self.thread.started.connect(self.worker.start)

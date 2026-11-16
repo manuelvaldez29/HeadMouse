@@ -16,7 +16,7 @@ class StartupControls(QGroupBox):
     def __init__(self,resident):
         super().__init__("Inicio y accesibilidad")
         self.resident=resident;form=QFormLayout(self)
-        self.enabled=QCheckBox("Iniciar HeadMouse automáticamente con Windows")
+        self.enabled=QCheckBox("Iniciar CONFA automáticamente con Windows")
         self.activate=QCheckBox("Activar automáticamente el seguimiento")
         self.minimized=QCheckBox("Iniciar minimizado en la bandeja del sistema")
         self.remember=QCheckBox("Recordar el último perfil elegido")
@@ -28,7 +28,7 @@ class StartupControls(QGroupBox):
         form.addRow(windows)
         for w in (self.remember,self.minimized,self.activate):form.addRow(w)
         form.addRow("Perfil para activación automática",self.profiles)
-        self.note=QLabel("Ctrl+Mayús+Intro abre la confirmación de control con HeadMouse en foco. Tab y Espacio permiten elegir y confirmar.")
+        self.note=QLabel("Ctrl+Mayús+Intro abre la confirmación de control con CONFA en foco. Tab y Espacio permiten elegir y confirmar.")
         self.note.setWordWrap(True);form.addRow(self.note)
         save=QPushButton("Guardar preferencias de inicio");save.clicked.connect(self.save);form.addRow(save)
         migrate=QPushButton("Importar perfiles anteriores…");migrate.clicked.connect(self.import_profiles);form.addRow(migrate)
@@ -55,7 +55,7 @@ class StartupControls(QGroupBox):
         self.registration.setText({
             "off":"Inicio con Windows desactivado.",
             "on":"Inicio registrado en Windows para esta instalación.",
-            "other":"Windows tiene registrada otra ubicación de HeadMouse. Marcá la opción y guardá para usar esta ruta.",
+            "other":"Windows tiene registrada otra ubicación de CONFA. Marcá la opción y guardá para usar esta ruta.",
             "disabled":"Windows deshabilitó este inicio. Revisá Aplicaciones de inicio de Windows.",
             "unavailable":"No se pudo consultar el registro de Windows.",
         }[state])
@@ -105,12 +105,12 @@ class StartupControls(QGroupBox):
     def import_profiles(self):
         from pathlib import Path
         from user_storage import migrate_legacy
-        path=QFileDialog.getExistingDirectory(self,"Elegí la carpeta anterior de HeadMouse o su carpeta data")
+        path=QFileDialog.getExistingDirectory(self,"Elegí la carpeta anterior de CONFA (antes HeadMouse) o su carpeta data")
         if not path:return
         source=Path(path)
         if (source/"data"/"profiles").is_dir():source=source/"data"
         if not (source/"profiles").is_dir():
-            self.note.setText("La carpeta elegida no contiene profiles. Elegí la carpeta de HeadMouse o data.");return
+            self.note.setText("La carpeta elegida no contiene profiles. Elegí la carpeta de CONFA o HeadMouse, o su carpeta data.");return
         try:
             records=migrate_legacy(source)
             count=lambda result:sum(r["result"]==result for r in records)
@@ -131,9 +131,9 @@ class Resident:
             from startup_preferences import DEFAULTS
             self.preferences=dict(DEFAULTS);window.show_error(str(exc))
         self.controls=StartupControls(self);window.startup_settings_layout.addRow(self.controls)
-        window.setWindowIcon(QIcon(str(RESOURCE_ROOT/"assets"/"headmouse.ico")))
+        window.setWindowIcon(QIcon(str(RESOURCE_ROOT/"assets"/"confa.ico")))
         self.tray=QSystemTrayIcon(window.windowIcon(),window);self.menu=QMenu(window)
-        for title,action in (("Abrir HeadMouse",self.show),("Ver estado",self.status),
+        for title,action in (("Abrir CONFA",self.show),("Ver estado",self.status),
             ("Mostrar u ocultar teclado",window.toggle_keyboard),
             ("Activar seguimiento",self.activate),("Pausar seguimiento",lambda:self.bridge.request("pause_control")),
             ("Detener seguimiento",window.stop_immediately),("Abrir Configuración",self.settings),
@@ -155,7 +155,7 @@ class Resident:
     def minimize_on_close(self):return not self.quitting and self.tray_available and self.preferences["minimized"]
     def show(self):self.window.showNormal();self.window.raise_();self.window.activateWindow()
     def settings(self):self.show();self.window.show_page(4)
-    def status(self):QMessageBox.information(self.window,"Estado de HeadMouse",self.window.control_status.text()+"\n"+self.window.banner.text()+"\n"+("F8 global registrado." if self.native and self.native.hotkey else "F8 requiere foco; usá Detener en bandeja."))
+    def status(self):QMessageBox.information(self.window,"Estado de CONFA",self.window.control_status.text()+"\n"+self.window.banner.text()+"\n"+("F8 global registrado." if self.native and self.native.hotkey else "F8 requiere foco; usá Detener en bandeja."))
     def activate(self):
         self.disarm();s=self.bridge.snapshot()
         if s.get("control_enabled") and s.get("paused"):
@@ -187,7 +187,7 @@ class Resident:
                 profile=self.bridge.controller.profiles.store.load(p["profile_id"])
                 if not self.store.authorized(p,profile):raise ValueError("El perfil cambió o falta autorización; revisá Inicio y accesibilidad")
             if not profile:
-                self.window.show_error("HeadMouse se abrió con Windows. Elegí un perfil para verificar el seguimiento.")
+                self.window.show_error("CONFA se abrió con Windows. Elegí un perfil para verificar el seguimiento.")
                 self.show()
                 return
             self.start_profile_id=profile["user_id"]
@@ -207,14 +207,14 @@ class Resident:
                 self.native.retry_hotkeys()
                 self.bridge.controller.global_stop_available = self.native.hotkey
         self.controls.refresh_profiles()
-        self.tray.setToolTip("HeadMouse · "+("pausado" if s.get("paused") else "activo") if s.get("control_enabled") else "HeadMouse · control desactivado")
+        self.tray.setToolTip("CONFA · "+("pausado" if s.get("paused") else "activo") if s.get("control_enabled") else "CONFA · control desactivado")
         revision=s.get("calibration_saved_revision",0)
         if revision>self.last_revision:
             self.last_revision=revision
             if not self.preferences["prompted"] and s.get("profile") and prepared(s["profile"]) and not self.prompt_open:
                 self.prompt_open=True;QTimer.singleShot(0,self.offer_startup)
         if not s.get("profile"):
-            self.window.home_hint.setText("Creá tu perfil → elegí Nariz u Ojos → Calibración → guardá la prueba válida → Iniciar HeadMouse. F8 o Detener apagan el control y la cámara.")
+            self.window.home_hint.setText("Creá tu perfil → elegí Nariz u Ojos → Calibración → guardá la prueba válida → Iniciar CONFA. F8 o Detener apagan el control y la cámara.")
         if not self.pending:return
         if time.monotonic()-self.started>45 or s.get("state")=="ERROR":
             self.disarm();self.bridge.stop();self.bridge.request("stop_camera")
@@ -248,7 +248,7 @@ class Resident:
                 self.pending=False
                 self.bridge.controller.emergency.clear()
                 self.bridge.request("activate_startup_control",screen_context=self.window.screen_context())
-                self.tray.showMessage("HeadMouse","Perfil autorizado: activando seguimiento. F8 o Detener para salir.")
+                self.tray.showMessage("CONFA","Perfil autorizado: activando seguimiento. F8 o Detener para salir.")
             except (ValueError,OSError) as exc:self.disarm();self.window.show_error(str(exc));self.show()
 
     def offer_startup(self):
@@ -257,8 +257,8 @@ class Resident:
             if self.store.registration()!="off" or self.preferences["prompted"]:return
             dialog=QMessageBox(self.window)
             dialog.setWindowTitle("Inicio y accesibilidad")
-            dialog.setText("¿Querés que HeadMouse se inicie automáticamente al iniciar sesión en Windows?")
-            dialog.setInformativeText("Esta opción abre HeadMouse. El control del puntero requiere una autorización aparte.")
+            dialog.setText("¿Querés que CONFA se inicie automáticamente al iniciar sesión en Windows?")
+            dialog.setInformativeText("Esta opción abre CONFA. El control del puntero requiere una autorización aparte.")
             yes=dialog.addButton("Sí, iniciar automáticamente",QMessageBox.ButtonRole.YesRole)
             no=dialog.addButton("No, iniciar manualmente",QMessageBox.ButtonRole.NoRole)
             dialog.setDefaultButton(no);dialog.setEscapeButton(no)

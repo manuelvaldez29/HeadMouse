@@ -7,7 +7,7 @@ from pathlib import Path
 import shlex
 import subprocess
 import sys
-from app_paths import data_root, launch_command
+from app_paths import APP_NAME, LEGACY_APP_NAME, data_root, launch_command
 from config import load_config, method_bank
 from ocular_profiles import calibration_for
 from profiles import gesture_profile
@@ -37,15 +37,20 @@ def prepared(profile):
 
 class WindowsStartup:
     KEY=r"Software\Microsoft\Windows\CurrentVersion\Run"
-    NAME="HeadMouse"
+    NAME=APP_NAME
+    # Instalaciones anteriores al cambio de nombre registraron "HeadMouse": se sigue leyendo
+    # y se borra la próxima vez que se guarda la preferencia (queda sólo "CONFA").
+    LEGACY_NAME=LEGACY_APP_NAME
     APPROVAL_KEY=r"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run"
 
     def read(self):
         if sys.platform!="win32":return None
         import winreg
-        try:
-            with winreg.OpenKey(winreg.HKEY_CURRENT_USER,self.KEY) as key:return winreg.QueryValueEx(key,self.NAME)[0]
-        except FileNotFoundError:return None
+        for name in (self.NAME,self.LEGACY_NAME):
+            try:
+                with winreg.OpenKey(winreg.HKEY_CURRENT_USER,self.KEY) as key:return winreg.QueryValueEx(key,name)[0]
+            except FileNotFoundError:pass
+        return None
 
     def set(self,command):
         if sys.platform!="win32":
@@ -59,17 +64,29 @@ class WindowsStartup:
             else:
                 try:winreg.DeleteValue(key,self.NAME)
                 except FileNotFoundError:pass
+            try:winreg.DeleteValue(key,self.LEGACY_NAME)
+            except FileNotFoundError:pass
 
     def disabled_by_windows(self):
         if sys.platform!="win32":return False
         import winreg
+        # Windows guarda la marca con el nombre de la entrada que esté vigente.
+        name=self.NAME if self._has_value(self.NAME) or not self._has_value(self.LEGACY_NAME) else self.LEGACY_NAME
         try:
             with winreg.OpenKey(winreg.HKEY_CURRENT_USER,self.APPROVAL_KEY) as key:
-                value,kind=winreg.QueryValueEx(key,self.NAME)
+                value,kind=winreg.QueryValueEx(key,name)
         except FileNotFoundError:
             return False
         # Reconocer marcas de deshabilitación sin cambiar la decisión de Windows.
         return kind==winreg.REG_BINARY and value[:1] in (b"\x03",b"\x07")
+
+    def _has_value(self,name):
+        import winreg
+        try:
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER,self.KEY) as key:winreg.QueryValueEx(key,name)
+        except FileNotFoundError:
+            return False
+        return True
 
 
 class StartupPreferences:

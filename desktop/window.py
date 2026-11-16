@@ -94,7 +94,7 @@ def status_message(s,event=None):
             return condition,False  # una condición nueva se muestra tal cual
     if not s.get("profile"):
         return "Elegí un perfil en Perfiles para empezar.",False
-    return "Listo para empezar: tocá «Iniciar HeadMouse» en Inicio.",False
+    return "Listo para empezar: tocá «Iniciar CONFA» en Inicio.",False
 
 
 class UIPreferences:
@@ -103,7 +103,7 @@ class UIPreferences:
 
     def __init__(self):
         from PySide6.QtCore import QSettings
-        self._settings=QSettings("UNSTA","HeadMouse")
+        self._settings=QSettings("UNSTA","HeadMouse")  # clave interna previa a CONFA: conserva las preferencias
 
     def get(self,key,default):
         value=self._settings.value(key,default)
@@ -194,7 +194,7 @@ class MainWindow(QMainWindow):
         self._closing=False
         self._allow_close=False
         from app_paths import VERSION
-        self.setWindowTitle(f"HeadMouse v{VERSION} — Tesis V0.2")
+        self.setWindowTitle(f"CONFA v{VERSION} — Controlador Facial y Asistente de voz")
         self.resize(1240,850)
         self.setMinimumSize(980,700)
         shell=QWidget()
@@ -207,7 +207,7 @@ class MainWindow(QMainWindow):
         sidebar.setFixedWidth(215)
         nav=QVBoxLayout(sidebar)
         nav.setContentsMargins(18,26,18,20)
-        nav.addWidget(label("HeadMouse","Brand"))
+        nav.addWidget(label("CONFA","Brand"))
         nav.addWidget(label("TU MOVIMIENTO.\nTU AUTONOMÍA.","Subtitle"))
         nav.addSpacing(24)
         self.stack=QStackedWidget()
@@ -231,7 +231,7 @@ class MainWindow(QMainWindow):
         self.control_status.setAccessibleName("Estado del control")
         top.addWidget(self.control_status)
         # Un único mensaje: error > aviso reciente (8 s) > próximo paso. Ver status_message().
-        self.banner=label("Preparando HeadMouse…","StatusMessage")
+        self.banner=label("Preparando CONFA…","StatusMessage")
         self.banner.setAccessibleName("Mensaje de estado")
         top.addWidget(self.banner,1)
         self.activate_button=button("Activar control",self.activate,"Primary")
@@ -262,7 +262,7 @@ class MainWindow(QMainWindow):
         confirm_shortcut=QShortcut(QKeySequence("Ctrl+Shift+Return"),self)
         confirm_shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
         confirm_shortcut.activated.connect(self.activate)
-        self.activate_button.setToolTip("Ctrl+Mayús+Intro para abrir la confirmación con HeadMouse en foco")
+        self.activate_button.setToolTip("Ctrl+Mayús+Intro para abrir la confirmación con CONFA en foco")
         self.bridge.error.connect(self.show_error)
         signal=getattr(self.bridge,"snapshot_ready",None)
         if signal is not None:signal.connect(self.update_live_preview)
@@ -364,7 +364,7 @@ class MainWindow(QMainWindow):
             "select_ocular_mode", mode=self.home_ocular.currentData()))
         side.addWidget(self.home_ocular_label)
         side.addWidget(self.home_ocular)
-        self.home_action=button("Iniciar HeadMouse",self.home_primary,"Hero")
+        self.home_action=button("Iniciar CONFA",self.home_primary,"Hero")
         side.addWidget(self.home_action)
         self.home_state=label("","HomeState")
         side.addWidget(self.home_state)
@@ -382,7 +382,7 @@ class MainWindow(QMainWindow):
         panel.setLayout(side)
         panel.setMaximumWidth(460)
         row.addWidget(panel,2)
-        self.preview=CameraPreview("Cámara apagada\n\nSe enciende al tocar «Iniciar HeadMouse»")
+        self.preview=CameraPreview("Cámara apagada\n\nSe enciende al tocar «Iniciar CONFA»")
         row.addWidget(self.preview,3)
         layout.addLayout(row,1)
 
@@ -395,7 +395,7 @@ class MainWindow(QMainWindow):
         """Próximo paso según el perfil y el control: (texto, estilo, acción)."""
         p=s.get("profile")
         if s["control_enabled"]:
-            return "■  Detener HeadMouse","HeroStop",self.stop_immediately
+            return "■  Detener CONFA","HeroStop",self.stop_immediately
         if s["state"]=="CAMERA_STARTING":
             return "Iniciando cámara…","Hero",None
         if not s.get("profiles") and not p:
@@ -417,7 +417,7 @@ class MainWindow(QMainWindow):
                 axis = repair[0]
                 return (("Repetir izquierda y derecha · 3 puntos" if axis == 0 else "Repetir arriba y abajo · 3 puntos"),
                         "Hero", lambda: (self.open_eye_calibration(), self.start_geometric("repair", axis)))
-            return "▶  Iniciar HeadMouse","Hero",self.activate
+            return "▶  Iniciar CONFA","Hero",self.activate
         if p.get("status")=="draft":
             return "Calibrar mis gestos","Hero",self.start_calibration
         if not p.get("validation",{}).get("passed"):
@@ -428,7 +428,7 @@ class MainWindow(QMainWindow):
             if s["settings"]["ui"]["tracking_method"] == "eye_absolute":
                 return "Calibrar nueve puntos", "Hero", self.start_absolute_calibration
             return "Calibrar tracking ocular","Hero",self.start_eye_tracking_calibration
-        return "▶  Iniciar HeadMouse","Hero",self.activate
+        return "▶  Iniciar CONFA","Hero",self.activate
 
     def home_primary(self):
         _text,_style,action=self._home_step(self.snapshot)
@@ -489,7 +489,7 @@ class MainWindow(QMainWindow):
             elif s.get("activation_blockers"):
                 state,hint="Ojos: requisitos pendientes"," · ".join(s["activation_blockers"])+". "
             else:
-                state,hint="Ojos: listo para confirmar","Pulsá Iniciar HeadMouse o Activar control y confirmá Sí. "
+                state,hint="Ojos: listo para confirmar","Pulsá Iniciar CONFA o Activar control y confirmá Sí. "
             self.home_state.setText(state)
             self.home_hint.setText(hint+("Sólo se ejecutan los gestos habilitados y validados." if s.get("actions_ready") else "Sólo movimiento; clics y acciones faciales deshabilitados."))
 
@@ -509,7 +509,7 @@ class MainWindow(QMainWindow):
         """Una tarjeta por perfil: nombre, estado de Nariz y Ojos, fecha y sus acciones."""
         layout=self.page("Perfiles","Cada persona tiene su propia calibración. Cambiar de perfil detiene el control.")
         top=QHBoxLayout()
-        top.addWidget(label("Elegí quién va a usar HeadMouse en esta computadora.","Subtitle"),1)
+        top.addWidget(label("Elegí quién va a usar CONFA en esta computadora.","Subtitle"),1)
         top.addWidget(button("+  Nuevo perfil",self.new_profile,"Primary"))
         layout.addLayout(top)
         scroll=QScrollArea()
@@ -1460,7 +1460,7 @@ class MainWindow(QMainWindow):
                           "recalibrar el tracking ocular.","Subtitle"))
 
         # ── Modelos ──
-        form,_=tab("Modelos","Archivos que se descargan una sola vez. Después HeadMouse funciona sin Internet.")
+        form,_=tab("Modelos","Archivos que se descargan una sola vez. Después CONFA funciona sin Internet.")
         self.prepare_model_button=button("Preparar modelo facial (requiere Internet una vez)",self.prepare_model)
         self.prepare_voice_button=button("Preparar modelo de voz (requiere Internet una vez)",self.prepare_voice_model)
         form.addRow(self.prepare_model_button)
@@ -1476,7 +1476,7 @@ class MainWindow(QMainWindow):
         from PySide6.QtWidgets import QFileDialog
         from pathlib import Path
         import time
-        default=str(Path.home()/"Desktop"/f"HeadMouse-diagnostico-{time.strftime('%Y%m%d-%H%M')}.zip")
+        default=str(Path.home()/"Desktop"/f"CONFA-diagnostico-{time.strftime('%Y%m%d-%H%M')}.zip")
         path,_=QFileDialog.getSaveFileName(self,"Exportar diagnóstico",default,"Archivo comprimido (*.zip)")
         if path:
             self.bridge.request("export_diagnostic",path=path)
@@ -1730,10 +1730,10 @@ class MainWindow(QMainWindow):
         row=QHBoxLayout()
         self.experiment_mode=QComboBox()
         self.experiment_mode.setAccessibleName("Modo experimental")
-        self.experiment_mode.addItem("Simulación · HeadMouse",("simulation","headmouse"))
+        self.experiment_mode.addItem("Simulación · CONFA",("simulation","headmouse"))
         self.experiment_mode.addItem("Simulación · flechas y espacio",("simulation","keyboard"))
-        self.experiment_mode.addItem("Control real · HeadMouse",("real","headmouse"))
-        self.experiment_mode.addItem("Mouse convencional · Sin HeadMouse",("real","mouse"))
+        self.experiment_mode.addItem("Control real · CONFA",("real","headmouse"))
+        self.experiment_mode.addItem("Mouse convencional · Sin CONFA",("real","mouse"))
         row.addWidget(self.experiment_mode,1)
         row.addWidget(button("Comenzar serie",self.start_experiment,"Primary"))
         self.experiment_conditions = QLineEdit()
@@ -1761,7 +1761,7 @@ class MainWindow(QMainWindow):
 
     def _metrics(self):
         """Tasas por minuto por sesión: comparables aunque las sesiones duren distinto."""
-        page=self.page("Métricas","Cómo se usó HeadMouse en cada sesión con control activo. Todo queda en esta computadora.")
+        page=self.page("Métricas","Cómo se usó CONFA en cada sesión con control activo. Todo queda en esta computadora.")
         filters=QHBoxLayout()
         self.metrics_scope=QComboBox()
         self.metrics_scope.addItem("Sesiones de este perfil","profile")
@@ -1859,7 +1859,7 @@ class MainWindow(QMainWindow):
 
     def activate(self):
         geometric = self.snapshot.get("geometric") or {}
-        message = "HeadMouse comenzará a controlar el puntero del sistema."
+        message = "CONFA comenzará a controlar el puntero del sistema."
         if self.snapshot.get("settings", {}).get("ui", {}).get("tracking_method") == "eye_joystick":
             if geometric.get("reduced"):
                 message = geometric["message"]
@@ -1943,7 +1943,7 @@ class MainWindow(QMainWindow):
                 self.stop_immediately()
                 self.show_error("Cambió la pantalla. Calibrá de nuevo los cinco puntos.")
         name=p.get("display_name",p["user_id"]) if p else "Sin perfil seleccionado"
-        self.home_profile.setText(f"Hola, {name}" if p else "Bienvenido a HeadMouse")
+        self.home_profile.setText(f"Hola, {name}" if p else "Bienvenido a CONFA")
         self._present_home(s)
         method_key=((p or {}).get("user_id"),s["settings"]["ui"]["tracking_method"]=="nose")
         if method_key!=getattr(self,"_calibration_method_key",None):

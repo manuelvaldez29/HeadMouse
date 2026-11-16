@@ -18,9 +18,9 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'No se pudo crear el icono' }
     & $taskPython packaging/build_manual.py
     if ($LASTEXITCODE -ne 0) { throw 'No se pudo crear el manual' }
-    & $taskPython -m PyInstaller --noconfirm --distpath $taskDist --workpath "build/pyinstaller-$taskVersion" packaging/HeadMouse.spec
+    & $taskPython -m PyInstaller --noconfirm --distpath $taskDist --workpath "build/pyinstaller-$taskVersion" packaging/CONFA.spec
     if ($LASTEXITCODE -ne 0) { throw 'PyInstaller falló' }
-    & $taskIscc "/DAppVersion=$taskVersion" "/DAppDist=$taskProjectRoot\$taskDist\HeadMouse" packaging/HeadMouse.iss
+    & $taskIscc "/DAppVersion=$taskVersion" "/DAppDist=$taskProjectRoot\$taskDist\CONFA" packaging/CONFA.iss
     if ($LASTEXITCODE -ne 0) { throw 'Inno Setup falló' }
     & $taskPython packaging/write_manifest.py
     if ($LASTEXITCODE -ne 0) { throw 'No se pudo generar el manifiesto de distribución' }

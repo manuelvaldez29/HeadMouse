@@ -1,6 +1,6 @@
 """
 brow_study.py
-HeadMouse — Estudio de señales de cejas frente a la pose de la cabeza
+CONFA — Estudio de señales de cejas frente a la pose de la cabeza
 
 Guía al usuario por posturas (mirar arriba/abajo/costados sin mover las cejas)
 y elevaciones de cejas, y registra por frame las cuatro fuentes de señal:
@@ -307,7 +307,7 @@ def capture(args):
                     stream.write(json.dumps(frame_record(face, elapsed, segment), allow_nan=False) + "\n")
                     frames += 1
                 _draw(cv2, frame, segment, elapsed, timeline, face.fresh(.25, now))
-                cv2.imshow("HeadMouse - estudio de cejas", frame)
+                cv2.imshow("CONFA - estudio de cejas", frame)
                 key = cv2.waitKey(1) & 0xFF
                 if key in (ord("q"), ord("Q"), 27):
                     logging.warning("Estudio cancelado; se conservan %s frames", frames)

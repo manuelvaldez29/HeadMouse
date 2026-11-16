@@ -64,7 +64,7 @@ class KeyboardService(QObject):
         self.focus_factory, self.typer_factory = focus_factory, typer_factory
         self.queue = queue.Queue(maxsize=8)
         self.closed = threading.Event()
-        self.thread = threading.Thread(target=self.run, name="HeadMouseKeyboard", daemon=True)
+        self.thread = threading.Thread(target=self.run, name="CONFAKeyboard", daemon=True)
         self.thread.start()
 
     def submit(self, action, data=None, token=None):
@@ -145,7 +145,7 @@ class KeyboardService(QObject):
                         session.reset_all()
                         last_synced_key = None
                     if action == "toggle" and not active:
-                        self.error.emit("Activá el control de HeadMouse antes de usar el teclado.")
+                        self.error.emit("Activá el control de CONFA antes de usar el teclado.")
                     target = None
                     if active and (visibility.manual or settings["auto_open"] or action == "toggle"):
                         if probe is None:

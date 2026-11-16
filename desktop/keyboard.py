@@ -202,7 +202,7 @@ class VirtualKeyboard(QWidget):
                          Qt.WindowType.WindowDoesNotAcceptFocus | Qt.WindowType.FramelessWindowHint)
         self.bridge = bridge
         self.setObjectName("VirtualKeyboard")
-        self.setWindowTitle("Teclado virtual de HeadMouse")
+        self.setWindowTitle("Teclado virtual de CONFA")
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
         self.mode = "ABC"
         self.shift = self.caps = False
@@ -227,7 +227,7 @@ class VirtualKeyboard(QWidget):
         self.restore_handle.setWindowFlags(self.windowFlags())
         self.restore_handle.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
         self.restore_handle.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self.restore_handle.setAccessibleName("Volver a abrir el teclado de HeadMouse")
+        self.restore_handle.setAccessibleName("Volver a abrir el teclado de CONFA")
         self.restore_handle.setMinimumSize(148, 38)
         self.restore_handle.clicked.connect(self.toggle)
         self.restore_handle.setStyleSheet("QPushButton {background:#173d49;color:#f1fffe;border:2px solid #6ee7dc;"
@@ -273,7 +273,7 @@ class VirtualKeyboard(QWidget):
         preview_layout.setContentsMargins(0, 0, 0, 0)
         preview_layout.setSpacing(6)
         self.composition = QPlainTextEdit()
-        self.composition.setAccessibleName("Vista previa del texto compuesto por HeadMouse")
+        self.composition.setAccessibleName("Vista previa del texto compuesto por CONFA")
         self.composition.setReadOnly(True)
         self.composition.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.composition.setTextInteractionFlags(Qt.TextInteractionFlag.NoTextInteraction)
@@ -284,7 +284,7 @@ class VirtualKeyboard(QWidget):
         self.composition.setStyleSheet("background:#091421;color:#f6fcff;border:1px solid #61839a;"
                                       "border-radius:5px;font-size:14px;padding:2px 6px;")
         preview_layout.addWidget(self.composition, 3)
-        self.composition_label = QLabel("Texto compuesto por HeadMouse · sólo en esta sesión")
+        self.composition_label = QLabel("Texto compuesto por CONFA · sólo en esta sesión")
         self.composition_label.setStyleSheet("color:#9fb6cd;font-size:11px;")
         self.composition_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         preview_layout.addWidget(self.composition_label, 2)
@@ -720,7 +720,7 @@ class VirtualKeyboard(QWidget):
             self.key_preview.setText("•")
         self.setWindowOpacity(state.get("opacity", 100) / 100)
         text = state.get("preview", "") if show_preview else ""
-        self.composition_label.setText("Composición de HeadMouse · " + (
+        self.composition_label.setText("Composición de CONFA · " + (
             "campo o cursor cambiado; vista limpiada" if state.get("preview_status") == "changed" else
             "cursor comprobado" if state.get("preview_status") == "confirmed" else
             "composición recuperada en este campo" if state.get("preview_status") == "recovered" else

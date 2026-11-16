@@ -1,6 +1,6 @@
 """Ensayo real de instalación/actualización/desinstalación en build, sin webcam.
 
-Rechaza una instalación de HeadMouse fuera de la carpeta de ensayo o una entrada
+Rechaza una instalación de CONFA (o HeadMouse) fuera de la carpeta de ensayo o una entrada
 Run preexistente. No usa ni modifica perfiles personales. Ejecutar con .venv.
 """
 import hashlib
@@ -25,8 +25,10 @@ RUN_ID=uuid.uuid4().hex[:8]
 TARGET=(ROOT/('build/installation-verification-'+RUN_ID)).resolve()
 DATA=(ROOT/('build/installation-verification-data-'+RUN_ID)).resolve()
 assert TARGET.is_relative_to((ROOT/'build').resolve()) and DATA.is_relative_to((ROOT/'build').resolve())
-INSTALLER=ROOT/f'dist/installer/HeadMouse-Setup-{VERSION}-win64.exe'
-PORTABLE=ROOT/f'dist/windows-{VERSION}/HeadMouse/HeadMouse.exe'
+INSTALLER=ROOT/f'dist/installer/CONFA-Setup-{VERSION}-win64.exe'
+PORTABLE=ROOT/f'dist/windows-{VERSION}/CONFA/CONFA.exe'
+# El instalador anterior (--previous) todavía se llamaba HeadMouse.
+LEGACY_EXE,EXE='HeadMouse.exe','CONFA.exe'
 KEY=r'Software\Microsoft\Windows\CurrentVersion\Uninstall\{D8CA3B99-415A-4FA9-90D4-94E3E66B9D67}_is1'
 
 
@@ -60,18 +62,18 @@ def main():
     parser.add_argument('--audio-fixture',type=Path,help='WAV sintético, mono PCM16 a 16 kHz')
     args=parser.parse_args()
     existing=installed_path()
-    if existing and Path(existing).resolve()!=TARGET:raise RuntimeError('Existe HeadMouse instalado fuera de build; no se modifica')
+    if existing and Path(existing).resolve()!=TARGET:raise RuntimeError('Existe CONFA o HeadMouse instalado fuera de build; no se modifica')
     if WindowsStartup().read() is not None:raise RuntimeError('Existe inicio automático real; no se modifica en este ensayo')
     if DATA.exists():raise RuntimeError('El directorio de datos de ensayo ya existe: usar una ejecución nueva y conservar evidencia anterior')
     previous=args.previous.resolve(strict=True)
     assert INSTALLER.is_file() and PORTABLE.is_file() and previous!=INSTALLER
     personal=data_root();before_personal=hashes(personal)
-    env=os.environ.copy();env['HEADMOUSE_DATA_DIR']=str(DATA)
+    env=os.environ.copy();env['CONFA_DATA_DIR']=env['HEADMOUSE_DATA_DIR']=str(DATA)  # la versión anterior sólo lee HEADMOUSE_*
     env['PATH']=str(Path(os.environ['SystemRoot'])/'System32')
     env.pop('PYTHONHOME',None);env.pop('PYTHONPATH',None)
     if args.audio_fixture:
-        env['HEADMOUSE_VERIFY_AUDIO']=str(args.audio_fixture.resolve(strict=True))
-    group='HeadMouse Verification '+uuid.uuid4().hex[:8]
+        env['CONFA_VERIFY_AUDIO']=env['HEADMOUSE_VERIFY_AUDIO']=str(args.audio_fixture.resolve(strict=True))
+    group='CONFA Verification '+uuid.uuid4().hex[:8]
     group_path=Path(os.environ['APPDATA'])/'Microsoft/Windows/Start Menu/Programs'/group
     report=dict(version=VERSION,data_dir=str(DATA),installer_sha256=sha256(INSTALLER),
                 previous_installer_sha256=sha256(previous),portable_sha256=sha256(PORTABLE),steps=[])
@@ -83,17 +85,18 @@ def main():
     options=['/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/SP-',f'/DIR={TARGET}',f'/GROUP={group}','/TASKS=']
     uninstall_options=['/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART']
     run([INSTALLER,*options,'/LOG='+str(ROOT/f'build/installer-{RUN_ID}-clean.txt')])
-    assert sha256(TARGET/'HeadMouse.exe')==report['portable_sha256']
-    run([TARGET/'HeadMouse.exe','--check-resident'],60)
+    assert sha256(TARGET/EXE)==report['portable_sha256']
+    assert (group_path/'CONFA.lnk').is_file() and (group_path/'Manual de CONFA.lnk').is_file()
+    run([TARGET/EXE,'--check-resident'],60)
     assert not list((DATA/'profiles').glob('*.json')) and WindowsStartup().read() is None
     run([TARGET/'unins000.exe',*uninstall_options])
-    assert not (TARGET/'HeadMouse.exe').exists() and installed_path() is None
+    assert not (TARGET/EXE).exists() and installed_path() is None
     run([previous,*options,'/LOG='+str(ROOT/f'build/installer-{RUN_ID}-first.txt')])
-    assert (TARGET/'HeadMouse.exe').is_file()
+    assert (TARGET/LEGACY_EXE).is_file()
     assert (group_path/'HeadMouse.lnk').is_file()
     assert (group_path/'Manual de HeadMouse.lnk').is_file()
     assert installed_path() and Path(installed_path()).resolve()==TARGET
-    run([TARGET/'HeadMouse.exe','--check'],60)
+    run([TARGET/LEGACY_EXE,'--check'],60)
     assert not list((DATA/'profiles').glob('*.json'))
     profile=dict(user_id='installation_verification',display_name='Ensayo automatizado',status='calibrated',
         thresholds=DEFAULT_THRESHOLDS.copy(),neutral_nose_x=.5,neutral_nose_y=.5,
@@ -109,33 +112,36 @@ def main():
     before=hashes(DATA)
     run([INSTALLER,*options,'/LOG='+str(ROOT/f'build/installer-{RUN_ID}-update.txt')])
     assert hashes(DATA)==before
-    assert sha256(TARGET/'HeadMouse.exe')==report['portable_sha256']
-    run([TARGET/'HeadMouse.exe','--check'],60)
-    run([TARGET/'HeadMouse.exe','--verify-runtime'],300)
+    assert sha256(TARGET/EXE)==report['portable_sha256']
+    assert not (TARGET/LEGACY_EXE).exists(), 'Quedó el ejecutable de HeadMouse'
+    assert not (group_path/'HeadMouse.lnk').exists() and not (group_path/'Manual de HeadMouse.lnk').exists()
+    assert (group_path/'CONFA.lnk').is_file() and (group_path/'Manual de CONFA.lnk').is_file()
+    run([TARGET/EXE,'--check'],60)
+    run([TARGET/EXE,'--verify-runtime'],300)
     runtime=json.loads((DATA/'logs/distribution-check.json').read_text(encoding='utf-8'))
     assert runtime['version']==VERSION and runtime['python_network_blocked']
     assert runtime['camera_opened'] is False and runtime['physical_actions']==0
     assert runtime['voice']['speaker_model'] and not runtime['voice']['microphone_opened']
     from config import WHISPER_MODELS
     assert set(runtime['voice']['models'])==set(WHISPER_MODELS)
-    run([TARGET/'HeadMouse.exe','--check-resident'],60)
+    run([TARGET/EXE,'--check-resident'],60)
     assert hashes(DATA)==before
     assert consent.authorized(consent.load(),store.load(profile['user_id']))
     assert WindowsStartup().read() is None
     run([TARGET/'unins000.exe',*uninstall_options,'/LOG='+str(ROOT/f'build/installer-{RUN_ID}-uninstall.txt')])
     deadline=time.monotonic()+20
-    while (TARGET/'HeadMouse.exe').exists() and time.monotonic()<deadline:time.sleep(.2)
-    assert not (TARGET/'HeadMouse.exe').exists()
+    while (TARGET/EXE).exists() and time.monotonic()<deadline:time.sleep(.2)
+    assert not (TARGET/EXE).exists()
     assert installed_path() is None and WindowsStartup().read() is None
     assert hashes(DATA)==before and hashes(personal)==before_personal
     assert sha256(legacy_log)==legacy_log_sha
-    assert not (group_path/'HeadMouse.lnk').exists()
+    assert not (group_path/'CONFA.lnk').exists() and not (group_path/'HeadMouse.lnk').exists()
     report.update(result='passed',profile_preserved=True,preferences_preserved=True,personal_data_unchanged=True,
         shortcuts_verified=True,uninstaller_verified=True,autostart_enabled=False,camera_opened=False,physical_actions=0,
         isolated_python_path=True,clean_machine=False,consent_preserved=True,
         existing_log_preserved=True,fresh_install=True,runtime=runtime)
     write_json(ROOT/f'build/installer-verification-{VERSION}.json',report)
-    print('PASS: actual 0.4.0 upgrade, voice runtime, shortcuts, uninstall; data preserved',flush=True)
+    print('PASS: actualización HeadMouse 0.4.0 → CONFA, voice runtime, shortcuts, uninstall; data preserved',flush=True)
 
 
 if __name__=='__main__':main()

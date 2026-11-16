@@ -224,7 +224,7 @@ class ExperimentCanvas(QWidget):
 
 class DictationOverlay(QWidget):
     """Aviso flotante del dictado. Nunca toma el foco: el texto debe ir al campo
-    que el usuario eligió, no a HeadMouse. Tampoco recibe clicks."""
+    que el usuario eligió, no a CONFA. Tampoco recibe clicks."""
     COLORS = {"arming": "#c4d3e8", "listening": "#ff6b81", "transcribing": "#ffd166", "done": "#8ce5cd"}
 
     def __init__(self, parent=None):
@@ -595,7 +595,7 @@ class MiniCameraWindow(QWidget):
                          Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.WindowDoesNotAcceptFocus |
                          Qt.WindowType.WindowTransparentForInput)
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
-        self.setWindowTitle("HeadMouse · mini cámara")
+        self.setWindowTitle("CONFA · mini cámara")
         self.state_kind = ""
         self._status_key = None
         layout = QVBoxLayout(self)

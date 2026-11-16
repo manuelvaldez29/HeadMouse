@@ -88,8 +88,8 @@ class HomeButtonTests(unittest.TestCase):
         cases = ((dict(profile=None), "Crear mi perfil"),
                  (dict(profile=dict(calibration(), status="draft"), profiles=ENTRY), "Calibrar mis gestos"),
                  (dict(profile=dict(calibration(), validation={"passed": False}), profiles=ENTRY), "Validar mi calibración"),
-                 (dict(profile=self.ready_profile(), profiles=ENTRY), "▶  Iniciar HeadMouse"),
-                 (dict(profile=self.ready_profile(), profiles=ENTRY, control_enabled=True, paused=True), "■  Detener HeadMouse"))
+                 (dict(profile=self.ready_profile(), profiles=ENTRY), "▶  Iniciar CONFA"),
+                 (dict(profile=self.ready_profile(), profiles=ENTRY, control_enabled=True, paused=True), "■  Detener CONFA"))
         for overrides, text in cases:
             with self.subTest(text=text):
                 window, _ = self.window(**overrides)
@@ -115,7 +115,7 @@ class HomeButtonTests(unittest.TestCase):
         window, _ = self.window(profile=self.ready_profile(), profiles=ENTRY)
         home = window.stack.widget(0)
         texts = {b.text() for b in home.findChildren(QPushButton)}
-        self.assertEqual(texts, {"▶  Iniciar HeadMouse"})
+        self.assertEqual(texts, {"▶  Iniciar CONFA"})
 
 
 

@@ -28,7 +28,7 @@ def revoke_output():
 def install(directory):
     global _fault_stream
     directory.mkdir(parents=True, exist_ok=True)
-    handler = RotatingFileHandler(directory / "headmouse.log", maxBytes=2_000_000,
+    handler = RotatingFileHandler(directory / "confa.log", maxBytes=2_000_000,
                                   backupCount=3, encoding="utf-8")
     handler.setFormatter(logging.Formatter(
         "%(asctime)s %(levelname)s [%(threadName)s] %(name)s: %(message)s"))
@@ -54,6 +54,6 @@ def install(directory):
             dependencies[name] = version(name)
         except PackageNotFoundError:
             dependencies[name] = "ausente"
-    logging.info("Inicio HeadMouse Python=%s plataforma=%s dependencias=%s",
+    logging.info("Inicio CONFA Python=%s plataforma=%s dependencias=%s",
                  platform.python_version(), sys.platform, dependencies)
     return handler

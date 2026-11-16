@@ -20,13 +20,16 @@ class ExportTests(unittest.TestCase):
             logs = Path(folder) / "logs"
             logs.mkdir()
             (logs / "joystick-trace-1.json").write_text("{}")
-            (logs / "headmouse.log").write_text("linea")
+            (logs / "confa.log").write_text("linea")
+            (logs / "headmouse.log").write_text("de antes del cambio de nombre")
             (Path(folder) / "foto.png").write_bytes(b"x")
             out = Path(folder) / "diag.zip"
             controller.export_diagnostic(out)
             names = zipfile.ZipFile(out).namelist()
             self.assertIn("acerca.json", names)
             self.assertIn("logs/joystick-trace-1.json", names)
+            self.assertIn("logs/confa.log", names)
+            self.assertIn("logs/headmouse.log", names)
             self.assertFalse(any(name.endswith(".png") for name in names))
 
 

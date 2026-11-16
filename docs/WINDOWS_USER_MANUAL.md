@@ -1,6 +1,6 @@
-# HeadMouse 0.6.0 — Manual de usuario para Windows
+# CONFA 0.6.0 — Manual de usuario para Windows
 
-HeadMouse es un proyecto de tesis de Ingeniería en Informática de UNSTA. Permite
+CONFA (Controlador Facial y Asistente de voz, antes HeadMouse) es un proyecto de tesis de Ingeniería en Informática de UNSTA. Permite
 controlar el puntero mediante Nariz u Ojos y realizar acciones faciales calibradas.
 El seguimiento ocular continúa siendo experimental: aprobar una calibración no
 garantiza precisión suficiente para cualquier tarea o persona.
@@ -13,8 +13,8 @@ facial. No hace falta instalar Python ni usar una terminal. La primera versión
 se verificó en el equipo de desarrollo indicado en el informe de pruebas;
 la matriz completa de equipos y Windows 10/11 requiere pruebas adicionales.
 
-Abrir `HeadMouse-Setup-0.6.0-win64.exe` y seguir el asistente. Se instala para el
-usuario actual en `%LOCALAPPDATA%\Programs\HeadMouse`. Crea acceso en Inicio,
+Abrir `CONFA-Setup-0.6.0-win64.exe` y seguir el asistente. Se instala para el
+usuario actual en `%LOCALAPPDATA%\Programs\CONFA`. Crea acceso en Inicio,
 ofrece acceso de escritorio y registra un desinstalador. Abrir al finalizar es
 opcional; la instalación no habilita el control ni el inicio con Windows.
 La compilación de tesis no está firmada digitalmente: Windows puede mostrar
@@ -64,14 +64,14 @@ tener aprobados los gestos de Nariz.
 
 ## Iniciar, pausar y detener
 
-Iniciar HeadMouse o Activar control muestra una confirmación antes de controlar
+Iniciar CONFA o Activar control muestra una confirmación antes de controlar
 el sistema. Las acciones requieren su calibración y autorización correspondientes.
 Ambas cejas permiten pausa/reanudación si ese gesto está habilitado y validado.
 
 Detener control, F8 y Escape detienen la salida y apagan la cámara, incluso en
 vista previa. F8 global se intenta registrar en Windows; Ver estado en bandeja
 informa si se consiguió. Si otra aplicación lo tiene reservado, F8 requiere foco
-en HeadMouse. Siempre hay Detener en la bandeja y en la ventana. El failsafe de
+en CONFA. Siempre hay Detener en la bandeja y en la ventana. El failsafe de
 PyAutoGUI permanece activo. El mouse y teclado físicos siguen disponibles.
 
 ## Inicio con Windows
@@ -80,13 +80,13 @@ Después de guardar la primera calibración válida aparece una pregunta, una ve
 por equipo/usuario. Elegí Sí, iniciar automáticamente, o No, iniciar manualmente. También se puede
 cambiar en Configuración → Básico → Inicio y accesibilidad:
 
-- Iniciar HeadMouse automáticamente con Windows.
+- Iniciar CONFA automáticamente con Windows.
 - Activar automáticamente el seguimiento.
 - Recordar el último perfil elegido.
 - Perfil para activación automática.
 - Iniciar minimizado en la bandeja del sistema.
 
-Guardar preferencias modifica sólo la entrada HeadMouse del inicio del usuario.
+Guardar preferencias modifica sólo la entrada CONFA del inicio del usuario.
 La segunda casilla requiere la primera y un perfil calibrado. Además muestra una
 confirmación explícita: autoriza movimiento y únicamente las acciones validadas
 de ese perfil. Se aplica al próximo inicio de sesión, no empieza a mover el
@@ -105,8 +105,8 @@ vigente permite repetir las comprobaciones. Detener manualmente impide reanudaci
 automática durante esa ejecución.
 
 El estado de inicio se consulta en el registro de Windows. Si movés la carpeta
-portable, abrí HeadMouse desde la nueva ubicación, marcá la opción y guardá.
-Para iniciar el control con el teclado, poné HeadMouse en foco y presioná
+portable, abrí CONFA desde la nueva ubicación, marcá la opción y guardá.
+Para iniciar el control con el teclado, poné CONFA en foco y presioná
 Ctrl+Mayús+Intro. Elegí Sí con Tab y confirmá con Espacio.
 
 ## Bandeja y cierre
@@ -120,10 +120,10 @@ Si la bandeja no está disponible, la ventana permanece accesible.
 
 ## Teclado virtual y diccionario personal
 
-Con el control activo, seleccioná un campo editable con Nariz u Ojos. HeadMouse
+Con el control activo, seleccioná un campo editable con Nariz u Ojos. CONFA
 muestra el teclado sin quitarle el foco al campo. También podés abrirlo desde la
 bandeja o con Ctrl+Alt+K si Windows permite registrar el atajo. Elegí las teclas
-con el clic configurado de HeadMouse. Las pestañas ABC, ?123, símbolos, acentos
+con el clic configurado de CONFA. Las pestañas ABC, ?123, símbolos, acentos
 y emoji permiten escribir sin mantener teclas presionadas. F8 oculta el teclado
 y detiene el control.
 
@@ -142,11 +142,11 @@ con ✓ y sólo se aplican al elegirlas. Administrar diccionario personal permit
 eliminar una palabra o borrar todo. Desactivar el aprendizaje conserva lo
 aprendido hasta que decidas borrarlo.
 
-HeadMouse sólo aprende de sus propias teclas y en campos que identifican
+CONFA sólo aprende de sus propias teclas y en campos que identifican
 el foco y permiten verificar el cursor. Los campos de contraseña, los
 identificados como sensibles y los no verificables quedan en modo privado.
 El diccionario guarda frecuencias y combinaciones cortas en SQLite bajo
-`%LOCALAPPDATA%\HeadMouse\keyboard`, fuera de la instalación. El dictado
+`%LOCALAPPDATA%\CONFA\keyboard`, fuera de la instalación. El dictado
 no alimenta el diccionario. En aplicaciones que no exponen bien el foco,
 la apertura manual permite escritura directa sin aprendizaje.
 
@@ -161,7 +161,7 @@ envío; rojo indica que no se pudo enviar. Esto no garantiza que una aplicación
 externa haya conservado el texto.
 
 Ocultar deja disponible el botón flotante «Abrir teclado». También podés volver
-a seleccionar el mismo campo con el clic de HeadMouse, cambiar de campo, usar
+a seleccionar el mismo campo con el clic de CONFA, cambiar de campo, usar
 Ctrl+Alt+K, la bandeja o Mostrar u ocultar teclado en Configuración. Desactivar
 la apertura automática conserva la apertura manual. F8 revoca el control y
 oculta ambos elementos del teclado.
@@ -196,7 +196,7 @@ guardan medidas de ruido, precisión y una huella que ayuda a detectar el final
 de tu frase aunque haya otras voces de fondo. El audio se procesa en memoria.
 
 Para dictar, marcá la casilla de Dictado por voz y guardá. Iniciá el control
-manualmente, hacé click con HeadMouse en un campo editable y hablá al ver
+manualmente, hacé click con CONFA en un campo editable y hablá al ver
 «Escuchando…». También podés asignar la acción Dictar a un gesto. Un silencio
 termina la frase. El gesto de click termina el dictado después de empezar a
 hablar. Ambas cejas cancelan el dictado. Pausar desde la bandeja o pulsar F8
@@ -213,7 +213,7 @@ si querés dictar. Podés seguir usando Nariz y Ojos con el dictado desmarcado.
 
 ## Datos, importación y actualización
 
-Los datos están en `%LOCALAPPDATA%\HeadMouse`: profiles, último perfil, métricas,
+Los datos están en `%LOCALAPPDATA%\CONFA` (si venís de HeadMouse, la carpeta `%LOCALAPPDATA%\HeadMouse` se renombra sola la primera vez que abrís CONFA): profiles, último perfil, métricas,
 experimentos, diagnósticos, logs y startup.json. No se guardan fotos ni vídeo.
 El programa usa los modelos incluidos en la instalación y procesa el dictado
 sin conexión. Las descargas gráficas quedan disponibles para reparar modelos
@@ -225,22 +225,22 @@ y elegir la carpeta anterior de HeadMouse o data. Los originales no se borran.
 Si ya existe un perfil diferente con el mismo identificador, se conserva el
 existente y la copia en migration-conflicts; revisar antes de reemplazar manualmente.
 
-Para actualizar, cerrar HeadMouse y ejecutar el nuevo instalador. Conserva los
+Para actualizar, cerrar CONFA y ejecutar el nuevo instalador. Conserva los
 datos del usuario. No copiar perfiles dentro de la carpeta de programa. Se puede
 hacer una copia de seguridad de la carpeta de datos con la aplicación cerrada.
 
 ## Prueba guiada después de actualizar
 
-1. Cerrá HeadMouse y conservá una copia de `%LOCALAPPDATA%\HeadMouse` antes de
+1. Cerrá CONFA y conservá una copia de `%LOCALAPPDATA%\CONFA` antes de
    actualizar. Abrí el instalador v0.6.0 y mantené la carpeta de la instalación
    anterior. Los perfiles, las calibraciones y el diccionario están fuera de
    esa carpeta.
-2. Abrí HeadMouse, elegí tu perfil y revisá Nariz y Ojos por separado. Confirmá
+2. Abrí CONFA, elegí tu perfil y revisá Nariz y Ojos por separado. Confirmá
    que aparece la calibración guardada. En Diagnóstico revisá la cámara y los
    gestos. Activá el control sólo al confirmar y comprobá que F8 lo detiene.
 3. Abrí un documento temporal en Bloc de notas. Con el control activo, enfocá
    el campo y probá ABC, números, símbolos, Ñ, tildes, Enter y retroceso.
-   Si habilitaste el aprendizaje, escribí `HeadMouse ` y después `Hea`.
+   Si habilitaste el aprendizaje, escribí `CONFA ` y después `CON`.
    Elegí la sugerencia y comprobá el texto. El Bloc clásico usa la lectura
    acotada de la línea cuando Windows no ofrece un patrón de cursor.
 4. Probá por separado un formulario del navegador y un borrador de WhatsApp
@@ -257,7 +257,7 @@ hacer una copia de seguridad de la carpeta de datos con la aplicación cerrada.
 
 ## Desinstalar y resolver problemas
 
-Usar Aplicaciones instaladas de Windows o Desinstalar HeadMouse en Inicio.
+Usar Aplicaciones instaladas de Windows o Desinstalar CONFA en Inicio.
 Se elimina el programa y su entrada de inicio automático. Los datos personales
 se conservan para reinstalar; borrarlos manualmente sólo si se desea perderlos.
 
@@ -270,7 +270,7 @@ se conservan para reinstalar; borrarlos manualmente sólo si se desea perderlos.
   de inicio en Administrador de tareas de Windows. Se inicia después de ingresar,
   no antes de iniciar sesión; Windows puede demorar las aplicaciones de inicio.
 - No hay icono visible: revisar los iconos ocultos de notificaciones de Windows.
-- Error de arranque: conservar `%LOCALAPPDATA%\HeadMouse\logs\headmouse.log` y
+- Error de arranque: conservar `%LOCALAPPDATA%\CONFA\logs\confa.log` y
   los registros fault. Compartirlos sólo tras revisar los datos personales incluidos.
 
 ## Elegir cómo se mueve el cursor con los ojos

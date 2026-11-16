@@ -14,7 +14,7 @@ def voice_check():
     assert get_speech_timestamps(np.zeros(16000,dtype=np.float32))==[]  # onnxruntime + silero_vad.onnx
     UIAFocusProbe().init_thread()                                        # comtypes genera UIAutomationCore
     frozen=getattr(sys,"frozen",False)
-    fixture=os.environ.get("HEADMOUSE_VERIFY_AUDIO")
+    fixture=os.environ.get("CONFA_VERIFY_AUDIO") or os.environ.get("HEADMOUSE_VERIFY_AUDIO")
     audio=np.zeros(16000,dtype=np.float32)
     if fixture:
         import wave
@@ -73,7 +73,7 @@ def run():
     home=placement.place(area,QSize(304,268),"bottom_right",True,1.,QPoint(900,500),[],0.)
     away=placement.place(area,QSize(304,268),"bottom_right",True,1.,home.center(),[],1.)
     assert not home.intersects(away)
-    with TemporaryDirectory(prefix="headmouse-keyboard-check-") as root:
+    with TemporaryDirectory(prefix="confa-keyboard-check-") as root:
         dictionary=Dictionary(root,"synthetic")
         try:
             dictionary.learn("HeadMouse",["Buenos","días"])

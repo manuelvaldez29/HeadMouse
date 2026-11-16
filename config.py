@@ -184,7 +184,7 @@ WHISPER_MODELS = ("tiny", "base", "small", "medium")
 
 @dataclass
 class VoiceConfig:
-    """Dictado local al enfocar un campo de texto con un click de HeadMouse."""
+    """Dictado local al enfocar un campo de texto con un click de CONFA."""
     enabled: bool = False
     microphone: str = ""              # vacío: dispositivo predeterminado
     model: str = "small"              # faster-whisper; "base" para equipos lentos

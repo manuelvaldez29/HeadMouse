@@ -1,4 +1,4 @@
-# HeadMouse 0.5.1 — Distribución Windows, tesis V0.2
+# CONFA (ex HeadMouse) — Distribución Windows, tesis V0.2
 
 ## Arquitectura y límites
 
@@ -18,7 +18,7 @@ sigue serializando las operaciones en el worker Qt. Los nuevos módulos son:
 ## Almacenamiento
 
 Recursos: app_paths.RESOURCE_ROOT, que PyInstaller resuelve dentro de _internal.
-Datos: `%LOCALAPPDATA%\HeadMouse`. HEADMOUSE_DATA_DIR permite aislar pruebas; no
+Datos: `%LOCALAPPDATA%\CONFA` (la carpeta `%LOCALAPPDATA%\HeadMouse` de versiones anteriores se renombra al primer inicio; si está en uso se sigue usando y se reintenta). CONFA_DATA_DIR (o el anterior HEADMOUSE_DATA_DIR) permite aislar pruebas; no
 se necesita para el uso normal. Los datos nunca se escriben en Program Files o
 en el directorio de recursos. La configuración y calibraciones por método/fuente
 permanecen dentro del perfil JSON; las preferencias de inicio son por equipo.
@@ -43,7 +43,7 @@ habilitó recordarlo. El perfil para activación automática conserva una
 autorización independiente. Ctrl+Mayús+Intro con la ventana en foco abre
 la confirmación manual, con No como respuesta predeterminada.
 
-Se usa `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, valor HeadMouse,
+Se usa `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, valor CONFA (las instalaciones previas usaban HeadMouse: la app lo sigue leyendo y lo reemplaza al guardar, y el instalador lo migra),
 con ejecutable absoluto entre comillas y --autostart. En fuente se utiliza pythonw
 y app.py. No hay servicio, HKLM ni Session 0. Desactivar elimina sólo ese valor.
 Una escritura fallida de preferencias restaura la entrada anterior.
@@ -84,9 +84,9 @@ El script valida o descarga los modelos fijados por revisión y hash en
 recurso de versión de Windows y el instalador. El spec sólo recoge recursos
 enumerados. Los datos personales viven en AppData.
 
-PyInstaller genera dist/windows-0.5.1/HeadMouse/HeadMouse.exe y _internal
+PyInstaller genera dist/windows-0.5.1/CONFA/CONFA.exe y _internal
 (debe distribuirse la carpeta entera). Inno Setup genera
-dist/installer/HeadMouse-Setup-0.5.1-win64.exe.
+dist/installer/CONFA-Setup-0.5.1-win64.exe.
 Incluye icono, recursos y Qt. Es onedir/windowed, sin consola. La compilación limpia
 el PATH para no tomar DLL de otras herramientas. No se distribuyen las ICU genéricas
 de Poppler: Qt usa la API del Windows objetivo. Esto se verifica ejecutando el binario.
@@ -97,12 +97,12 @@ y el modelo WeSpeaker. `--verify-runtime` carga los cuatro modelos incluidos
 desde `_internal`, transcribe audio de prueba y comprueba VAD, huella de voz,
 PortAudio y UI Automation sin grabar ni escribir. Ver el inventario
 `WINDOWS_DEPENDENCIES.md` para tamaños, origen y licencias.
-Los avisos sobre módulos opcionales en warn-HeadMouse.txt deben revisarse, no ignorar
+Los avisos sobre módulos opcionales en warn-CONFA.txt deben revisarse, no ignorar
 un import requerido.
 
 ## Instalador y actualización
 
-packaging/HeadMouse.iss usa AppId estable y PrivilegesRequired=lowest. La instalación
+packaging/CONFA.iss usa AppId estable y PrivilegesRequired=lowest. La instalación
 por usuario conserva datos externos y conserva la entrada Run al actualizar en la misma ruta. Si cambia la ruta,
 la nueva ubicación se registra desde la aplicación con una decisión explícita. Ofrece escritorio y ejecución final desmarcados.
 El desinstalador elimina el valor Run y conserva perfiles. No se firma esta edición.
@@ -113,9 +113,9 @@ sus condiciones al redistribuir fuera del contexto de tesis.
 
 ```powershell
 .\.venv\Scripts\python.exe -m unittest discover -s tests
-.\dist\windows-0.5.1\HeadMouse\HeadMouse.exe --check
-.\dist\windows-0.5.1\HeadMouse\HeadMouse.exe --verify-runtime
-.\dist\windows-0.5.1\HeadMouse\HeadMouse.exe --check-resident
+.\dist\windows-0.5.1\CONFA\CONFA.exe --check
+.\dist\windows-0.5.1\CONFA\CONFA.exe --verify-runtime
+.\dist\windows-0.5.1\CONFA\CONFA.exe --check-resident
 .\.venv\Scripts\python.exe packaging/verify_installer.py --previous dist/installer/HeadMouse-Setup-0.4.0-win64.exe
 ```
 
@@ -126,7 +126,7 @@ sintética. Produce logs/distribution-check.json; no abre VideoCapture.
 notificaciones de sesión, sin abrir cámara ni autoactivar. Sale por cierre normal
 y deja logs/resident-check.json con el resultado real del registro nativo.
 
-Para pruebas instaladas usar HEADMOUSE_DATA_DIR aislado y PATH reducido a System32,
+Para pruebas instaladas usar CONFA_DATA_DIR aislado y PATH reducido a System32,
 sin PYTHONHOME/PYTHONPATH. Esto verifica autonomía del paquete en ese host, no
 equivale a una máquina limpia. Instalar, ejecutar, actualizar y desinstalar en una
 carpeta de ensayo; comparar bytes de perfiles y preferencias antes/después. El

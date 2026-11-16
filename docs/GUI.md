@@ -1,21 +1,21 @@
-# HeadMouse v0.3.1 — aplicación de escritorio
+# CONFA — aplicación de escritorio (desde v0.3.1)
 
-Después de instalar las dependencias en `.venv`, abrí `HeadMouse.vbs` con doble clic en Windows. El lanzador utiliza el entorno del repositorio y no requiere escribir comandos. Si Windows Script Host está deshabilitado, ejecutá `.venv\Scripts\python.exe app.py` desde la carpeta del repositorio. Con el entorno activado, el comando equivalente es `python app.py`.
+Después de instalar las dependencias en `.venv`, abrí `CONFA.vbs` con doble clic en Windows. El lanzador utiliza el entorno del repositorio y no requiere escribir comandos. Si Windows Script Host está deshabilitado, ejecutá `.venv\Scripts\python.exe app.py` desde la carpeta del repositorio. Con el entorno activado, el comando equivalente es `python app.py`.
 
 La instalación inicial todavía requiere preparar Python y las dependencias; esta versión no incluye un instalador ejecutable independiente.
 
 ## Primer uso
 
-1. En **Inicio**, el botón principal indica el próximo paso: **Crear mi perfil**, **Calibrar mis gestos**, **Validar mi calibración** o **Iniciar HeadMouse**. El último perfil usado queda elegido al abrir la aplicación (`data/last_profile.json`); si hay un solo perfil, se elige solo. El selector de Inicio permite cambiarlo. Un perfil nuevo aparece como «Sin calibrar».
+1. En **Inicio**, el botón principal indica el próximo paso: **Crear mi perfil**, **Calibrar mis gestos**, **Validar mi calibración** o **Iniciar CONFA**. El último perfil usado queda elegido al abrir la aplicación (`data/last_profile.json`); si hay un solo perfil, se elige solo. El selector de Inicio permite cambiarlo. Un perfil nuevo aparece como «Sin calibrar».
 2. En **Configuración → Básico**, elegí el método (Nariz u Ojos) y la cámara, y guardá. Si falta un modelo, **Configuración → Modelos** lo descarga con confirmación previa.
 3. En **Calibración**, tocá **Comenzar calibración**. A la izquierda, una lista muestra cada gesto en orden de captura: ✓ listo, ● en curso (intento N de 3), ✗ hay que repetir, ○ pendiente, — no disponible. La cámara y el medidor muestran la señal actual, el neutral, la activación, la liberación y el extremo cómodo. Un único botón grande indica el próximo paso; mientras mide aparece como estado ("Midiendo…") y al lado queda **Cancelar**.
 4. Si un gesto falla, el botón pasa a **Repetir este gesto** y al lado aparece **No puedo hacer este gesto**, que lo marca no disponible sin perder los demás. Al terminar de medir, **la prueba de gestos arranca sola**: la lista pasa a "Prueba de gestos" y marca cada uno como detectado. Si la prueba falla, el botón ofrece **Reintentar la prueba**. Al aprobarla aparece **Guardar perfil**, y después **Ir a Inicio**. **Más opciones** (plegado, muestra la señal de cejas elegida) agrupa los gestos disponibles, la señal de cejas, volver a medir un gesto específico, recalibrar desde cero y cancelar.
 5. En **Diagnóstico** (menú izquierdo), elegí **Iniciar diagnóstico**. El panel dice si la cámara te ve, hacia dónde se movería el cursor y, con una barra por gesto, cuánto falta para que se active (la marca amarilla es el umbral). El último gesto muestra la acción que habría hecho, sin ejecutarla. Los números técnicos están en **Mostrar detalles técnicos**.
-6. Cuando estés listo, tocá **Iniciar HeadMouse** en Inicio: un solo click enciende la cámara y activa el control **en pausa** (levantá ambas cejas para mover el cursor). El mismo botón pasa a **Detener HeadMouse**. **Activar control**, en la barra superior, conserva su diálogo de confirmación.
+6. Cuando estés listo, tocá **Iniciar CONFA** en Inicio: un solo click enciende la cámara y activa el control **en pausa** (levantá ambas cejas para mover el cursor). El mismo botón pasa a **Detener CONFA**. **Activar control**, en la barra superior, conserva su diálogo de confirmación.
 
 ## Seguridad y estados
 
-Al abrir la aplicación, la cámara y el control están desactivados. Abrir la cámara, calibrar, diagnosticar o usar simulación no habilita acciones del sistema. El control requiere un perfil validado y una acción explícita: el botón **Iniciar HeadMouse**, o **Activar control** con su confirmación. En ambos casos arranca en pausa.
+Al abrir la aplicación, la cámara y el control están desactivados. Abrir la cámara, calibrar, diagnosticar o usar simulación no habilita acciones del sistema. El control requiere un perfil validado y una acción explícita: el botón **Iniciar CONFA**, o **Activar control** con su confirmación. En ambos casos arranca en pausa.
 
 **Detener control** interrumpe la salida. **F8** y **Escape** también la detienen cuando la aplicación recibe el teclado: son atajos locales a la aplicación, no atajos globales de Windows. Se conserva el failsafe de PyAutoGUI al llevar el puntero a una esquina. Una llamada al sistema que ya esté en ejecución puede terminar antes de que se aplique la detención.
 
@@ -45,7 +45,7 @@ medirlo hay que iniciar una calibración nueva.
 
 ## Experimentos y resultados
 
-En **Experimentos**, seleccioná el modo e iniciá una serie. En simulación con teclado usá flechas para mover el cursor interno y Espacio o Enter para seleccionar. En simulación con HeadMouse usá el movimiento facial y un gesto asociado a clic izquierdo o doble clic. Los resultados se guardan automáticamente en `data/experiments/` como JSONL. Las sesiones de métricas se guardan en `data/metrics/`.
+En **Experimentos**, seleccioná el modo e iniciá una serie. En simulación con teclado usá flechas para mover el cursor interno y Espacio o Enter para seleccionar. En simulación con CONFA usá el movimiento facial y un gesto asociado a clic izquierdo o doble clic. Los resultados se guardan automáticamente en `data/experiments/` como JSONL. Las sesiones de métricas se guardan en `data/metrics/`.
 
 El experimento real requiere activar el control previamente. Su superficie registra clics recibidos dentro del área experimental; no registra clics sobre otras aplicaciones ni fuera de esa superficie. Al finalizar o cancelar, detené el control con el botón persistente.
 

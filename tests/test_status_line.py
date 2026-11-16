@@ -30,7 +30,7 @@ class StatusMessageTests(unittest.TestCase):
 
     def test_non_blocking_conditions_mean_ready(self):
         self.assertEqual(self.message(activation_conditions=NOT_BLOCKING),
-                         ("Listo para empezar: tocá «Iniciar HeadMouse» en Inicio.", False))
+                         ("Listo para empezar: tocá «Iniciar CONFA» en Inicio.", False))
 
     def test_iris_only_matters_with_camera_on_and_unknown_pass_through(self):
         iris = ["Iris seleccionado no detectado o frame vencido"]

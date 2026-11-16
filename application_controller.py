@@ -800,7 +800,7 @@ class ApplicationController:
         self.config = load_config(overrides=self.profile.get("settings", {}))
         self._make_gesture()
         self.state = "PREVIEW"
-        self.message = "Gestos de "+("Nariz" if bank=="nose" else "Ojos")+" guardados, validados y releídos. Ya podés probar HeadMouse."
+        self.message = "Gestos de "+("Nariz" if bank=="nose" else "Ojos")+" guardados, validados y releídos. Ya podés probar CONFA."
         logging.getLogger(__name__).info("Gestos guardados y releídos: banco=%s gestos=%s",bank,
             [k for k,r in loaded.get("gesture_modes",{}).get(bank,{}).get("gesture_calibrations",{}).items() if r.get("enabled")])
 
@@ -889,7 +889,9 @@ class ApplicationController:
         from app_paths import VERSION
         target = Path(path)
         logs = self.data_dir / "logs"
-        files = sorted(logs.glob("joystick-*.json")) + [logs / "headmouse.log"] + sorted((self.data_dir / "metrics").glob("*.json"))
+        # confa.log es el registro actual; headmouse.log queda de antes del cambio de nombre.
+        files = (sorted(logs.glob("joystick-*.json")) + [logs / "confa.log", logs / "headmouse.log"]
+                 + sorted((self.data_dir / "metrics").glob("*.json")))
         about = dict(version=VERSION, exported_at=time.strftime("%Y-%m-%dT%H:%M:%S"),
                      tracking_method=self.config.ui.tracking_method, eye_source=self.config.ui.eye_source,
                      settings=asdict(self.config),
@@ -1001,7 +1003,7 @@ class ApplicationController:
     def _prepare_geometric_activation(self, screen):
         from geometric_joystick import GeometricJoystick
         if not self.global_stop_available or self.session_guard is None:
-            raise ValueError("F8 global debe estar disponible. Cerrá las otras instancias de HeadMouse.")
+            raise ValueError("F8 global debe estar disponible. Cerrá las otras instancias de CONFA.")
         if self.geometric_record["context"] != self._geometric_context(screen):
             raise ValueError("Cambió la cámara, la pantalla o la fuente ocular. Calibrá nuevamente.")
         joystick = GeometricJoystick(self.vision, self.geometric_record, self.config.eye,

@@ -243,7 +243,7 @@ class Assistant:
 
     def _close(self, _):
         if self.own_window():
-            return False, "HeadMouse no se cierra por voz: usá el botón Salir."
+            return False, "CONFA no se cierra por voz: usá el botón Salir."
         self._keys().hotkey("alt", "f4", _pause=False)
         return True, "Ventana cerrada."
 

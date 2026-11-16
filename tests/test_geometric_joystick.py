@@ -268,7 +268,7 @@ class GeometricTests(unittest.TestCase):
         action()
         window.start_geometric.assert_called_once_with("repair", 0)
         snapshot["geometric"] = {"repair_axes": []}
-        self.assertEqual(MainWindow._home_step(window, snapshot)[0], "▶  Iniciar HeadMouse")
+        self.assertEqual(MainWindow._home_step(window, snapshot)[0], "▶  Iniciar CONFA")
 
     def test_dropped_gestures_are_explained(self):
         joystick, feed = self.joystick()

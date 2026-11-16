@@ -136,11 +136,11 @@ class AssistantTests(unittest.TestCase):
         self.assertEqual(self.keys.press.call_count, 5)
         self.keys.press.assert_called_with("volumeup", _pause=False)
 
-    def test_never_closes_headmouse_itself(self):
+    def test_never_closes_confa_itself(self):
         done, message = self.make(own_window=True)("cerrar ventana")
         self.assertFalse(done)
         self.keys.hotkey.assert_not_called()
-        self.assertIn("HeadMouse", message)
+        self.assertIn("CONFA", message)
 
     def test_type_and_time_and_unknown(self):
         a = self.make()

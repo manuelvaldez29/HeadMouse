@@ -1,6 +1,6 @@
 """
 gesture_engine.py
-HeadMouse — Módulo 2: Gesture Engine
+CONFA — Módulo 2: Gesture Engine
 Tesis UNSTA 2026 — Bloj · Domfrocht · Petrelli · Valdez
 
 Responsabilidad:

@@ -1,6 +1,6 @@
 # Dictado por voz local
 
-Cuando un click de HeadMouse (guiño) deja el foco en un campo de texto
+Cuando un click de CONFA (guiño) deja el foco en un campo de texto
 editable, se abre el micrófono. El usuario habla, el fin de la frase se
 detecta por silencio, el audio se transcribe en la computadora y el texto se
 escribe en ese campo. No hace falta nada más que la voz para escribir un
@@ -8,7 +8,7 @@ mensaje o una búsqueda.
 
 ## Preparación
 
-HeadMouse 0.5.0 para Windows trae los modelos tiny, base, small y medium,
+CONFA 0.5.0 para Windows trae los modelos tiny, base, small y medium,
 Silero y WeSpeaker. En Configuración → Básico → Dictado por voz se elige el
 micrófono y se guarda la preferencia. Calibración → Voz permite medir el
 ambiente y guardar la huella. El dictado queda disponible al activar el
@@ -24,7 +24,7 @@ python dictation.py --test                    # hablar después del tono
 
 El modelo también se puede preparar desde Configuración → "Preparar modelo de
 voz". Después se marca **Dictado por voz** y se guarda la configuración. Desde
-0.4.0 el modelo se descarga en `%LOCALAPPDATA%\HeadMouse\models\whisper\<modelo>`
+0.4.0 el modelo se descarga en `%LOCALAPPDATA%\CONFA\models\whisper\<modelo>`
 (fuera del proyecto y de Git). Los ya descargados en `models/whisper/<modelo>` del
 proyecto se siguen usando sin copiarlos; esa carpeta se revisa una sola vez por
 ejecución. En uso normal se carga con `local_files_only` y no hay tráfico de red.
@@ -33,7 +33,7 @@ La descarga desde Configuración también permite recuperar un modelo faltante.
 ## Flujo
 
 1. Con el control activo, un `LEFT_CLICK` o `DOUBLE_CLICK` ejecutado por
-   HeadMouse arma el dictado. La acción `DICTATE`, asignable a un gesto en
+   CONFA arma el dictado. La acción `DICTATE`, asignable a un gesto en
    "Gestos y acciones", dicta en el campo que ya tiene el foco.
 2. Durante `focus_window_ms` (800 ms), Windows UI Automation consulta el
    elemento con foco. Se dicta solo si es un `Edit`, o un `Document`/`ComboBox`
@@ -58,7 +58,7 @@ desactivan con `voice.commands: false`.
 
 | Frase | Teclas |
 |---|---|
-| "borrar", "borrar eso", "borrar lo último" | Retroceso × largo del último dictado (solo lo que escribió HeadMouse) |
+| "borrar", "borrar eso", "borrar lo último" | Retroceso × largo del último dictado (solo lo que escribió CONFA) |
 | "borrar palabra", "borrar tres palabras" | Ctrl+Retroceso × N |
 | "borrar letra", "borrar 5 letras" | Retroceso × N |
 | "borrar todo" | Ctrl+A, Retroceso |
@@ -166,7 +166,7 @@ Nunca borra palabras del medio.
 
 El modelo (≈ 26 MB, SHA-256 verificado) se prepara desde la pestaña Voz o con
 `python -c "import speaker; speaker.download_model()"` y queda en
-`%LOCALAPPDATA%\HeadMouse\models\speaker`. Sin modelo, la calibración igual mide
+`%LOCALAPPDATA%\CONFA\models\speaker`. Sin modelo, la calibración igual mide
 y recomienda, pero no guarda huella.
 
 Banco con el código real (voces sintéticas de Windows: Helena dicta, Zira es la
@@ -189,7 +189,7 @@ sin audio ni texto. El fin es `silence`, `max`, `gesture` o `timeout`.
 
 ## Cuando un campo no dicta
 
-Cada click que no encuentra un campo de texto deja en `data/logs/headmouse.log` una
+Cada click que no encuentra un campo de texto deja en `data/logs/confa.log` una
 línea «Click sin campo de texto para dictar» con el tipo, el framework y la clase
 del elemento que tenía el foco (nunca su nombre ni su texto). Para ver en vivo qué
 reporta UI Automation al hacer click en una aplicación:

@@ -12,8 +12,8 @@ import subprocess
 ROOT = Path(__file__).resolve().parents[1]
 VERSION = run_path(str(ROOT / "app_paths.py"))["VERSION"]
 DIST = ROOT / "dist"
-PORTABLE = DIST / f"windows-{VERSION}" / "HeadMouse"
-INSTALLER = DIST / "installer" / f"HeadMouse-Setup-{VERSION}-win64.exe"
+PORTABLE = DIST / f"windows-{VERSION}" / "CONFA"
+INSTALLER = DIST / "installer" / f"CONFA-Setup-{VERSION}-win64.exe"
 
 
 def file_info(path):
@@ -47,7 +47,7 @@ def main():
     parser.add_argument("--verification", type=Path)
     parser.add_argument("--test-log", type=Path)
     args = parser.parse_args()
-    artifacts = [file_info(INSTALLER), file_info(PORTABLE / "HeadMouse.exe")]
+    artifacts = [file_info(INSTALLER), file_info(PORTABLE / "CONFA.exe")]
     files = [file_info(path) for path in sorted(PORTABLE.rglob("*")) if path.is_file()]
     inventory = DIST / f"windows-{VERSION}" / "dependency-inventory.json"
     write_json(inventory, {"kind": "build_environment", "python": platform.python_version(),

@@ -135,7 +135,7 @@ class DistributionStorageTests(unittest.TestCase):
 
     def test_source_and_frozen_resources_are_separate_from_user_data(self):
         from app_paths import data_root,face_model_path,RESOURCE_ROOT
-        with patch.dict('os.environ',HEADMOUSE_DATA_DIR=str(self.root/'isolated')):
+        with patch.dict('os.environ',CONFA_DATA_DIR=str(self.root/'isolated')):
             self.assertEqual(data_root(),self.root/'isolated')
             self.assertNotEqual(data_root(),RESOURCE_ROOT)
             self.assertTrue(face_model_path().is_file())
@@ -333,7 +333,7 @@ class DistributionVoiceTests(unittest.TestCase):
 
     def test_spec_bundles_the_dictation_engine_and_models(self):
         from app_paths import RESOURCE_ROOT
-        spec=(RESOURCE_ROOT/'packaging'/'HeadMouse.spec').read_text(encoding='utf-8')
+        spec=(RESOURCE_ROOT/'packaging'/'CONFA.spec').read_text(encoding='utf-8')
         for package in ('faster_whisper','ctranslate2','onnxruntime','_sounddevice_data','comtypes.client','sherpa_onnx'):
             self.assertIn(f"'{package}'",spec)
         self.assertIn('models/whisper',spec)
@@ -344,7 +344,7 @@ class DistributionVoiceTests(unittest.TestCase):
     @unittest.skipUnless(__import__('importlib.util').util.find_spec('faster_whisper'),'sin requirements-voice.txt')
     def test_runtime_check_reports_the_voice_engine(self):
         import distribution_check
-        with tempfile.TemporaryDirectory() as temp,patch.dict('os.environ',HEADMOUSE_DATA_DIR=temp), \
+        with tempfile.TemporaryDirectory() as temp,patch.dict('os.environ',CONFA_DATA_DIR=temp), \
                 patch('dictation.installed_model',return_value=None):
             voice=distribution_check.voice_check()
         self.assertTrue(voice['ui_automation'])

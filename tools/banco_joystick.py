@@ -9,7 +9,7 @@ antes de cambiar un umbral, se ve si mejora o empeora para cada persona y no sol
     python tools/banco_joystick.py carpeta1 carpeta2 ...   # una carpeta por persona
     python tools/banco_joystick.py diagnostico.zip          # un diagnóstico exportado
 
-Cada carpeta puede ser la de datos de HeadMouse, su subcarpeta logs o un .zip exportado
+Cada carpeta puede ser la de datos de CONFA (o HeadMouse), su subcarpeta logs o un .zip exportado
 con «Exportar diagnóstico». Solo se usan números de la señal: no hay imágenes.
 """
 from collections import Counter
@@ -35,7 +35,7 @@ NAMES = dict(center="centro", left="izquierda", right="derecha", up="arriba", do
 def calibration_files(source):
     source = Path(source)
     if source.suffix == ".zip":
-        folder = Path(tempfile.mkdtemp(prefix="headmouse-banco-"))
+        folder = Path(tempfile.mkdtemp(prefix="confa-banco-"))
         with zipfile.ZipFile(source) as archive:
             for name in archive.namelist():
                 if Path(name).name.startswith("joystick-calibration-") and name.endswith(".json"):

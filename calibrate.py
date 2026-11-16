@@ -1,6 +1,6 @@
 """
 calibrate.py
-HeadMouse — Calibración automática por usuario
+CONFA — Calibración automática por usuario
 Tesis UNSTA 2026 — Bloj · Domfrocht · Petrelli · Valdez
 
 Captura repeticiones neutrales/activas con el mismo wizard que la GUI
@@ -179,7 +179,7 @@ def draw_step_indicator(frame, current: int, total: int):
 def draw_welcome(frame):
     frame = overlay_dark(frame, 0.6)
     h, w = frame.shape[:2]
-    put_centered(frame, "HeadMouse", h//2 - 100, 2.0, C_WHITE, 3)
+    put_centered(frame, "CONFA", h//2 - 100, 2.0, C_WHITE, 3)
     put_centered(frame, "Calibracion automatica", h//2 - 40, 0.9, C_GRAY)
     put_centered(frame, "El sistema va a medir tus gestos faciales", h//2 + 20, 0.65, C_WHITE)
     put_centered(frame, "y calcular umbrales personalizados.", h//2 + 50, 0.65, C_WHITE)
@@ -310,7 +310,7 @@ def run(user_id: str, config=None, disabled=None):
                 logged += 1
             snapshot = session.snapshot()
             vis = draw_adaptive_calibration(frame.copy(), snapshot)
-            cv2.imshow("HeadMouse — Calibracion adaptativa (Q = salir)", vis)
+            cv2.imshow("CONFA — Calibracion adaptativa (Q = salir)", vis)
             key = cv2.waitKey(1) & 0xFF
             if key == ord("q"):
                 return None
@@ -350,7 +350,7 @@ def draw_adaptive_calibration(frame, snapshot):
     if scale>1: frame=cv2.resize(frame,(round(width*scale),round(height*scale)))
     vis = overlay_dark(frame,.65)
     h,w=vis.shape[:2]
-    lines=["HEADMOUSE v0.3.1 - CALIBRACION ADAPTATIVA",
+    lines=["CONFA v0.3.1 - CALIBRACION ADAPTATIVA",
            snapshot["instruction"],
            f"Paso {snapshot['phase']}/{snapshot['total_phases']} | Intento {snapshot['attempt']}/{snapshot['repetitions']}",
            snapshot["error"] or snapshot["feedback"], snapshot["capture_message"]]
@@ -381,7 +381,7 @@ def draw_adaptive_calibration(frame, snapshot):
 
 def main(argv=None):
     from gesture_signals import GESTURE_SIGNALS, SOURCES
-    parser = argparse.ArgumentParser(description="HeadMouse v0.3.1 — Calibración adaptativa por usuario")
+    parser = argparse.ArgumentParser(description="CONFA v0.3.1 — Calibración adaptativa por usuario")
     parser.add_argument("--user", default="default")
     parser.add_argument("--camera", type=int)
     parser.add_argument("--config")

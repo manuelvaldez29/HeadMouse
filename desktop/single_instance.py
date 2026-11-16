@@ -8,7 +8,7 @@ from app_paths import data_root
 class SingleInstance:
     def __init__(self,on_show,root=None):
         root=root or data_root();root.mkdir(parents=True,exist_ok=True)
-        self.name="headmouse-"+hashlib.sha256(str(root.resolve()).encode()).hexdigest()[:24]
+        self.name="confa-"+hashlib.sha256(str(root.resolve()).encode()).hexdigest()[:24]
         self.lock=QLockFile(str(root/"application.lock"));self.lock.setStaleLockTime(0)
         self.server=None
         if not self.lock.tryLock(0):
@@ -18,7 +18,7 @@ class SingleInstance:
         self.primary=True;QLocalServer.removeServer(self.name)
         self.server=QLocalServer();self.server.setSocketOptions(QLocalServer.SocketOption.UserAccessOption)
         if not self.server.listen(self.name):
-            self.lock.unlock();raise RuntimeError("No se pudo crear el canal local de HeadMouse")
+            self.lock.unlock();raise RuntimeError("No se pudo crear el canal local de CONFA")
         def connected():
             while self.server.hasPendingConnections():
                 client=self.server.nextPendingConnection();client.close();client.deleteLater();on_show()

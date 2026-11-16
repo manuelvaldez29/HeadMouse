@@ -1,4 +1,4 @@
-# Inventario de HeadMouse para Windows
+# Inventario de CONFA para Windows
 
 Base integrada `tesis-v0.2`, commit `9833bba`. La distribución 0.5.0 se construye sobre esa base y las modificaciones locales de empaquetado. El lock de Python 3.12 y el manifiesto de modelos fijan las versiones de compilación.
 

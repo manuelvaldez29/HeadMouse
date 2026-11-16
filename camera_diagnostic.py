@@ -48,7 +48,7 @@ def main(argv=None):
     parser.add_argument("--duration",type=float,default=5)
     parser.add_argument("--cycles",type=int,default=3)
     parser.add_argument("--confirm-camera-free",action="store_true",
-        help="Confirmar que HeadMouse, Cámara de Windows y otras capturas están cerradas")
+        help="Confirmar que CONFA, Cámara de Windows y otras capturas están cerradas")
     args=parser.parse_args(argv)
     if not args.confirm_camera_free:
         parser.error("Cerrá las otras aplicaciones de cámara y agregá --confirm-camera-free")

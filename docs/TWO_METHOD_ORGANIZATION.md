@@ -163,7 +163,7 @@ tiempo de procesamiento, para no mezclar evaluaciones de algoritmos distintos.
 Una calibración de movimiento compatible permite probar sólo movimiento sin
 gestos. Los detectores y el motor bloquean acciones pendientes en dos capas;
 también queda deshabilitado el dictado dependiente de clics. Autorizar control
-requiere la confirmación original. F8/Escape son de HeadMouse en foco; el
+requiere la confirmación original. F8/Escape son de CONFA en foco; el
 failsafe existente permanece activo.
 
 Los botones de guardado conservan su validación previa, reemplazo atómico y

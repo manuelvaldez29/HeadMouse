@@ -1,6 +1,6 @@
 """
 control_engine.py
-HeadMouse — Módulo 3: Control Engine
+CONFA — Módulo 3: Control Engine
 Tesis UNSTA 2026 — Bloj · Domfrocht · Petrelli · Valdez
 
 Responsabilidad:
@@ -776,7 +776,7 @@ class ControlEngine:
             self.metrics.action(ev)
 
     def _record_pointer_click(self):
-        """Notifica sólo clicks ejecutados por HeadMouse, sin hooks globales."""
+        """Notifica sólo clicks ejecutados por CONFA, sin hooks globales."""
         try:
             from screen_mapping import physical_coordinates
             with physical_coordinates():
