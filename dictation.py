@@ -915,13 +915,13 @@ class WhisperTranscriber:
                                            cpu_threads=min(8, os.cpu_count() or 4), local_files_only=True)
         return self._model
 
-    def transcribe(self, audio, language="es", hotwords=""):
+    def transcribe(self, audio, language="es", hotwords="", prompt=""):
         import numpy as np
         if len(audio) < SAMPLE_RATE * .3:
             return ""
         segments, _ = self._load().transcribe(np.asarray(audio, dtype=np.float32), language=language,
                                               beam_size=1, vad_filter=True, condition_on_previous_text=False,
-                                              hotwords=hotwords or None)
+                                              hotwords=hotwords or None, initial_prompt=prompt or None)
         # Descartar segmentos que el modelo considera no-habla (alucinaciones con ruido).
         return " ".join(s.text.strip() for s in segments if s.no_speech_prob < .6 and s.avg_logprob > -1.2)
 
@@ -1048,10 +1048,10 @@ def create_dictation(config: VoiceConfig, metrics=None, voiceprint=None, output_
         if detector is None:
             logger.warning("«Oye Gema» necesita el detector neuronal de voz: queda apagado")
         else:
-            from wake_word import WakeListener, voice_check, wake_transcriber
+            from wake_word import WakeListener, wake_transcriber
             dictation.wake = WakeListener(lambda: SoundDeviceRecorder(config.microphone), detector,
                                           wake_transcriber(config), dictation.wake_heard, dictation.wake_allowed,
-                                          voice_check=voice_check(config, voiceprint), language=config.language)
+                                          language=config.language)
     return dictation
 
 

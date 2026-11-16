@@ -10,11 +10,14 @@ Cómo escucha, de lo más barato a lo más caro:
    Una pausa de 0,7 s cierra la frase: la gente hace una pausa después de «Oye Gema,»
    y con 0,45 s el pedido quedaba en otra frase y se perdía.
    Una charla larga o la tele de fondo nunca llegan a Whisper.
-3. Con calibración de voz, la huella descarta frases de otras personas.
-4. Whisper `base` (~0,85 s por frase; `small` tardaba 2,7 s) transcribe con «Gema»
-   como palabra favorecida, y la frase se compara por cómo suena, no letra por letra:
-   base escribe «Oye Gema», «Hoy ejema», «Oye, Hema» o «Oye Gemma» para lo mismo
-   (banco con voces sintéticas del 2026-11-15, `tests/test_wake_word.py`).
+3. Whisper `base` (~0,85 s por frase; `small` tardaba 2,7 s) transcribe con un
+   contexto de ejemplo (WAKE_PROMPT), y la frase se compara por cómo suena, no letra
+   por letra: base escribe «Oye Gema», «Hoy es Gema», «Hoy ejema», «Oye, Hema» o
+   «Oye Gemma» para lo mismo (`tests/test_wake_word.py`).
+
+Sin huella de voz a propósito: en frases de ~1 s la huella de Manu dio 0,44–0,73 y
+voces sintéticas de otra persona 0,39–0,60 (2026-11-16). No separa: rechazaba al
+usuario y dejaba pasar a otros. El dictado la sigue usando con ventanas más largas.
 
 Nunca se guarda audio ni se registra lo dicho: sólo cuántas frases se revisaron
 y cuántas activaron a Gema.
@@ -31,9 +34,13 @@ logger = logging.getLogger(__name__)
 
 SAMPLE_RATE = 16000
 FRAME = 512                       # 32 ms, lo que pide Silero
-WAKE_KEY = "oyeJema"              # «oye gema» tal como suena (ver `sound_key`)
+WAKE_KEY = "oJeJema"              # «oye gema» tal como suena (ver `sound_key`)
 WAKE_THRESHOLD = .88              # «oye tema» (.857) queda afuera, «Oye, Hema» (.92) adentro
-WAKE_HOTWORDS = "Gema"            # «Oye Gema» como hotword hacía que Whisper se comiera la frase
+WAKE_HOTWORDS = "Gema"            # para el modelo del dictado al releer «Oye Gema, …»
+# Contexto para Whisper base. Con la voz de Manu (24 frases grabadas el 2026-11-16):
+# 12/12 activaciones y 0/12 sin querer; con «Gema» como hotword, 10/12; con «Oye, Gema»
+# como hotword, 4/12 (se comía la frase). Voces sintéticas: 15/15 y 0/21 igual que antes.
+WAKE_PROMPT = "Oye Gema, abrí el bloc de notas. Oye Gema, ¿qué hora es?"
 WAKE_MODELS = ("base", "tiny", "small", "medium")  # el primero instalado; base es el equilibrio
 
 
@@ -47,15 +54,22 @@ def sound_key(word):
 
     La h no suena; g y c delante de e/i, j, k y qu se parecen lo suficiente como
     para que Whisper las confunda en «Gema» («Jema», «Cema», «quema»): son una
-    sola letra J. ll e y, también. Las letras dobles cuentan una vez («Gemma»).
-    La t queda aparte a propósito: «oye, tema» no es «Oye Gema».
+    sola letra J. La y y la ll también: en el Río de la Plata «oye» suena «oshe/oje»
+    y Whisper escribió «Hoje Hema» con la voz de Manu (2026-11-16). Las letras dobles
+    cuentan una vez («Gemma»). La t queda aparte: «oye, tema» no es «Oye Gema».
     """
     w = re.sub(r"[^a-zñ]", "", _plain(word))
     w = w.replace("ll", "y").replace("qu", "J").replace("h", "")
     w = re.sub(r"[gc](?=[ei])", "J", w)
-    w = w.replace("j", "J").replace("k", "J")
     w = re.sub(r"oi$", "oy", w)
+    w = w.replace("j", "J").replace("k", "J").replace("y", "J")
     return re.sub(r"(.)\1+", r"\1", w)
+
+
+# El «oye» rioplatense («oshe») sale «Hoy es» o «Hoy e» con Whisper base: 8 de 12 frases
+# de Manu el 2026-11-16 («Hoy es Gema», «Hoy es Hema», «Hoy e Gema»). Sólo al principio
+# de la frase; después la comparación por sonido decide igual que con «oye».
+OYE_HEARD_AS = re.compile(r"^[\W_]*h?o[yi]\s*[,.]?\s+es?\b", re.IGNORECASE)
 
 
 def find_wake(text):
@@ -64,51 +78,52 @@ def find_wake(text):
     Busca en las primeras palabras: se admite algo antes («eh, oye Gema»), pero no
     «la gema del anillo» ni «oye, ¿qué tema es este?».
     """
-    words = [w for w in re.findall(r"[\wáéíóúüñÁÉÍÓÚÜÑ]+|[^\w\s]", text or "") if w.strip()]
-    keys, owner = "", []  # owner[i]: palabra a la que pertenece la letra i de keys
-    for index, word in enumerate(words[:6]):
-        key = sound_key(word)
-        keys += key
-        owner += [index] * len(key)
-    best, end = 0., None
-    # El fragmento empieza y termina en el borde de una palabra: si no, «oye, gemelos»
-    # («oyeJem…») o «yo y Gema» («…oyJema») pasaban por «Oye Gema».
-    starts = [i for i in range(min(4, len(keys))) if i == 0 or owner[i] != owner[i - 1]]
-    for start in starts:
-        for size in (5, 6, 7, 8, 9):
-            piece = keys[start:start + size]
-            stop = start + len(piece) - 1
-            if len(piece) < 5 or (stop + 1 < len(keys) and owner[stop + 1] == owner[stop]):
-                continue
-            score = SequenceMatcher(None, piece, WAKE_KEY).ratio()
-            if score > best:
-                best, end = score, start + len(piece) - 1
-    if best < WAKE_THRESHOLD or end is None:
+    words = _words(text)
+    best, last = wake_score(words)
+    if best < WAKE_THRESHOLD or last is None:
         return None
-    rest = words[owner[end] + 1:]
+    rest = words[last + 1:]
     while rest and not re.match(r"[\w¿¡«]", rest[0]):
         rest = rest[1:]  # la coma o el cierre después de «Gema»; «¿» abre el pedido y queda
     text_rest = " ".join(rest)
     return re.sub(r"\s+([,.;:!?…»])", r"\1", re.sub(r"([¿¡«])\s+", r"\1", text_rest)).strip()
 
 
-class VoiceCheck:
-    """¿La frase es del usuario? Con la huella de la calibración de voz.
+def _words(text):
+    return [w for w in re.findall(r"[\wáéíóúüñÁÉÍÓÚÜÑ]+|[^\w\s]", OYE_HEARD_AS.sub("oye", text or "")) if w.strip()]
 
-    La frase de activación es corta (~1 s) y la huella se calibró con ventanas de
-    1,5 s, así que se acepta hasta MARGIN por debajo del umbral: ante la duda,
-    Gema escucha (lo peor es un «no se escuchó nada»), y la tele queda muy abajo.
+
+def wake_score(words):
+    """(parecido con «Oye Gema» de 0 a 1, última palabra que ocupa) en las primeras palabras.
+
+    Dos lecturas: palabra por palabra, y juntando la letra repetida entre dos palabras
+    («Hoy llegé a ma» → «oJ» + «JeJe…»). La segunda sola perdía «Oye, Hema» («oJe» + «ema»).
     """
-    MARGIN = .1
+    keys = [sound_key(w) for w in words[:6]]
+    return max(_scan(keys, False), _scan(keys, True), key=lambda r: r[0])
 
-    def __init__(self, model, voiceprint):
-        self.model, self.embedding = model, voiceprint["embedding"]
-        self.threshold = voiceprint["threshold"] - self.MARGIN
 
-    def __call__(self, audio):
-        from speaker import cosine
-        score = cosine(self.model.embed(audio), self.embedding)
-        return score >= self.threshold, score
+def _scan(keys, merge):
+    text, owner = "", []  # owner[i]: palabra a la que pertenece la letra i de text
+    for index, key in enumerate(keys):
+        if merge and text and key[:1] == text[-1]:
+            key = key[1:]
+        text += key
+        owner += [index] * len(key)
+    best, last = 0., None
+    # El fragmento empieza y termina en el borde de una palabra: si no, «oye, gemelos»
+    # («oJeJem…») o «yo y Gema» («…oJJema») pasaban por «Oye Gema».
+    starts = [i for i in range(min(4, len(text))) if i == 0 or owner[i] != owner[i - 1]]
+    for start in starts:
+        for size in (5, 6, 7, 8, 9):
+            piece = text[start:start + size]
+            stop = start + len(piece) - 1
+            if len(piece) < 5 or (stop + 1 < len(text) and owner[stop + 1] == owner[stop]):
+                continue
+            score = SequenceMatcher(None, piece, WAKE_KEY).ratio()
+            if score > best:
+                best, last = score, owner[stop]
+    return best, last
 
 
 class WakeListener:
@@ -123,12 +138,12 @@ class WakeListener:
     MIN_S, MAX_S, SILENCE_S, PREROLL_S = .35, 6., .7, .3
 
     def __init__(self, recorder_factory, detector_factory, transcriber, on_wake, allowed,
-                 voice_check=None, language="es", clock=time.monotonic):
+                 language="es", clock=time.monotonic):
         self.recorder_factory, self.detector_factory = recorder_factory, detector_factory
         self.transcriber, self.on_wake, self.allowed = transcriber, on_wake, allowed
-        self.voice_check, self.language, self.clock = voice_check, language, clock
+        self.language, self.clock = language, clock
         self.state, self.message = "off", ""
-        self.counts = dict(phrases=0, other_voice=0, checked=0, activations=0)
+        self.counts = dict(phrases=0, activations=0)
         self._closed = threading.Event()
         self._thread = None
 
@@ -144,7 +159,7 @@ class WakeListener:
             self._thread.join(timeout=3)
 
     def snapshot(self):
-        return dict(state=self.state, message=self.message, voice_check=self.voice_check is not None, **self.counts)
+        return dict(state=self.state, message=self.message, **self.counts)
 
     def _run(self):
         while not self._closed.is_set():
@@ -226,19 +241,19 @@ class WakeListener:
 
     def _check(self, audio):
         self.counts["phrases"] += 1
-        if self.voice_check is not None:
-            own, score = self.voice_check(audio)
-            if not own:
-                self.counts["other_voice"] += 1
-                logger.debug("«Oye Gema»: otra voz (%.2f)", score)
-                return None
         self.state = "checking"
         try:
-            self.counts["checked"] += 1
-            text = self.transcriber.transcribe(audio, self.language, hotwords=WAKE_HOTWORDS)
+            text = self.transcriber.transcribe(audio, self.language, prompt=WAKE_PROMPT)
         finally:
             self.state = "listening"
-        return find_wake(text)
+        rest = find_wake(text)
+        if rest is None:
+            # Sin el texto (puede ser una charla privada): sólo cuánto se pareció. Los casi
+            # («Oye Gema» mal escrito) en INFO para ajustar; el resto de una charla, en DEBUG.
+            score = wake_score(_words(text))[0]
+            logger.log(logging.INFO if score >= .7 else logging.DEBUG,
+                       "«Oye Gema»: frase de %.1f s revisada, no era (parecido %.2f)", len(audio) / SAMPLE_RATE, score)
+        return rest
 
 
 def wake_transcriber(config):
@@ -247,13 +262,3 @@ def wake_transcriber(config):
     model = next((m for m in WAKE_MODELS if installed_model(m) is not None), config.model)
     return WhisperTranscriber(model)
 
-
-def voice_check(config, voiceprint):
-    if not voiceprint or not config.speaker_check:
-        return None
-    try:
-        from speaker import SpeakerModel
-        return VoiceCheck(SpeakerModel(), voiceprint)
-    except Exception:
-        logger.warning("«Oye Gema» sin huella de voz: cualquier voz puede activar a Gema", exc_info=True)
-        return None

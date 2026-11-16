@@ -86,13 +86,17 @@ micrófono. La línea de estado avisa «Decí «Oye Gema» para hablarle a Gema�
 
 1. Silero VAD corta frases: pausa de 0,7 s, entre 0,35 y 6 s de voz. Con 0,45 s la
    pausa natural después de «Oye Gema,» partía la frase y el pedido se perdía.
-2. Con calibración de voz, la huella (WeSpeaker) descarta otras voces antes de Whisper
-   (umbral calibrado − 0,1: la frase es más corta que las ventanas de la calibración).
-3. Whisper chico: `base` si está instalado (lo trae el instalador), con «Gema» como
-   hotword. «Oye Gema» como hotword hacía que Whisper se comiera la frase.
-4. `find_wake` compara por sonido (`sound_key`): h muda; g/c ante e/i, j, k y qu son
-   una sola letra; ll = y; letras dobles cuentan una. El fragmento tiene que empezar y
-   terminar en borde de palabra («oye, gemelos» y «yo y Gema» no pasan).
+2. Whisper chico: `base` si está instalado (lo trae el instalador), con un contexto de
+   ejemplo (`WAKE_PROMPT`: «Oye Gema, abrí el bloc de notas. Oye Gema, ¿qué hora es?»).
+3. `find_wake` compara por sonido (`sound_key`): h muda; g/c ante e/i, j, k, qu, ll e y
+   son una sola letra (el «oye» rioplatense salió «Hoje»); letras dobles cuentan una,
+   también entre dos palabras («Hoy llegé a ma»). «Hoy es» / «Hoy e» al principio se
+   leen como «oye» (`OYE_HEARD_AS`). El fragmento tiene que empezar y terminar en borde
+   de palabra («oye, gemelos» y «yo y Gema» no pasan).
+
+**Sin huella de voz.** Se probó y se sacó: en frases de ~1 s la huella de Manu marcó
+0,44–0,73 y voces sintéticas de otra persona 0,39–0,60. Rechazaba al usuario (2/24) y
+dejaba pasar a otros. Cualquiera que diga «Oye Gema» la activa; el manual lo dice.
 
 **Después de «Oye Gema».**
 
@@ -114,9 +118,23 @@ micrófono. La línea de estado avisa «Decí «Oye Gema» para hablarle a Gema�
 - Cadena completa: pedidos simples en menos de 1 s después de hablar; abrir, buscar y
   escribir en unos 3 s.
 - Escucha en silencio: 3,4 % de un núcleo.
-- Límites conocidos: «Oye, Emma» suena igual que «Oye Hema» y activa a Gema. Sin
-  calibración de voz cualquier voz puede activarla, y la tele hablando hace trabajar
-  a Whisper.
-- Falta medir con voces reales y ruido: `python tools/banco_oye_gema.py --microfono`
+- Límites conocidos: «Oye, Emma» suena igual que «Oye Hema» y activa a Gema. Cualquier
+  voz puede activarla, y la tele hablando hace trabajar a Whisper.
+- Voz de Manu (2026-11-16). Primera prueba: 3/6. Segunda, 24 frases grabadas: 8/12 con
+  la versión anterior. Fallaban el «oye» rioplatense, que base escribe «Hoy es», y la
+  huella. Con «Hoy es» leído como «oye», sin huella y con `WAKE_PROMPT`: 12/12 y 0/12
+  sin querer sobre esas mismas grabaciones.
+
+| Whisper base sobre las 24 frases de Manu | Activaciones | Sin querer |
+|---|---|---|
+| «Gema» como hotword | 10/12 | 0/12 |
+| `WAKE_PROMPT` | 12/12 | 0/12 |
+| «Oye, Gema» como hotword | 4/12 | 0/12 |
+
+- Charla y noticiero sintéticos (20 frases con «oye», «hoy es jueves», «la gema más
+  grande…», «oye, gemelos») y ruido blanco y rosa: 0 activaciones. Con el contexto de
+  ejemplo, Whisper no inventó «Oye Gema».
+- El log anota en INFO las frases que casi fueron «Oye Gema» (parecido ≥ 0,7), sin el texto.
+- Falta medir con más voces reales y ruido: `python tools/banco_oye_gema.py --microfono`
   (guion de frases) y `--libre 120` (activaciones sin querer con la tele o una charla).
 

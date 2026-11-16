@@ -1,7 +1,7 @@
 """Banco de «Oye Gema»: cuántas veces se activa cuando corresponde y cuántas sin querer.
 
 Usa el mismo camino que la app (Silero → huella de voz → Whisper chico → comparación
-por sonido) sin abrir la cámara ni mover el mouse, y no guarda audio.
+por sonido) sin abrir la cámara ni mover el mouse. No guarda audio salvo con --grabar.
 
     python tools/banco_oye_gema.py --microfono
         Te pide frases en voz alta: unas con «Oye Gema», otras parecidas sin ella.
@@ -11,8 +11,13 @@ por sonido) sin abrir la cámara ni mover el mouse, y no guarda audio.
         Dos minutos con el micrófono abierto mientras hablás normal, mirás un video o
         hay gente charlando: cuenta las activaciones sin querer.
 
-    python tools/banco_oye_gema.py carpeta_con_wav
-        Archivos WAV mono de 16 kHz; los que empiezan con «pos» deberían activar a Gema.
+    python tools/banco_oye_gema.py --microfono --vueltas 2 --grabar CARPETA
+        Igual que el primero, dos vueltas, y guarda cada frase
+        en CARPETA como WAV para ajustar «Oye Gema» con tu voz real. Son grabaciones
+        tuyas, quedan en tu PC: borralas cuando ya no hagan falta.
+
+    python tools/banco_oye_gema.py carpeta_con_wav [--perfil ID]
+        Archivos WAV mono de 16 kHz; los que empiezan con «pos» o tienen «_pos_» deberían activar a Gema.
 """
 import argparse
 import sys
@@ -25,7 +30,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from config import VoiceConfig  # noqa: E402
 from dictation import SileroDetector, SoundDeviceRecorder  # noqa: E402
-from wake_word import FRAME, WAKE_HOTWORDS, WakeListener, find_wake, voice_check, wake_transcriber  # noqa: E402
+from wake_word import FRAME, WAKE_PROMPT, WakeListener, find_wake, wake_transcriber  # noqa: E402
 
 PROMPTS = [
     (True, "Oye Gema"), (False, "Oye, ¿me pasás el mate?"), (True, "Oye Gema, abrí el bloc de notas"),
@@ -34,6 +39,34 @@ PROMPTS = [
     (False, "La gema del anillo es azul"), (True, "Oye Gema"), (False, "Tenemos un problema con el sistema"),
     (True, "Oye Gema, buscar recetas de empanadas"), (False, "Me quemé con la yema del huevo"),
 ]
+
+
+class TeeRecorder:
+    """El micrófono de siempre, guardando una copia de lo que entrega (sólo con --grabar)."""
+    def __init__(self, inner):
+        self.inner, self.blocks = inner, []
+
+    def __enter__(self):
+        self.inner.__enter__()
+        return self
+
+    def read(self, timeout=.2):
+        block = self.inner.read(timeout)
+        if block is not None:
+            self.blocks.append(np.asarray(block, np.float32))
+        return block
+
+    def __exit__(self, *exc):
+        return self.inner.__exit__(*exc)
+
+    def save(self, path):
+        audio = np.clip(np.concatenate(self.blocks or [np.zeros(1, np.float32)]), -1, 1)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with wave.open(str(path), "wb") as w:
+            w.setnchannels(1)
+            w.setsampwidth(2)
+            w.setframerate(16000)
+            w.writeframes((audio * 32767).astype(np.int16).tobytes())
 
 
 class ArrayRecorder:
@@ -93,12 +126,12 @@ def phrases(recorder, detector, seconds):
 
 def judge(audio, transcriber, check):
     started = time.perf_counter()
-    if check is not None:
-        own, score = check(audio)
-        if not own:
-            return None, f"otra voz ({score:.2f})", time.perf_counter() - started
-    text = transcriber.transcribe(audio, "es", hotwords=WAKE_HOTWORDS)
-    return find_wake(text), text, time.perf_counter() - started
+    voice = ""
+    if check is not None:  # sólo informativo: «Oye Gema» no usa la huella (ver wake_word.py)
+        from speaker import cosine
+        voice = f" · huella {cosine(check[0].embed(audio), check[1]):.2f}"
+    text = transcriber.transcribe(audio, "es", prompt=WAKE_PROMPT)
+    return find_wake(text), text + voice, time.perf_counter() - started
 
 
 def main(argv=None):
@@ -106,7 +139,9 @@ def main(argv=None):
     parser.add_argument("carpeta", nargs="?", type=Path)
     parser.add_argument("--microfono", action="store_true")
     parser.add_argument("--libre", type=float, metavar="SEGUNDOS", help="micrófono abierto sin guion")
-    parser.add_argument("--perfil", help="id del perfil para usar su huella de voz")
+    parser.add_argument("--perfil", help="id del perfil: muestra el puntaje de su huella de voz (informativo)")
+    parser.add_argument("--vueltas", type=int, default=1, help="cuántas veces repetir el guion")
+    parser.add_argument("--grabar", type=Path, metavar="CARPETA", help="guardar cada frase del guion como WAV")
     args = parser.parse_args(argv)
     config = VoiceConfig(enabled=True, wake_word=True)
     transcriber = wake_transcriber(config)
@@ -116,8 +151,10 @@ def main(argv=None):
     if args.perfil:
         from profiles import ProfileStore
         voiceprint = (ProfileStore().load(args.perfil).get("voice_calibration") or {}).get("voiceprint")
-        check = voice_check(config, voiceprint)
-        print("Con huella de voz." if check else "El perfil no tiene huella de voz.")
+        if voiceprint:
+            from speaker import SpeakerModel
+            check = (SpeakerModel(), voiceprint["embedding"])
+        print("Muestra el puntaje de la huella." if check else "El perfil no tiene huella de voz.")
     session = SileroDetector.load_session()
     rows = []
     if args.carpeta:
@@ -126,7 +163,7 @@ def main(argv=None):
                      for a, ok in phrases(ArrayRecorder(load_wav(path)), SileroDetector(session), 60)]
             woke = any(rest is not None for rest, _text, _s in heard)
             seconds = max((s for _r, _t, s in heard), default=0)
-            rows.append((path.stem.startswith("pos"), woke, seconds))
+            rows.append((path.stem.startswith("pos") or "_pos_" in path.stem, woke, seconds))
             print(f"{'GEMA' if woke else '    '}  {seconds:4.2f}s  {path.stem:18s} " + " | ".join(t for _r, t, _s in heard))
     elif args.microfono and args.libre:
         print(f"Micrófono abierto {args.libre:.0f} s: hablá normal, poné un video, charlá. Nada se guarda.")
@@ -136,10 +173,16 @@ def main(argv=None):
                 rows.append((False, rest is not None, seconds))
                 print("  ¡activación sin querer!" if rest is not None else "  frase revisada: no era «Oye Gema»")
     elif args.microfono:
-        print("Decí cada frase cuando aparezca y esperá el resultado. Nada se guarda.\n")
-        for expected, prompt in PROMPTS:
-            print(f"→ «{prompt}»")
-            heard = phrases(SoundDeviceRecorder(), SileroDetector(session), 6)
+        print("Decí cada frase cuando aparezca y esperá el resultado. "
+              + (f"Se guarda en {args.grabar}.\n" if args.grabar else "Nada se guarda.\n"))
+        script = PROMPTS * max(1, args.vueltas)
+        for number, (expected, prompt) in enumerate(script, 1):
+            print(f"[{number}/{len(script)}] → «{prompt}»")
+            recorder = TeeRecorder(SoundDeviceRecorder()) if args.grabar else SoundDeviceRecorder()
+            heard = phrases(recorder, SileroDetector(session), 8)  # con 6 s, hablar tarde no cerraba la frase
+            if args.grabar:
+                slug = "".join(c if c.isalnum() else "_" for c in prompt.lower())[:30].strip("_")
+                recorder.save(args.grabar / f"{number:02d}_{'pos' if expected else 'neg'}_{slug}.wav")
             results = [judge(a, transcriber, check) for a, ok in heard if ok]
             woke = any(r[0] is not None for r in results)
             rows.append((expected, woke, max((r[2] for r in results), default=0)))

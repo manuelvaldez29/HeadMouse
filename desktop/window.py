@@ -1305,8 +1305,8 @@ class MainWindow(QMainWindow):
         self.voice_wake.setToolTip("También podés decir el pedido de una: «Oye Gema, abrí el bloc de notas».")
         form.addRow(self.voice_wake)
         form.addRow(label("Con esta opción el micrófono queda escuchando mientras el control está activo y sin pausa. "
-                          "Sólo se revisan frases cortas, en esta PC, y no se guarda nada. Con la calibración de voz, "
-                          "Gema sólo te responde a vos.","Subtitle"))
+                          "Sólo se revisan frases cortas, en esta PC, y no se guarda nada. Gema no distingue "
+                          "quién habla: cualquiera que diga «Oye Gema» cerca del micrófono la activa.","Subtitle"))
         form.addRow(label("Comandos: «borrar», «borrar N palabras», «borrar N letras», «borrar todo», «deshacer». "
                           "Decí solo el comando. La lista completa está en Gestos y acciones.","Subtitle"))
         section(form,"Vista de cámara")

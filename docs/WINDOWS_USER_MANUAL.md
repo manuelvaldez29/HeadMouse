@@ -233,8 +233,9 @@ abrir, buscar y escribir tardan unos segundos más porque Gema vuelve a escuchar
 frase con más precisión. Mientras escucha, la línea de estado dice «Decí «Oye Gema»
 para hablarle a Gema» y Windows muestra el micrófono en uso. En pausa, con F8 o sin
 control activo, el micrófono se cierra. Sólo se revisan frases cortas, en esta PC,
-y nunca se guarda audio. Hacé la calibración de voz: así Gema sólo te responde a
-vos y no a la tele o a otras personas.
+y nunca se guarda audio. Gema no distingue quién habla: cualquiera que diga
+«Oye Gema» cerca del micrófono la activa. Una charla o la tele de fondo no la activan
+si no dicen «Oye Gema», pero hacen trabajar más a la computadora.
 
 ## Datos, importación y actualización
 

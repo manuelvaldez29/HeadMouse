@@ -9,7 +9,7 @@ import numpy as np
 from config import VoiceConfig
 from dictation import Dictation, FocusInfo
 from test_dictation import FakeFocus, FakeRecorder, noise, speech
-from wake_word import WakeListener, find_wake, sound_key
+from wake_word import WAKE_PROMPT, WakeListener, find_wake, sound_key
 
 # Transcripciones reales de Whisper tiny/base/small con voces sintéticas de Windows
 # (banco del 2026-11-15): así escriben «Oye Gema» los modelos chicos.
@@ -25,6 +25,13 @@ HEARD_AS_WAKE = [
     ("hoy es Jema, su piel volumen.", "su piel volumen."),
     ("Oye, Gemma! ¿Qué hora es?", "¿Qué hora es?"),
     ("Eh, oye Gema, qué hora es", "qué hora es"),
+    # Voz de Manu con su micrófono (banco del 2026-11-16): su «oye» sale «Hoy es».
+    ("Hoy es Hema.", ""), ("Hoy es Gema ¿Qué hora es?", "¿Qué hora es?"),
+    ("Hoy es Gema, abrir blog de notas.", "abrir blog de notas."), ("Oye, Hema.", ""),
+    ("Hoy e Gema buscar recetas empanadas.", "buscar recetas empanadas."),
+    ("Hoy es Gema.", ""), ("Hoje Hema.", ""), ("Hoy ejema subir el volumen.", "subir el volumen."),
+    ("Hoy llegé a ma, abri el blog de Notas.", "abri el blog de Notas."),
+    ("Hoy Gema buscar recetas empanadas.", "buscar recetas empanadas."),
 ]
 NOT_WAKE = [
     "La gema del anillo es azul.", "La Jema de la Niño es azul.", "Hoy tengo que ir a la facultad.",
@@ -32,6 +39,12 @@ NOT_WAKE = [
     "Oye, ¿qué tema es este?", "Oye, que te más este?", "Me quemé con la yema del huevo.",
     "Hoy es que te más este.", "Oye, tema nuevo", "Oye, gemelos", "Oye, Jimena, vení",
     "Yo y Gema fuimos al cine", "Hoy gané", "Oye, jefe", "", "Gracias.",
+    # Voz de Manu (2026-11-16).
+    "Hoy me pasa el maté.", "¿Oye, ¿qué temes esto?", "La Gema de Lanillo es azul.",
+    "Me queme con la Gemma del Uejo.", "Hoy me pasa a ser Mate.", "¿Qué temes este?",
+    "La Gema de Ranillo es azul.", "Me queme con la gema del huevo.",
+    # «Hoy es…» se lee como «oye» sólo si sigue algo que suena a «Gema».
+    "Hoy es jueves", "Hoy es tema", "Hoy es que te más este.",
 ]
 
 
@@ -48,7 +61,7 @@ class WakePhraseTests(unittest.TestCase):
 
     def test_sound_key_merges_letters_whisper_confuses(self):
         self.assertEqual(sound_key("Gemma"), sound_key("Jema"))
-        self.assertEqual(sound_key("Hoy"), "oy")
+        self.assertEqual(sound_key("Hoje"), sound_key("oye"))  # «oye» rioplatense suena «oje»
         self.assertNotEqual(sound_key("tema"), sound_key("gema"))
 
 
@@ -89,7 +102,7 @@ class Recorder:
 
 
 class WakeListenerTests(unittest.TestCase):
-    def listen(self, audio, said, voice_check=None, allowed=None):
+    def listen(self, audio, said, allowed=None):
         recorder, heard, transcriber = Recorder(audio), [], Mock()
         transcriber.transcribe.return_value = said
         done = threading.Event()
@@ -97,8 +110,7 @@ class WakeListenerTests(unittest.TestCase):
         def on_wake(clip, rest, after):
             heard.append((len(clip), rest, recorder.open, after))
             done.set()
-        listener = WakeListener(recorder, LoudDetector, transcriber, on_wake, allowed or (lambda: True),
-                                voice_check=voice_check)
+        listener = WakeListener(recorder, LoudDetector, transcriber, on_wake, allowed or (lambda: True))
         listener.start()
         self.addCleanup(listener.close)
         done.wait(3)
@@ -111,7 +123,8 @@ class WakeListenerTests(unittest.TestCase):
         self.assertEqual(heard[0][1], "abrí el bloc de notas.")
         self.assertFalse(heard[0][2], "el micrófono tiene que estar cerrado para que lo use el dictado")
         transcriber.transcribe.assert_called_once()
-        self.assertEqual(transcriber.transcribe.call_args.kwargs["hotwords"], "Gema")
+        # Con este contexto Whisper base escribió «Oye Gema» en 12/12 frases de Manu (2026-11-16).
+        self.assertEqual(transcriber.transcribe.call_args.kwargs["prompt"], WAKE_PROMPT)
         self.assertEqual(listener.snapshot()["activations"], 1)
 
     def test_long_talk_never_reaches_whisper(self):
@@ -122,13 +135,6 @@ class WakeListenerTests(unittest.TestCase):
     def test_short_noises_never_reach_whisper(self):
         heard, transcriber, *_ = self.listen(np.concatenate([loud(.2), silent(1)]), "Oye Gema")
         transcriber.transcribe.assert_not_called()
-
-    def test_other_voices_are_dropped_by_the_voiceprint_before_whisper(self):
-        check = Mock(return_value=(False, .2))
-        heard, transcriber, _, listener = self.listen(np.concatenate([loud(1.2), silent(1)]), "Oye Gema", check)
-        self.assertEqual(heard, [])
-        transcriber.transcribe.assert_not_called()
-        self.assertEqual(listener.snapshot()["other_voice"], 1)
 
     def test_other_phrases_keep_listening(self):
         heard, transcriber, *_ = self.listen(np.concatenate([loud(1.2), silent(1)]), "Oye, ¿qué tema es este?")
