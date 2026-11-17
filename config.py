@@ -4,7 +4,7 @@ import json
 import logging
 import math
 import sys
-from dataclasses import asdict, dataclass, field, fields
+from dataclasses import asdict, dataclass, field, fields, replace
 from pathlib import Path
 from action_mapping import DEFAULT_MAPPING, ActionMapping
 
@@ -133,6 +133,35 @@ class VisionConfig:
             raise ValueError("model_path debe ser una ruta no vacía")
 
 
+# «Movimientos suaves»: una chica con ELA no pudo terminar la calibración (2026-11-17).
+# Menos intentos, más tiempo, umbral más cerca del reposo y se acepta el promedio de los
+# intentos en vez del peor. Para que un umbral más bajo no dispare clicks sin querer, el
+# gesto tiene que sostenerse GENTLE_HOLD_MS: un movimiento involuntario o un temblor
+# rara vez dura tanto. Exigir duración en lugar de fuerza.
+GENTLE_MIN_QUALITY = 0.75
+GENTLE_HOLD_MS = 350
+
+
+def gentle_calibration(cc):
+    """Parámetros efectivos de la calibración; iguales si el modo suave está apagado."""
+    if not cc.gentle:
+        return cc
+    return replace(cc, repetitions=min(cc.repetitions, 2), transition_s=max(cc.transition_s, 3),
+                   validation_timeout_s=max(cc.validation_timeout_s, 60), active_window_s=max(cc.active_window_s, 1.5),
+                   min_activation_fraction=min(cc.min_activation_fraction, .3),
+                   min_quality=min(cc.min_quality, GENTLE_MIN_QUALITY))
+
+
+def effective_gesture(config):
+    """Tiempos del motor de gestos; con modo suave, cada gesto se sostiene GENTLE_HOLD_MS."""
+    g = config.gesture
+    if not config.calibration.gentle:
+        return g
+    return replace(g, blink_hold_ms=max(g.blink_hold_ms, GENTLE_HOLD_MS), brow_hold_ms=max(g.brow_hold_ms, GENTLE_HOLD_MS),
+                   mouth_hold_ms=max(g.mouth_hold_ms, GENTLE_HOLD_MS),
+                   both_brows_hold_ms=max(g.both_brows_hold_ms, GENTLE_HOLD_MS))
+
+
 @dataclass
 class CalibrationConfig:
     countdown_s: float = 4
@@ -156,6 +185,10 @@ class CalibrationConfig:
     # reposo: cejas al 22 % y liberación a 0,0015 de la activación (2026-11-08).
     min_activation_fraction: float = 0.4
     validation_strikes: int = 3  # veces que se tolera el mismo gesto equivocado en la prueba
+    # Calidad mínima de un gesto (exactitud balanceada dentro de la muestra).
+    min_quality: float = 0.85
+    # «Movimientos suaves» (ELA, poca fuerza o cansancio; 2026-11-17): ver gentle_calibration.
+    gentle: bool = False
 
     def __post_init__(self):
         for name in ("countdown_s", "measuring_s", "validation_timeout_s", "validation_neutral_s"):
@@ -168,6 +201,9 @@ class CalibrationConfig:
         bounded("noise_multiplier", self.noise_multiplier, 1, 10)
         bounded("min_activation_fraction", self.min_activation_fraction, 0, .8)
         bounded("validation_strikes", self.validation_strikes, 1, 20, integer=True)
+        bounded("min_quality", self.min_quality, GENTLE_MIN_QUALITY, 0.99)
+        if type(self.gentle) is not bool:
+            raise ValueError("gentle debe ser true o false")
         bounded("repetitions", self.repetitions, 1, 10, integer=True)
         bounded("min_window_samples", self.min_window_samples, 3, 1000, integer=True)
         for name in ("active_window_s", "neutral_window_s", "transition_s", "validation_noise_s", "validation_wrong_s"):

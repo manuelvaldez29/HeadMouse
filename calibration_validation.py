@@ -15,7 +15,7 @@ GESTURES = (
 
 class CalibrationValidation:
     def __init__(self, gesture, timeout_s=None, clock=time.monotonic, neutral_s=None,
-                 noise_s=None, wrong_s=None, strikes=None):
+                 noise_s=None, wrong_s=None, strikes=None, only=None):
         self.gesture = gesture
         if hasattr(self.gesture, "both_brows_anywhere"):
             # En la prueba de gestos no se mueve el cursor del SO: una leve deriva de
@@ -36,8 +36,11 @@ class CalibrationValidation:
         self.strikes = {}
         self.notice = None
         enabled = getattr(gesture, "enabled_gestures", None)
+        # `only`: al recalibrar un gesto se prueba ése; los demás siguen activos en el motor,
+        # así que si se cuelan al hacerlo, la prueba lo marca igual.
         self.gestures = tuple((spec.event_type, spec.instruction) for key,spec in GESTURE_SIGNALS.items()
-                              if enabled is None or not isinstance(enabled, (set,list,tuple)) or key in enabled)
+                              if (enabled is None or not isinstance(enabled, (set,list,tuple)) or key in enabled)
+                              and (only is None or key in only))
         self.index = 0
         self.neutral = True
         self.neutral_since = None

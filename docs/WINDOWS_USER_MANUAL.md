@@ -38,10 +38,23 @@ de método no convierte ni aprueba automáticamente sus calibraciones.
 
 ## Calibrar Nariz y los gestos
 
-En Calibración → Nariz, mantener postura cómoda y seguir los neutrales y tres
-repeticiones por gesto. Elegir disponibilidad y fuente según corresponda. Realizar
-la prueba de reconocimiento y guardar sólo cuando apruebe. Un gesto que no pueda
-calibrarse puede marcarse no disponible: no generará su acción.
+En Calibración → Nariz, antes de empezar, marcá sólo los gestos que te salen
+cómodos y vas a usar. Con uno para hacer click y otro para pausar alcanza: para
+empezar vienen marcados el guiño izquierdo y ambas cejas. Al lado de cada gesto se
+ve qué hace. Cuantos menos gestos, más corta la calibración, y los demás se pueden
+sumar después. Mantené una postura cómoda y seguí los neutrales y tres repeticiones
+por gesto. Hacé la prueba de reconocimiento y guardá sólo cuando apruebe. Un gesto
+que no pueda calibrarse puede marcarse no disponible: no generará su acción.
+
+Movimientos suaves: para quien tiene poca fuerza en la cara, se cansa o se mueve
+despacio (por ejemplo, con ELA). Pide dos intentos por gesto en vez de tres, da más
+tiempo, acepta gestos más chicos y aprueba un gesto por el promedio de sus intentos.
+A cambio, cada gesto se sostiene un tercio de segundo para que actúe, así un
+movimiento involuntario no hace click. Se guarda en el perfil.
+
+Para rehacer un solo gesto, elegilo en «¿Ya calibraste y sólo querés rehacer uno?» y
+tocá «Recalibrar sólo ese gesto». Se mide y se prueba sólo ése; los demás conservan
+su calibración guardada. Así también se suma después un gesto que estaba apagado.
 
 En Gestos y acciones se asignan las acciones del método seleccionado. Cambiar
 tiempos de reconocimiento puede exigir validar nuevamente. Diagnóstico muestra

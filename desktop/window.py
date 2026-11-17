@@ -11,7 +11,8 @@ from PySide6.QtGui import QShortcut, QKeySequence, QCursor, QDesktopServices
 from PySide6.QtWidgets import (QMainWindow, QWidget, QFrame, QVBoxLayout, QHBoxLayout,
     QGridLayout, QPushButton, QStackedWidget, QScrollArea, QComboBox, QInputDialog,
     QMessageBox, QFormLayout, QDoubleSpinBox, QSpinBox, QCheckBox, QProgressBar,
-    QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView, QApplication, QLineEdit, QTabWidget)
+    QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView, QApplication, QLineEdit, QTabWidget,
+    QSizePolicy)
 from action_mapping import ACTIONS, DEFAULT_MAPPING, capitalized, gesture_phrase
 from gesture_signals import GESTURE_SIGNALS
 from gaze_source import SOURCE_LABELS as EYE_SOURCE_LABELS, eye_coordinates
@@ -22,6 +23,8 @@ from desktop.widgets import (CameraPreview, ExperimentCanvas, CalibrationMeter, 
 GESTURE_LABELS = dict(LEFT_WINK="Guiño izquierdo", RIGHT_WINK="Guiño derecho", MOUTH_LEFT="Labios a la izquierda",
                       MOUTH_RIGHT="Labios a la derecha", LEFT_BROW="Ceja izquierda", RIGHT_BROW="Ceja derecha",
                       BOTH_BROWS="Ambas cejas", MOUTH_OPEN="Boca abierta", KISS="Besito")
+# Para empezar, lo mínimo para usar la compu: un click y pausar (los demás se suman después).
+RECOMMENDED_GESTURES = ("LEFT_WINK", "BOTH_BROWS")
 CALIBRATION_ORDER = ("LEFT_WINK","RIGHT_WINK","MOUTH_LEFT","MOUTH_RIGHT","LEFT_BROW","RIGHT_BROW",
                      "MOUTH_OPEN","BOTH_BROWS","KISS")  # = GESTURE_SIGNALS
 EVENT_GESTURE = dict(LEFT_CLICK="LEFT_WINK",RIGHT_CLICK="RIGHT_WINK",SCROLL_UP="MOUTH_LEFT",SCROLL_DOWN="MOUTH_RIGHT",
@@ -438,7 +441,8 @@ class MainWindow(QMainWindow):
                         "Hero", lambda: (self.open_eye_calibration(), self.start_geometric("repair", axis)))
             return "▶  Iniciar CONFA","Hero",self.activate
         if p.get("status")=="draft":
-            return "Calibrar mis gestos","Hero",self.start_calibration
+            # Lleva a Calibración para elegir los gestos antes de empezar (no arranca directo).
+            return "Calibrar mis gestos","Hero",self.open_gesture_calibration
         if not p.get("validation",{}).get("passed"):
             return "Validar mi calibración","Hero",lambda:self.command_page("validate_calibration",2)
         if s["state"] in ("CALIBRATING","EYE_CALIBRATING","GAZE_CALIBRATING","JITTER"):
@@ -658,6 +662,7 @@ class MainWindow(QMainWindow):
         scroll.setWidget(body)
         self.gesture_calibration_scroll=scroll
         self.nose_calibration_layout.addWidget(scroll,1)
+        self._calibration_setup(outer)
         self.wizard_instruction=label("Elegí un perfil y comenzá cuando estés cómodo.","CalibrationInstruction")
         outer.addWidget(self.wizard_instruction)
         status_row=QHBoxLayout()
@@ -671,7 +676,9 @@ class MainWindow(QMainWindow):
         self.wizard_progress.setMaximumHeight(20)
         status_row.addWidget(self.wizard_progress,2)
         outer.addLayout(status_row)
-        live=QHBoxLayout()
+        self.calibration_live=QWidget()  # cámara, lista y medidores: se ven al calibrar
+        live=QHBoxLayout(self.calibration_live)
+        live.setContentsMargins(0,0,0,0)
         live.setSpacing(12)
         steps=QFrame()
         steps.setObjectName("Card")
@@ -699,7 +706,7 @@ class MainWindow(QMainWindow):
         readings.addWidget(self.calibration_quality)
         readings.addStretch()
         live.addLayout(readings,2)
-        outer.addLayout(live,1)
+        outer.addWidget(self.calibration_live,1)
         self.validation_labels=label("","Subtitle")  # resumen accesible; la lista muestra el detalle
         self.validation_labels.hide()
         outer.addWidget(self.validation_labels)
@@ -724,16 +731,6 @@ class MainWindow(QMainWindow):
         options.setContentsMargins(16,12,16,12)
         self.calibration_options.hide()
         self.calibration_options.toggled_scroll=scroll  # para llevar la vista a las opciones al abrirlas
-        options.addWidget(label("Gestos disponibles: desmarcá los que no puedas hacer.","Subtitle"))
-        choices=QGridLayout()
-        self.calibration_enabled={}
-        for index,(key,title) in enumerate(GESTURE_LABELS.items()):
-            check=QCheckBox(title)
-            check.setChecked(True)
-            check.toggled.connect(lambda checked,gesture_id=key:self.calibration_availability(gesture_id,checked))
-            self.calibration_enabled[key]=check
-            choices.addWidget(check,index//3,index%3)
-        options.addLayout(choices)
         source_row=QHBoxLayout()
         source_row.addWidget(label("Señal de cejas"))
         self.calibration_source=QComboBox()
@@ -763,6 +760,94 @@ class MainWindow(QMainWindow):
         show_source()
         self._build_ocular_calibration()
         self.calibration_tabs.currentChanged.connect(self.calibration_tab_changed)
+
+    def _calibration_setup(self,outer):
+        """Antes de empezar: qué gestos calibrar, modo suave y recalibrar sólo uno.
+
+        Prueba con una chica con ELA (2026-11-17): calibrar los nueve gestos con tres
+        intentos cada uno la cansaba, y para rehacer el guiño izquierdo tuvo que repetir
+        todo. Ahora se calibran sólo los elegidos, y un gesto se rehace solo."""
+        self.calibration_setup=QFrame()
+        self.calibration_setup.setObjectName("Card")
+        box=QVBoxLayout(self.calibration_setup)
+        box.setContentsMargins(16,10,16,12)
+        box.setSpacing(6)
+        box.addWidget(label("Antes de empezar: elegí los gestos que te salen cómodos","SettingsSection"))
+        box.addWidget(label("Calibrá sólo los que vas a usar: con uno para hacer click y otro para pausar alcanza. "
+                            "Cuantos menos, más corta. Los demás se pueden sumar después.","Subtitle"))
+        choices=QGridLayout()
+        choices.setHorizontalSpacing(18)
+        self.calibration_enabled={}
+        for index,key in enumerate(CALIBRATION_ORDER):
+            check=QCheckBox(GESTURE_LABELS[key])
+            check.setChecked(key in RECOMMENDED_GESTURES)
+            check.toggled.connect(lambda checked,gesture_id=key:self.calibration_availability(gesture_id,checked))
+            self.calibration_enabled[key]=check
+            choices.addWidget(check,index//3,index%3)
+        box.addLayout(choices)
+        self.calibration_gentle=QCheckBox("Movimientos suaves (ELA, poca fuerza o cansancio)")
+        self.calibration_gentle.setAccessibleName("Modo movimientos suaves")
+        box.addWidget(self.calibration_gentle)
+        box.addWidget(label("Dos intentos en vez de tres, más tiempo y gestos más chicos. Para evitar clicks sin "
+                            "querer, el gesto se sostiene un tercio de segundo para que actúe.","Subtitle"))
+        single=QHBoxLayout()
+        single.setSpacing(10)
+        single.addWidget(label("¿Ya calibraste y sólo querés rehacer uno?","Subtitle"))
+        self.single_gesture=QComboBox()
+        for key in CALIBRATION_ORDER:
+            self.single_gesture.addItem(GESTURE_LABELS[key],key)
+        self.single_gesture.setAccessibleName("Gesto para recalibrar solo")
+        single.addWidget(self.single_gesture,1)
+        self.single_gesture_button=button("Recalibrar sólo ese gesto",self.recalibrate_single)
+        self.single_gesture_button.setToolTip("Los demás gestos conservan su calibración guardada.")
+        single.addWidget(self.single_gesture_button)
+        box.addLayout(single)
+        self._calibration_setup_key=None
+        self.calibration_setup.setSizePolicy(QSizePolicy.Policy.Preferred,QSizePolicy.Policy.Maximum)
+        outer.addWidget(self.calibration_setup)
+        # Antes de empezar, el lugar libre queda abajo de la tarjeta y no entre sus textos.
+        self.calibration_spacer=QWidget()
+        self.calibration_spacer.setSizePolicy(QSizePolicy.Policy.Preferred,QSizePolicy.Policy.Expanding)
+        outer.addWidget(self.calibration_spacer,1)
+
+    def open_gesture_calibration(self):
+        self.show_page(2)
+        nose=(self.snapshot.get("settings") or {}).get("ui",{}).get("tracking_method","nose")=="nose"
+        self.calibration_tabs.setCurrentIndex(0 if nose else 1)
+
+    def recalibrate_single(self):
+        self.show_page(2)
+        self.calibration_options.hide()
+        self.bridge.request("start_calibration",only=[self.single_gesture.currentData()],
+                            source=self.calibration_source.currentData(),gentle=self.calibration_gentle.isChecked())
+
+    def _present_calibration_setup(self,s):
+        """Visible antes de calibrar; marca lo guardado en el perfil (o lo recomendado)."""
+        wizard=s.get("wizard")
+        calibrating=s.get("state")=="CALIBRATING" and bool(wizard)
+        self.calibration_setup.setVisible(not calibrating)
+        # Antes de empezar no hay nada que medir: la elección ocupa el lugar de la cámara y
+        # los medidores, y la pantalla entra sin desplazarse en una notebook.
+        live=calibrating or bool(wizard and wizard.get("state")=="validated")
+        for widget in (self.calibration_live,self.wizard_instruction,self.wizard_status,self.wizard_progress):
+            widget.setVisible(live)
+        self.calibration_spacer.setVisible(not live)
+        saved=s.get("saved_gestures") or {}
+        bindings=((s.get("settings") or {}).get("actions") or {}).get("bindings") or DEFAULT_MAPPING
+        gentle=bool(((s.get("settings") or {}).get("calibration") or {}).get("gentle"))
+        key=((s.get("profile") or {}).get("user_id"),tuple(sorted(saved.items())),gentle,tuple(sorted(bindings.items())))
+        if key==self._calibration_setup_key:
+            return
+        self._calibration_setup_key=key
+        for gesture,check in self.calibration_enabled.items():
+            action=ACTION_LABELS.get(bindings.get(gesture,"NONE"))
+            check.setText(GESTURE_LABELS[gesture]+(f"  ·  {action}" if action and bindings.get(gesture)!="NONE" else ""))
+            check.blockSignals(True)
+            check.setChecked(saved[gesture] if gesture in saved else gesture in RECOMMENDED_GESTURES)
+            check.blockSignals(False)
+        self.calibration_gentle.setChecked(gentle)
+        self.single_gesture_button.setEnabled(bool(saved))
+        self.single_gesture.setEnabled(bool(saved))
 
     def _build_ocular_calibration(self):
         self.ocular_back=button("Volver a movimiento ocular",lambda:self.ocular_content.setCurrentIndex(0))
@@ -956,6 +1041,7 @@ class MainWindow(QMainWindow):
         if action: action()
 
     def _present_calibration(self,s):
+        self._present_calibration_setup(s)
         text,action,secondary,other=self._calibration_step(s)
         wizard=s.get("wizard")
         can_save=bool(wizard and wizard.get("can_save") and s["state"]=="CALIBRATING")
@@ -975,7 +1061,7 @@ class MainWindow(QMainWindow):
         """Lista de gestos: ✓ listo, ● en curso, ✗ repetir, ○ pendiente, — no disponible."""
         if not wizard:
             self.calibration_steps_title.setText("Gestos")
-            self.calibration_steps.setText("<br>".join(f"<span style='color:#8192aa'>○</span>&nbsp; {GESTURE_LABELS[k]}"
+            self.calibration_steps.setText("<br>".join(f"<span style='color:{ink('pending')}'>○</span>&nbsp; {GESTURE_LABELS[k]}"
                                                        for k in CALIBRATION_ORDER))
             return
         enabled,quality=wizard.get("enabled",{}),wizard.get("quality",{})
@@ -988,6 +1074,8 @@ class MainWindow(QMainWindow):
             label_text=quality.get(key,{}).get("label","PENDIENTE")
             if not enabled.get(key,True):
                 icon,color,detail="—",ink("pending"),"sin calibrar" if label_text=="SIN CALIBRAR" else "no disponible"
+            elif key in (wizard.get("kept") or ()) and not validating:
+                icon,color,detail="✓",ink("ok"),"guardado, no se mide"
             elif validating:
                 if key in recognized or wizard.get("state")=="validated":
                     icon,color,detail="✓",ink("ok"),"detectado"
@@ -1007,15 +1095,18 @@ class MainWindow(QMainWindow):
             else:
                 icon,color,detail="○",ink("pending"),"pendiente"
             rows.append(f"<span style='color:{color}'>{icon}</span>&nbsp; {title} "
-                        f"<span style='color:#8192aa'>· {detail}</span>")
+                        f"<span style='color:{ink('muted')}'>· {detail}</span>")
         self.calibration_steps_title.setText("Prueba de gestos" if validating else "Medición de gestos")
         self.calibration_steps.setText("<br>".join(rows))
 
     def start_calibration(self):
         self.show_page(2)
         self.calibration_options.hide()
-        self.bridge.request("start_calibration",enabled={key:check.isChecked() for key,check in self.calibration_enabled.items()},
-                            source=self.calibration_source.currentData())
+        enabled={key:check.isChecked() for key,check in self.calibration_enabled.items()}
+        if not any(enabled.values()):
+            return self.show_error("Elegí al menos un gesto para calibrar.")
+        self.bridge.request("start_calibration",enabled=enabled,source=self.calibration_source.currentData(),
+                            gentle=self.calibration_gentle.isChecked())
 
     def calibration_availability(self,gesture_id,enabled):
         if self.snapshot.get("state")=="CALIBRATING" and self.snapshot.get("wizard"):
@@ -1545,7 +1636,7 @@ class MainWindow(QMainWindow):
         self.gesture_calibration_scroll.show()
         self.ocular_content.setCurrentIndex(1)
         self.calibration_options.hide()
-        self.bridge.request("start_calibration")
+        # No arranca solo: primero se eligen los gestos y se toca «Comenzar calibración».
 
     def start_vertical_diagnostic(self):
         self.bridge.stop()
@@ -2111,11 +2202,9 @@ class MainWindow(QMainWindow):
             self.voice_help_notes.setText("\n".join(notes))
             for k,widget in self.mapping_fields.items(): widget.setCurrentIndex(widget.findData(s["settings"]["actions"]["bindings"][k]))
             self.calibration_source.setCurrentIndex(self.calibration_source.findData(s["settings"]["calibration"]["brow_signal_source"]))
-            for key,check in self.calibration_enabled.items():
+            # Qué gestos se marcan para calibrar lo decide _present_calibration_setup.
+            for key in self.calibration_enabled:
                 enabled=(p or {}).get("gesture_calibrations",{}).get(key,{}).get("enabled",True)
-                check.blockSignals(True)
-                check.setChecked(enabled)
-                check.blockSignals(False)
                 self.mapping_fields[key].setEnabled(enabled)
         wizard=s["wizard"]
         self._present_calibration(s)

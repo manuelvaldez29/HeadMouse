@@ -10,7 +10,7 @@ from dataclasses import asdict
 from pathlib import Path
 from action_mapping import ActionMapping, gesture_identity
 from calibration_session import CalibrationSession
-from config import ROOT, DEFAULT_THRESHOLDS, load_config, settings_for_save, method_bank
+from config import ROOT, DEFAULT_THRESHOLDS, effective_gesture, load_config, settings_for_save, method_bank
 from control_engine import ControlEngine
 from experiment_engine import ExperimentEngine, JitterMeasurement, ResultStore
 from face_data import FaceData
@@ -277,7 +277,7 @@ class ApplicationController:
             runtime=dict(thresholds=DEFAULT_THRESHOLDS.copy()) if profile.get("status")=="draft" else profile
             strategy = self.geometric_joystick if self._uses_geometric_joystick() else create_strategy(self.config.ui.tracking_method,
                 self._tracking_record(), self.config.absolute if absolute else self.config.eye, self.config.ui.eye_source)
-            self.gesture = (GestureEngine(self.vision, config=self.config.gesture, calibration=runtime,
+            self.gesture = (GestureEngine(self.vision, config=effective_gesture(self.config), calibration=runtime,
                             strategy=strategy, clock=self.clock, movement_only=ocular and not self._actions_ready())
                             if strategy is not None else None)
         else:
@@ -703,7 +703,18 @@ class ApplicationController:
         self.start_camera()
         self.state, self.message = "DIAGNOSTIC", "Diagnóstico seguro: el cursor del sistema no se mueve."
 
-    def start_calibration(self, enabled=None, source=None):
+    def start_calibration(self, enabled=None, source=None, only=None, gentle=None):
+        """`only`: recalibrar esos gestos y conservar los demás. `gentle`: modo «movimientos
+        suaves» (se guarda en el perfil con la calibración)."""
+        if gentle is not None and type(gentle) is not bool:
+            raise ValueError("Modo suave inválido")
+        config = self.config
+        if gentle is not None and gentle != config.calibration.gentle:
+            from dataclasses import replace
+            config = replace(config, calibration=replace(config.calibration, gentle=gentle))
+        # Antes de cerrar nada: si falta lo guardado, que avise sin cortar el control.
+        wizard = CalibrationSession(gesture_profile(self.profile, method_bank(self.config)), config, self.clock,
+                                    enabled, source, only)
         self.stop_control()
         if self.experiment and self.experiment.active:
             self.experiment.cancel()
@@ -711,7 +722,7 @@ class ApplicationController:
         self.eye_calibration = None
         self.start_camera()
         self.gaze_calibration = None
-        self.wizard = CalibrationSession(gesture_profile(self.profile, method_bank(self.config)), self.config, self.clock, enabled, source)
+        self.wizard = wizard
         self._calibration_session_id = uuid.uuid4().hex
         self._calibration_logged = 0
         self._calibration_diagnostic_key = None
@@ -739,6 +750,11 @@ class ApplicationController:
         self.state = "CALIBRATING"
 
     def repeat_calibration(self, gesture_id=None):
+        # Sin una sesión con mediciones (por ejemplo, después de guardar), repetir un gesto
+        # es recalibrar sólo ése: los demás conservan lo guardado.
+        if gesture_id is not None and (self.wizard is None or self.wizard.baseline is None):
+            self.start_calibration(only=[gesture_id], source=self.config.calibration.brow_signal_source)
+            return
         if self.wizard:
             self.stop_control()
             self.start_camera()
@@ -1542,6 +1558,11 @@ class ApplicationController:
                     gesture=self.last_gesture, action=self.last_action, cursor=self.cursor,
                     diagnostic=self.gesture.diagnostic() if self.gesture else {},
                     wizard=self.wizard.snapshot() if self.wizard else None,
+                    # Gestos guardados del banco vigente (gesto → disponible): Calibración arranca
+                    # con esos marcados y permite recalibrar uno solo.
+                    saved_gestures={key: bool(record.get("enabled")) for key, record in
+                                    (gesture_profile(self.profile, method_bank(self.config)).get("gesture_calibrations") or {}).items()}
+                                   if self.profile else {},
                     eye_calibration=self.eye_calibration.snapshot() if self.eye_calibration else None,
                     gaze_calibration=self.gaze_calibration.snapshot() if self.gaze_calibration else None,
                     direction_diagnostic=self._direction_snapshot(),

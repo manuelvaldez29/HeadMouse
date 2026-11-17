@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from adaptive_calibration import GestureCalibration, PLATEAU_MAX_GAP, gesture_plateau, percentile, statistics
 from calibration_logic import Samples
 from calibration_validation import CalibrationValidation
-from config import DEFAULT_THRESHOLDS
+from config import DEFAULT_THRESHOLDS, effective_gesture, gentle_calibration
 from gesture_engine import GestureEngine
 from gesture_signals import GESTURE_SIGNALS, SOURCES
 
@@ -19,8 +19,15 @@ PHASES = (("neutral", "Relajá la cara y mirá al centro"),) + tuple(
 
 
 class CalibrationSession:
-    def __init__(self, profile, config, clock=time.monotonic, enabled=None, source=None):
+    def __init__(self, profile, config, clock=time.monotonic, enabled=None, source=None, only=None):
+        """`only`: recalibrar sólo esos gestos. Los demás conservan la calibración guardada
+        en el perfil y no se miden ni se prueban de nuevo (antes, recalibrar el guiño
+        izquierdo obligaba a hacer todo otra vez; 2026-11-17)."""
         self.profile, self.config, self.clock = deepcopy(profile), deepcopy(config), clock
+        # Se guarda la configuración elegida, no la efectiva del modo suave: apagarlo
+        # después tiene que devolver los valores de siempre.
+        self._chosen_calibration = deepcopy(config.calibration)
+        self.config.calibration = gentle_calibration(self.config.calibration)
         self.source = source or config.calibration.brow_signal_source
         if self.source not in SOURCES:
             raise ValueError("Fuente de calibración inválida")
@@ -28,6 +35,19 @@ class CalibrationSession:
         # Todos los gestos empiezan disponibles; conservar una desactivación
         # explícita que el usuario ya guardó en su perfil.
         availability={key:previous.get(key,{}).get("enabled",True) for key in GESTURE_SIGNALS}
+        self.only=None
+        self.kept={}
+        if only is not None:
+            only=set(only)
+            if not only or only-set(GESTURE_SIGNALS):
+                raise ValueError("Elegí qué gesto recalibrar")
+            if not previous:
+                raise ValueError("Todavía no hay gestos guardados: hacé la calibración completa")
+            self.only=only
+            self.kept={key:deepcopy(record) for key,record in previous.items()
+                       if key in GESTURE_SIGNALS and key not in only}
+            availability.update({key:True for key in only})
+            availability.update({key:False for key in GESTURE_SIGNALS if key not in only and key not in previous})
         if enabled is not None:
             if not isinstance(enabled,dict) or set(enabled)-set(GESTURE_SIGNALS) or any(type(v) is not bool for v in enabled.values()):
                 raise ValueError("Disponibilidad de gestos inválida")
@@ -38,6 +58,8 @@ class CalibrationSession:
                      for key,s in GESTURE_SIGNALS.items()}
         for model in self.models.values():
             if not model.enabled: model.disable()
+        for key,record in self.kept.items():
+            self.models[key]=self._restore(key,record)
         self.phase=0
         self.gesture_id=None
         self.samples=Samples()
@@ -70,6 +92,25 @@ class CalibrationSession:
         self._rejected_samples=0
         self._rejection_reasons={}
 
+    def _restore(self,key,record):
+        """Modelo con la calibración guardada, sin muestras: no se vuelve a medir."""
+        spec=GESTURE_SIGNALS[key]
+        model=GestureCalibration(key,spec.channels,spec.directions,record.get("source","GEOMETRIC"),
+                                 bool(record.get("enabled")))
+        for name in ("neutral_statistics","active_statistics","activation_threshold","release_threshold",
+                     "separation","neutral_noise","session_neutral","repetitions","reasons"):
+            setattr(model,name,deepcopy(record.get(name,[] if name in ("repetitions","reasons") else {})))
+        model.quality_score=record.get("quality_score",0.)
+        model.quality_label=record.get("quality_label","NO DISPONIBLE")
+        model.validation_state=record.get("validation_state","disabled")
+        model.retries,model.rejected=record.get("retries",0),record.get("rejected",0)
+        model.min_quality=record.get("min_quality",.85)
+        return model
+
+    def _measured(self,key):
+        """¿Este gesto se mide en esta sesión? No los que conservan la calibración guardada."""
+        return key not in self.kept and (self.only is None or key in self.only)
+
     def _enter(self,stage):
         self.stage=stage
         # El gesto no espera transición: su inicio se detecta en la ventana activa.
@@ -90,8 +131,10 @@ class CalibrationSession:
         self._enter("baseline" if self.baseline is None else "neutral")
 
     def restart(self):
-        self.__init__(self.profile,self.config,self.clock,
-                      {key:m.enabled for key,m in self.models.items()},self.source)
+        config=deepcopy(self.config)
+        config.calibration=self._chosen_calibration
+        self.__init__(self.profile,config,self.clock,
+                      None if self.only else {key:m.enabled for key,m in self.models.items()},self.source,self.only)
         self.start()
 
     def repeat(self,gesture_id=None):
@@ -110,6 +153,7 @@ class CalibrationSession:
             self.start()
             return
         if key not in self.models: raise ValueError("Gesto desconocido")
+        self._unkeep(key)
         old=self.models[key]
         if not old.enabled: raise ValueError("Habilitá el gesto antes de repetirlo")
         self.models[key]=GestureCalibration(key,old.channels,old.directions,old.source,retries=old.retries+1)
@@ -124,6 +168,7 @@ class CalibrationSession:
             raise ValueError("Para cambiar gestos de una calibración anterior, iniciá una nueva calibración")
         model=self.models[gesture_id]
         if enabled==model.enabled: return
+        self._unkeep(gesture_id)
         previous_state=self.state
         self.candidate=self.validator=None
         if enabled:
@@ -133,6 +178,12 @@ class CalibrationSession:
             model.disable()
             if self.baseline is not None and (self.gesture_id==gesture_id or previous_state in ("measured","validated","validation")):
                 self._advance()
+
+    def _unkeep(self,key):
+        """Un gesto guardado que se quiere repetir o desactivar pasa a medirse en esta sesión."""
+        if key in self.kept:
+            del self.kept[key]
+            if self.only is not None: self.only.add(key)
 
     def _select(self,key):
         self.gesture_id=key
@@ -144,7 +195,8 @@ class CalibrationSession:
     def _advance(self):
         self._recheck_session_neutral()
         for key,model in self.models.items():
-            if model.enabled and (not model.usable or len(model.active_samples)<self.config.calibration.repetitions):
+            if self._measured(key) and model.enabled and (
+                    not model.usable or len(model.active_samples)<self.config.calibration.repetitions):
                 self._select(key)
                 return
         self.candidate=self._build_profile()
@@ -159,6 +211,7 @@ class CalibrationSession:
         """
         cc=self.config.calibration
         for key,model in list(self.models.items()):
+            if not self._measured(key): continue
             if not model.enabled or not model.usable or len(model.active_samples)<cc.repetitions: continue
             model.fit(cc,self.neutral_pool[key])
             if model.usable: continue
@@ -171,6 +224,7 @@ class CalibrationSession:
 
     def _build_profile(self):
         settings=asdict(self.config)
+        settings["calibration"]=asdict(self._chosen_calibration)
         settings["calibration"]["brow_signal_source"]=self.source
         thresholds=DEFAULT_THRESHOLDS.copy()
         for key,model in self.models.items():
@@ -185,19 +239,24 @@ class CalibrationSession:
                                               for i,channel in enumerate(model.channels)}
             elif model.source=="GEOMETRIC" and len(spec.channels)==1 and spec.legacy_keys:
                 thresholds[spec.legacy_keys[0]]=model.activation_threshold[spec.channels[0]]
+        records={key:deepcopy(self.kept[key]) if key in self.kept else model.to_record() for key,model in self.models.items()}
+        # Al recalibrar un gesto, el centro de la nariz queda como estaba.
+        nose_x=self.profile.get("neutral_nose_x") if self.only and "neutral_nose_x" in self.profile else self.baseline.median("nose_x")
+        nose_y=self.profile.get("neutral_nose_y") if self.only and "neutral_nose_y" in self.profile else self.baseline.median("nose_y")
         return dict(user_id=self.profile["user_id"],display_name=self.profile.get("display_name",self.profile["user_id"]),
                     calibrated_at=datetime.now(timezone.utc).isoformat(),calibration_version="0.3.1",
                     status="calibrated",settings=settings,thresholds=thresholds,
-                    neutral_nose_x=self.baseline.median("nose_x"),neutral_nose_y=self.baseline.median("nose_y"),
-                    gesture_calibrations={key:model.to_record() for key,model in self.models.items()},
+                    neutral_nose_x=nose_x,neutral_nose_y=nose_y,
+                    gesture_calibrations=records,
                     validation={"passed":False},calibration_telemetry=deepcopy(self.telemetry))
 
     def validate(self):
         if self.candidate is None: raise ValueError("Primero completá las mediciones")
-        gesture=GestureEngine(None,config=self.config.gesture,calibration=self.candidate,clock=self.clock)
+        gesture=GestureEngine(None,config=effective_gesture(self.config),calibration=self.candidate,clock=self.clock)
         cc=self.config.calibration
         self.validator=CalibrationValidation(gesture,cc.validation_timeout_s,self.clock,cc.validation_neutral_s,
-                                              cc.validation_noise_s,cc.validation_wrong_s,cc.validation_strikes)
+                                              cc.validation_noise_s,cc.validation_wrong_s,cc.validation_strikes,
+                                              only=set(self.only) if self.only else None)
         self.state="validation"
         self.error=""
 
@@ -508,9 +567,12 @@ class CalibrationSession:
                              for key,m in self.models.items()},
                     quality={key:dict(label=(self.candidate["gesture_calibrations"].get(key,{}).get("quality_label","SIN CALIBRAR")
                                             if self.validator and self.candidate.get("gesture_calibrations") else
-                                            "NO DISPONIBLE" if not m.enabled else "PENDIENTE" if not m.active_samples else
+                                            "NO DISPONIBLE" if not m.enabled else
+                                            m.quality_label+" · guardado" if key in self.kept else
+                                            "PENDIENTE" if not m.active_samples else
                                             m.quality_label+(" (provisional)" if len(m.active_samples)<cc.repetitions else "")),
                                       score=m.quality_score,retries=m.retries) for key,m in self.models.items()},
+                    kept=sorted(self.kept),only=sorted(self.only) if self.only else None,gentle=cc.gentle,
                     meter=self._meter(),error=self.error or (self.validator.error if self.validator else "") or "",
                     can_save=self.state=="validated")
 

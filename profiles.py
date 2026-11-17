@@ -9,7 +9,7 @@ import time
 from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
-from config import ROOT, DEFAULT_THRESHOLDS, bounded, load_config
+from config import ROOT, DEFAULT_THRESHOLDS, bounded, load_config, GENTLE_MIN_QUALITY
 
 logger = logging.getLogger(__name__)
 
@@ -115,7 +115,10 @@ def validate_profile(data):
             if record.get("validation_state") not in ("pending", "passed", "repeat", "disabled"):
                 raise ValueError("Estado de validación por gesto inválido")
             if record["enabled"]:
-                bounded("quality_score", record.get("quality_score"), .85, 1)
+                # Calibrado en modo suave: la calidad mínima de ese gesto es 0,75.
+                floor = record.get("min_quality", .85)
+                bounded("min_quality", floor, GENTLE_MIN_QUALITY, .85)
+                bounded("quality_score", record.get("quality_score"), floor, 1)
                 for name in ("activation_threshold", "release_threshold"):
                     if not isinstance(record.get(name), dict) or set(record[name]) != set(spec.channels):
                         raise ValueError("Umbrales de gesto incompletos")

@@ -12,7 +12,7 @@ QFrame#Card QLabel { background: transparent; }
 /* Contenedores comunes (.QWidget: sólo esa clase, no campos ni botones) y textos dentro de tarjetas
    y de la barra lateral: sin fondo propio, para que no queden recuadros de otro tono. */
 QFrame#Card .QWidget, QFrame#ProfileCard .QWidget, QFrame#ProfileCardActive .QWidget,
-QFrame#Sidebar .QWidget, QFrame#Sidebar QLabel { background: transparent; }
+QFrame#Sidebar .QWidget, QFrame#Sidebar QLabel, QFrame#Card QCheckBox { background: transparent; }
 QPushButton { background: #e3e9f2; border: 1px solid #b3c1d4; border-radius: 8px;
               padding: 11px 16px; min-height: 26px; color: #172235; font-weight: 600; }
 QPushButton:hover { background: #d3dce9; border-color: #6f87a8; }

@@ -95,6 +95,7 @@ class GestureCalibration:
     separation: dict = field(default_factory=dict)
     neutral_noise: dict = field(default_factory=dict)
     session_neutral: dict = field(default_factory=dict)
+    min_quality: float = .85  # 0,75 en modo suave (config.gentle_calibration)
 
     def __post_init__(self):
         if not self.channels or len(self.channels) != len(self.directions) or len(set(self.channels)) != len(self.channels):
@@ -151,6 +152,10 @@ class GestureCalibration:
         self.repetitions = []
         self.quality_score, self.quality_label = 0., "REPETIR"
         self.validation_state = "repeat"
+        self.min_quality = getattr(config, "min_quality", .85)
+        # Modo suave: el promedio de los intentos y no el peor; con cansancio, un intento
+        # flojo hundía un gesto que en los demás se distinguía bien.
+        combine = mean if getattr(config, "gentle", False) else min
         if not self.enabled:
             self.disable()
             return self
@@ -209,7 +214,7 @@ class GestureCalibration:
             release = (low + threshold)/2
             self.activation_threshold[channel] = direction * threshold
             self.release_threshold[channel] = direction * release
-            channel_scores.append(min(scores(threshold)))
+            channel_scores.append(combine(scores(threshold)))
         if not self.reasons:
             # Calidad conjunta AND: exactitud balanceada mínima por repetición.
             def active_row(row):
@@ -222,9 +227,10 @@ class GestureCalibration:
                 score = (specificity+sensitivity)/2
                 scores.append(score)
                 self.repetitions[index].update(specificity=specificity, sensitivity=sensitivity, balanced_accuracy=score)
-            self.quality_score = min(scores + channel_scores)
-            self.quality_label = "BUENA" if self.quality_score >= .95 else "ACEPTABLE" if self.quality_score >= .85 else "DÉBIL"
-            if self.quality_score < .85:
+            self.quality_score = min([combine(scores)] + channel_scores)
+            self.quality_label = ("BUENA" if self.quality_score >= .95 else
+                                  "ACEPTABLE" if self.quality_score >= self.min_quality else "DÉBIL")
+            if self.quality_score < self.min_quality:
                 self.reasons.append("Las repeticiones no se distinguen de forma consistente")
         else:
             self.quality_label = "DÉBIL"
@@ -233,7 +239,7 @@ class GestureCalibration:
 
     @property
     def usable(self):
-        return (not self.enabled or (not self.reasons and self.quality_score >= .85
+        return (not self.enabled or (not self.reasons and self.quality_score >= self.min_quality
                 and set(self.activation_threshold) == set(self.channels)))
 
     def to_record(self):
@@ -241,7 +247,7 @@ class GestureCalibration:
         names = ("gesture_id", "source", "enabled", "repetitions", "neutral_statistics",
                  "active_statistics", "activation_threshold", "release_threshold", "quality_score",
                  "quality_label", "validation_state", "reasons", "retries", "rejected", "separation",
-                 "neutral_noise", "session_neutral")
+                 "neutral_noise", "session_neutral", "min_quality")
         result = {name: deepcopy(getattr(self, name)) for name in names}
         result.update(channels=list(self.channels), directions=list(self.directions),
                       repetitions_valid=sum(r.get("balanced_accuracy", 0) >= .85 for r in self.repetitions),

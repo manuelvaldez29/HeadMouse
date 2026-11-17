@@ -85,6 +85,9 @@ class TwoMethodGUITests(unittest.TestCase):
         self.select_calibrated();self.controller.vision_factory=EyeVision
         original=self.window.gesture_calibration_scroll
         self.window.start_ocular_gestures()
+        self.window.refresh()
+        self.assertTrue(self.window.calibration_setup.isVisible())  # primero se eligen los gestos
+        self.window.calibration_primary_action()
         self.wait(lambda:self.bridge.snapshot()["state"]=="CALIBRATING")
         self.window.refresh()
         self.assertEqual(self.window.calibration_tabs.currentIndex(),1)

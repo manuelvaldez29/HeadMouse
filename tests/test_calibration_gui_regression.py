@@ -74,7 +74,7 @@ class CalibrationGUIRegressionTests(unittest.TestCase):
                         self.assertIn(f"Intento {snap['attempt']}/3",window.wizard_status.text())
                 self.assertEqual(c.wizard.state,"validation")
                 self.assertEqual(len(attempts),27)
-                self.assertEqual(window.calibration_enabled["KISS"].text(),"Besito")
+                self.assertTrue(window.calibration_enabled["KISS"].text().startswith("Besito"))  # «· Doble click»
                 self.assertTrue(window.calibration_enabled["KISS"].isChecked())
                 self.assertIn("Probando",window.calibration_primary.text())
                 c.validate_calibration()  # reiniciar la prueba también funciona
