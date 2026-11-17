@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (QMainWindow, QWidget, QFrame, QVBoxLayout, QHBoxL
 from action_mapping import ACTIONS, DEFAULT_MAPPING, capitalized, gesture_phrase
 from gesture_signals import GESTURE_SIGNALS
 from gaze_source import SOURCE_LABELS as EYE_SOURCE_LABELS, eye_coordinates
+from desktop.style import current_theme, ink, set_theme
 from desktop.widgets import (CameraPreview, ExperimentCanvas, CalibrationMeter, DictationOverlay, LineChart, MiniCameraWindow,
     GestureMeters, gesture_progress, CHART_SERIES, CHART_NEUTRAL, label, card)
 
@@ -106,6 +107,9 @@ def status_message(s,event=None):
     if not s.get("profile"):
         return "Elegí un perfil en Perfiles para empezar.",False
     return "Listo para empezar: tocá «Iniciar CONFA» en Inicio.",False
+
+
+THEME_BUTTON={"dark":("☀  Modo claro","Cambiar a modo claro"),"light":("☾  Modo oscuro","Cambiar a modo oscuro")}
 
 
 class UIPreferences:
@@ -245,6 +249,9 @@ class MainWindow(QMainWindow):
         self.banner=label("Preparando CONFA…","StatusMessage")
         self.banner.setAccessibleName("Mensaje de estado")
         top.addWidget(self.banner,1)
+        # Tema claro u oscuro: en la barra de arriba para que esté en todas las páginas.
+        self.theme_button=button("☀  Modo claro",self.toggle_theme)
+        top.addWidget(self.theme_button)
         self.activate_button=button("Activar control",self.activate,"Primary")
         top.addWidget(self.activate_button)
         top.addWidget(button("DETENER CONTROL · F8",self.stop_immediately,"Danger"))
@@ -293,6 +300,7 @@ class MainWindow(QMainWindow):
         from desktop.overlay_layout import OverlayCoordinator
         self.overlay_layout=OverlayCoordinator(self)
         self.ui_prefs=UIPreferences()
+        self.apply_theme(self.ui_prefs.get("theme","dark"),save=False)
         mini=self.ui_prefs.get("mini_camera",True)  # predeterminado: visible
         for check in (self.mini_camera_check,self.mini_camera_settings_check):
             check.setChecked(mini)
@@ -979,25 +987,25 @@ class MainWindow(QMainWindow):
             title=GESTURE_LABELS[key]
             label_text=quality.get(key,{}).get("label","PENDIENTE")
             if not enabled.get(key,True):
-                icon,color,detail="—","#8192aa","sin calibrar" if label_text=="SIN CALIBRAR" else "no disponible"
+                icon,color,detail="—",ink("pending"),"sin calibrar" if label_text=="SIN CALIBRAR" else "no disponible"
             elif validating:
                 if key in recognized or wizard.get("state")=="validated":
-                    icon,color,detail="✓","#8ce5cd","detectado"
+                    icon,color,detail="✓",ink("ok"),"detectado"
                 elif key==current:
-                    icon,color,detail="●","#ffd166","probando ahora"
+                    icon,color,detail="●",ink("warn"),"probando ahora"
                 else:
-                    icon,color,detail="○","#8192aa","falta probar"
+                    icon,color,detail="○",ink("pending"),"falta probar"
             elif key==current and wizard.get("state")=="error":
-                icon,color,detail="✗","#ff8796","repetir"
+                icon,color,detail="✗",ink("bad"),"repetir"
             elif key==current:
                 attempt=wizard.get("attempt",0)
-                icon,color,detail="●","#ffd166",f"intento {attempt} de {wizard.get('repetitions',3)}"
+                icon,color,detail="●",ink("warn"),f"intento {attempt} de {wizard.get('repetitions',3)}"
             elif label_text.startswith(("BUENA","ACEPTABLE")) and "provisional" not in label_text:
-                icon,color,detail="✓","#8ce5cd",label_text.lower()
+                icon,color,detail="✓",ink("ok"),label_text.lower()
             elif label_text.startswith("DÉBIL"):
-                icon,color,detail="✗","#ff8796","débil: repetir"
+                icon,color,detail="✗",ink("bad"),"débil: repetir"
             else:
-                icon,color,detail="○","#8192aa","pendiente"
+                icon,color,detail="○",ink("pending"),"pendiente"
             rows.append(f"<span style='color:{color}'>{icon}</span>&nbsp; {title} "
                         f"<span style='color:#8192aa'>· {detail}</span>")
         self.calibration_steps_title.setText("Prueba de gestos" if validating else "Medición de gestos")
@@ -1077,6 +1085,24 @@ class MainWindow(QMainWindow):
         self.diagnostic_details_toggle.toggled.connect(details.setVisible)
         layout.addWidget(details)
         layout.addStretch()
+
+    def toggle_theme(self):
+        self.apply_theme("dark" if current_theme()=="light" else "light")
+
+    def apply_theme(self,theme,save=True):
+        """Tema claro u oscuro al instante, sin tocar el control ni la cámara. Es de esta
+        computadora, no del perfil: se guarda con las demás preferencias de la interfaz."""
+        application=QApplication.instance()
+        if application is not None:
+            set_theme(application,theme)
+        text,accessible=THEME_BUTTON[current_theme()]
+        self.theme_button.setText(text)
+        self.theme_button.setAccessibleName(accessible)
+        self.theme_button.setToolTip("Cambia los colores de CONFA. No detiene el control.")
+        if save:
+            self.ui_prefs.set("theme",current_theme())
+        for widget in self.findChildren(QWidget):
+            widget.update()  # los gráficos y medidores se dibujan con los colores del tema
 
     def set_mini_camera(self,visible):
         """Una sola preferencia, dos casillas (Inicio y Configuración) sincronizadas."""

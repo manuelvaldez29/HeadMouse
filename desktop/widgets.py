@@ -3,6 +3,7 @@ from PySide6.QtCore import Qt, QRectF, QPointF, Signal
 from PySide6.QtGui import QPainter, QColor, QPen, QImage, QFontMetrics
 from PySide6.QtWidgets import QWidget, QLabel, QVBoxLayout, QHBoxLayout, QFrame
 from gaze_source import iris_markers
+from desktop.style import ink as theme_ink  # «ink» es el nombre local de los gráficos
 
 
 def label(text, name="", wrap=True):
@@ -115,14 +116,14 @@ class CalibrationMeter(QWidget):
     def paintEvent(self,event):
         p=QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        p.fillRect(self.rect(),QColor("#172337"))
-        p.setPen(QColor("#b1c6df"))
+        p.fillRect(self.rect(),QColor(theme_ink("meter_bg")))
+        p.setPen(QColor(theme_ink("meter_text")))
         if not self.rows:
             p.drawText(self.rect().adjusted(12,8,-12,-8),
                        Qt.AlignmentFlag.AlignCenter|Qt.TextFlag.TextWordWrap,
                        "El medidor aparece al comenzar los gestos")
             return
-        colors={"neutral":"#b1c6df","release":"#cfb3ff","activation":"#ffd477","comfortable":"#71dfbe"}
+        colors={key:theme_ink("meter_"+key) for key in ("neutral","release","activation","comfortable")}
         labels={"neutral":"Neutral","release":"Liberación","activation":"Activación","comfortable":"Gesto cómodo"}
         columns=2 if self.width()<420 else 4
         for i,(key,color) in enumerate(colors.items()):
@@ -137,7 +138,7 @@ class CalibrationMeter(QWidget):
             padding=max(.005,(hi-lo)*.15)
             lo,hi=lo-padding,hi+padding
             xpos=lambda v: 25+(d*v-lo)/(hi-lo)*(self.width()-50)
-            p.setPen(QPen(QColor("#536b8b"),3))
+            p.setPen(QPen(QColor(theme_ink("meter_track")),3))
             p.drawLine(QPointF(25,y),QPointF(self.width()-25,y))
             for key,color in colors.items():
                 if row.get(key) is not None:
@@ -146,10 +147,10 @@ class CalibrationMeter(QWidget):
                     p.drawLine(QPointF(x,y-8),QPointF(x,y+8))
             value=row.get("value")
             if value is not None:
-                p.setBrush(QColor("#6df4e0"))
+                p.setBrush(QColor(theme_ink("meter_value")))
                 p.setPen(Qt.PenStyle.NoPen)
                 p.drawEllipse(QPointF(xpos(value),y),6,6)
-            p.setPen(QColor("#eef3fc"))
+            p.setPen(QColor(theme_ink("primary")))
             side={"left":"Izquierda", "right":"Derecha", "mouth_left":"Labios izq.", "mouth_right":"Labios der."}.get(row["channel"],"Señal")
             text=f"{side} · Valor actual: {value:.4f}" if value is not None else f"{side} · Esperando señal"
             if row.get("activation") is None: text+=" · Falta una captura válida"
@@ -278,9 +279,12 @@ class DictationOverlay(QWidget):
 # Colores validados con la guía de visualización (dataviz/validate_palette.js) sobre
 # el fondo de tarjeta #172337: tres series pasan CVD ΔE 9,4 y contraste >= 3:1.
 CHART_SERIES = ("#3987e5", "#d95926", "#199e70")
-CHART_NEUTRAL = "#b2c1d7"  # serie única: el título ya la nombra, no necesita identidad
-CHART_INK = dict(surface="#172337", primary="#eef3fc", secondary="#b2c1d7", muted="#8192aa",
-                 grid="#26364d", axis="#405670")
+CHART_NEUTRAL = "neutral"  # serie única: el título ya la nombra; su color depende del tema (ink)
+CHART_INK = ("surface", "primary", "secondary", "muted", "grid", "axis")
+
+
+def series_color(color):
+    return QColor(theme_ink("neutral") if color == CHART_NEUTRAL else color)
 
 
 def nice_ticks(maximum, count=4):
@@ -372,7 +376,7 @@ class LineChart(QWidget):
     def paintEvent(self, event):
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        ink = {k: QColor(v) for k, v in CHART_INK.items()}
+        ink = {k: QColor(theme_ink(k)) for k in CHART_INK}
         metrics = QFontMetrics(p.font())
         if not self.labels or not self.series:
             p.setPen(ink["secondary"])
@@ -404,14 +408,14 @@ class LineChart(QWidget):
         if len(self.series) > 1 and not faceted:
             xx = plot.left()
             for serie in self.series:
-                p.setPen(QPen(QColor(serie["color"]), 2))
+                p.setPen(QPen(series_color(serie["color"]), 2))
                 p.drawLine(QPointF(xx, 15), QPointF(xx + 16, 15))
                 p.setPen(ink["secondary"])
                 p.drawText(QPointF(xx + 22, 20), serie["name"])
                 xx += 22 + metrics.horizontalAdvance(serie["name"]) + 22
         ends = []
         for serie, band in zip(self.series, bands):
-            color = QColor(serie["color"])
+            color = series_color(serie["color"])
             y = lambda value, band=band: band.bottom() - band.height() * value / scale
             points = [QPointF(self._x(plot, i), y(v)) for i, v in enumerate(serie["values"])]
             pen = QPen(color, 2)
@@ -452,14 +456,14 @@ class LineChart(QWidget):
             left = xx + 12 if xx + 12 + width < self.width() else xx - 12 - width
             box = QRectF(left, plot.top(), width, height)
             p.setPen(QPen(ink["axis"], 1))
-            p.setBrush(QColor("#0f1a2b"))
+            p.setBrush(QColor(theme_ink("tooltip")))
             p.drawRoundedRect(box, 8, 8)
             p.setPen(ink["primary"])
             p.drawText(QPointF(box.left() + 12, box.top() + 17), self.labels[self.hover])
             for i, (color, text) in enumerate(rows):
                 yy = box.top() + 24 + 20 * i
                 p.setPen(Qt.PenStyle.NoPen)
-                p.setBrush(QColor(color))
+                p.setBrush(series_color(color))
                 p.drawEllipse(QPointF(box.left() + 16, yy + 9), 4, 4)
                 p.setPen(ink["secondary"])
                 p.drawText(QPointF(box.left() + 26, yy + 13), text)
@@ -508,20 +512,20 @@ class GestureMeters(QWidget):
         track_w = max(40, self.width() - label_w - 74)
         for i, (label, value, active, available) in enumerate(self.rows):
             y = i * self.ROW + 4
-            p.setPen(QColor("#eef3fc" if available else "#8192aa"))
+            p.setPen(QColor(theme_ink("primary") if available else theme_ink("muted")))
             p.drawText(QRectF(0, y, label_w, 20), Qt.AlignmentFlag.AlignVCenter, label)
             track = QRectF(label_w, y + 6, track_w, 8)
             p.setPen(Qt.PenStyle.NoPen)
-            p.setBrush(QColor("#26364d"))
+            p.setBrush(QColor(theme_ink("bar_track")))
             p.drawRoundedRect(track, 4, 4)
             if available and value is not None:
                 fill = track.adjusted(0, 0, -track.width() * (1 - min(value, 1.25) / 1.25), 0)
-                p.setBrush(QColor("#57d4c3" if active else "#3f7f86"))
+                p.setBrush(QColor(theme_ink("bar_fill") if active else theme_ink("bar_idle")))
                 p.drawRoundedRect(fill, 4, 4)
             mark = track.left() + track.width() / 1.25  # la activación queda al 80 % del ancho
-            p.setPen(QPen(QColor("#ffd166"), 2))
+            p.setPen(QPen(QColor(theme_ink("warn")), 2))
             p.drawLine(QPointF(mark, y + 2), QPointF(mark, y + 18))
-            p.setPen(QColor("#8ce5cd" if active else "#8192aa"))
+            p.setPen(QColor(theme_ink("ok") if active else theme_ink("muted")))
             status = "no disponible" if not available else "● activo" if active else "—" if value is None else ""
             p.drawText(QRectF(track.right() + 10, y, 70, 20), Qt.AlignmentFlag.AlignVCenter, status)
 

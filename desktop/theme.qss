@@ -9,6 +9,10 @@ QLabel#CalibrationInstruction { font-size: 21px; font-weight: 650; color: #fffff
 QLabel#MetricValue { font-size: 25px; font-weight: 600; color: #69e0d0; }
 QFrame#Card { background: #172337; border: 1px solid #30425c; border-radius: 14px; }
 QFrame#Card QLabel { background: transparent; }
+/* Contenedores comunes (.QWidget: sólo esa clase, no campos ni botones) y textos dentro de tarjetas
+   y de la barra lateral: sin fondo propio, para que no queden recuadros de otro tono. */
+QFrame#Card .QWidget, QFrame#ProfileCard .QWidget, QFrame#ProfileCardActive .QWidget,
+QFrame#Sidebar .QWidget, QFrame#Sidebar QLabel { background: transparent; }
 QPushButton { background: #253651; border: 1px solid #415876; border-radius: 8px;
               padding: 11px 16px; min-height: 26px; color: #f4f7ff; font-weight: 600; }
 QPushButton:hover { background: #314967; border-color: #89a5c9; }

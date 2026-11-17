@@ -232,7 +232,10 @@ class VirtualKeyboard(QWidget):
         self.restore_handle.clicked.connect(self.toggle)
         self.restore_handle.setStyleSheet("QPushButton {background:#173d49;color:#f1fffe;border:2px solid #6ee7dc;"
                                          "border-radius:8px;padding:5px 8px;font-size:14px;font-weight:bold;}")
+        # Siempre oscuro, también con el tema claro de CONFA: flota sobre otras apps. El
+        # primer renglón evita que el fondo claro de la app se cuele en los contenedores.
         self.setStyleSheet("""
+            QWidget { background: transparent; color: #f1f5f9; }
             QWidget#VirtualKeyboard { background: #111d2d; border: 1px solid #55728e; border-radius: 10px; }
             QLabel { color: #f1f5f9; background: transparent; font-size: 12px; }
             QPushButton { color: #fff; background: #283d55; border: 1px solid #527391;
