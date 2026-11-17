@@ -341,9 +341,12 @@ class Dictation:
         if self.click_allowed():
             self._arm("click")
 
-    def start_now(self, expected_runtime=None):
-        """Acción DICTATE: dictar en el campo que ya tiene el foco."""
-        self._arm("now", expected_runtime)
+    def start_now(self, expected_runtime=None, window=None):
+        """Acción DICTATE: dictar en el campo que ya tiene el foco.
+
+        `window` lo pasa el botón Dictar del teclado virtual: el teclado ya encontró el
+        campo (editable, sin contraseña) en esa ventana. Ver `_keyboard_field`."""
+        self._arm("now", expected_runtime, window=window)
 
     def start_assistant(self):
         """Acción ASSISTANT: escuchar un comando ("abrir Bloc de notas") en vez de dictar."""
@@ -448,9 +451,12 @@ class Dictation:
                 return None
             time.sleep(.05)
 
-    def _session(self, kind, since, expected_runtime=None, prefix=None):
+    def _session(self, kind, since, expected_runtime=None, prefix=None, window=None):
         assistant = kind == "assistant"  # sin campo de texto: lo dicho es un comando
         info = None if assistant else self._wait_focus(kind, since)
+        trusted = info is None and self._keyboard_field(window, expected_runtime)
+        if trusted:
+            info = FocusInfo(True, False, "teclado", "", expected_runtime)
         if expected_runtime is not None and (info is None or info.runtime_id != expected_runtime):
             with self._lock:
                 self.message = "El campo cambió antes de iniciar el dictado."
@@ -522,9 +528,12 @@ class Dictation:
                                   transcribe_s=self.clock() - spoken_at)
             return
         current = self.focus.focused() if not self._cancel.is_set() else None
-        same_field = current and current.editable and not current.password and (
-            current.runtime_id == info.runtime_id if info.runtime_id is not None else current == info
-        )
+        if trusted:
+            same_field = not self._cancel.is_set() and self._keyboard_field(window, expected_runtime)
+        else:
+            same_field = current and current.editable and not current.password and (
+                current.runtime_id == info.runtime_id if info.runtime_id is not None else current == info
+            )
         if self._cancel.is_set() or not self.output_allowed() or not same_field:
             with self._lock:
                 self.message = "Dictado cancelado: el campo o el control ya no está disponible."
@@ -569,6 +578,26 @@ class Dictation:
             command = find_wake(text) or rest
         self._assistant_reply(command, listen_s=0., audio_s=0. if audio is None else len(audio) / SAMPLE_RATE,
                               transcribe_s=self.clock() - started, wake=True)
+
+    def _keyboard_field(self, window, runtime_id):
+        """¿Sigue valiendo el campo que encontró el teclado virtual?
+
+        En WhatsApp Desktop (WebView2 dentro de WinUI 3) UI Automation deja el foco en el
+        puente de WinUI y el cuadro de mensaje sólo aparece buscándolo bajo el puntero.
+        Con el botón Dictar el puntero está sobre el teclado de CONFA, así que el dictado
+        no lo veía (log del 2026-11-16). El teclado sí lo recuerda desde el click. Vale si
+        sigue adelante la misma ventana y el dictado no ve otra cosa: ni una contraseña
+        ni otro campo editable.
+        """
+        if window is None or runtime_id is None:
+            return False
+        foreground = getattr(self.focus, "foreground_window", None)
+        if foreground is None or foreground() != window:
+            return False
+        seen = self.focus.focused()
+        if seen is not None and (seen.password or (seen.editable and seen.runtime_id != runtime_id)):
+            return False
+        return True
 
     def _assistant_reply(self, text, **timing):
         from assistant import as_gema
@@ -663,6 +692,13 @@ class UIAFocusProbe:
         if not info.editable and not info.password:
             return self._focused_under_pointer() or info
         return info
+
+    def foreground_window(self):
+        import ctypes
+        import ctypes.wintypes as w
+        user32 = ctypes.WinDLL("user32")  # instancia propia: no tocar los argtypes globales
+        user32.GetForegroundWindow.restype = w.HWND
+        return user32.GetForegroundWindow()
 
     def _classify(self, element):
         control = element.CurrentControlType

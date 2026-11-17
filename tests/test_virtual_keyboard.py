@@ -236,7 +236,7 @@ class VirtualKeyboardTests(unittest.TestCase):
         wait_for(lambda:self.buffer.text=="ñ7€á")
         QTest.mouseClick(panel.mic,Qt.MouseButton.LeftButton)
         wait_for(lambda:voice.start_now.called)
-        voice.start_now.assert_called_once_with(expected_runtime=(4,))
+        voice.start_now.assert_called_once_with(expected_runtime=(4,), window=1)  # el campo que vio el teclado
         focus.focused.return_value=Target(2,(5,),False,True)
         wait_for(lambda:not panel.isVisible())
         settings["auto_open"]=False

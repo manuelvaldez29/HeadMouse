@@ -222,7 +222,7 @@ class KeyboardService(QObject):
                                     voice.cancel()
                                 else:
                                     session.reset(clear_saved=True)
-                                    voice.start_now(expected_runtime=target.runtime)
+                                    voice.start_now(expected_runtime=target.runtime, window=target.window)
                                 executed = True
                         elif not busy:
                             if typer is None:
