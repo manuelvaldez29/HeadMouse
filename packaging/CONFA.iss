@@ -13,7 +13,7 @@ AppVersion={#AppVersion}
 VersionInfoVersion={#AppVersion}
 VersionInfoProductVersion={#AppVersion}
 VersionInfoDescription=Instalador CONFA - Controlador Facial y Asistente de voz
-AppPublisher=CONFA — UNSTA
+AppPublisher=Bloj Gustavo Ivan, Domfrocht Julian Davico, Petrelli Maximo Francesco, Valdez Manuel Ricardo
 DefaultDirName={localappdata}\Programs\CONFA
 DefaultGroupName=CONFA
 ; Al actualizar desde HeadMouse se conserva la carpeta de programa, pero el menú Inicio pasa a CONFA.

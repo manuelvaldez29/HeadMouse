@@ -1,4 +1,4 @@
-"""CONFA (Controlador Facial y Asistente de voz) — aplicación Windows, tesis UNSTA 2026."""
+"""CONFA (Controlador Facial y Asistente de voz) — aplicación para Windows."""
 import argparse
 import sys
 from config import configure_logging

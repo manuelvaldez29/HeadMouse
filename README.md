@@ -1,6 +1,9 @@
 # CONFA — Controlador Facial y Asistente de voz
 
-Tesis de Ingeniería en Informática, UNSTA 2026 (Bloj · Domfrocht · Petrelli · Valdez).
+**Propiedad intelectual** · Bloj Gustavo Ivan, Domfrocht Julian Davico, Petrelli Maximo Francesco y Valdez Manuel Ricardo.
+
+[Guía de usuario ilustrada para imprimir en A4 (PDF)](docs/Guia-de-usuario-CONFA-0.6.0.pdf)
+
 Hasta noviembre de 2026 el proyecto se llamó **HeadMouse**; el repositorio conserva ese nombre.
 Al abrir CONFA por primera vez, `%LOCALAPPDATA%\HeadMouse` se renombra solo a
 `%LOCALAPPDATA%\CONFA` con todos los perfiles, modelos y métricas.
@@ -8,7 +11,6 @@ Al abrir CONFA por primera vez, `%LOCALAPPDATA%\HeadMouse` se renombra solo a
 ## Calibración facial adaptativa (v0.3.1)
 
 Control local de PC con movimiento de cabeza y gestos faciales.
-Tesis UNSTA 2026 — Bloj · Domfrocht · Petrelli · Valdez.
 
 ## Aplicación instalable para Windows
 

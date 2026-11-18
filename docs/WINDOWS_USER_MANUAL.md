@@ -1,322 +1,147 @@
-# CONFA 0.6.0 — Manual de usuario para Windows
+# CONFA
 
-CONFA (Controlador Facial y Asistente de voz, antes HeadMouse) es un proyecto de tesis de Ingeniería en Informática de UNSTA. Permite
-controlar el puntero mediante Nariz u Ojos y realizar acciones faciales calibradas.
-El seguimiento ocular continúa siendo experimental: aprobar una calibración no
-garantiza precisión suficiente para cualquier tarea o persona.
+Guía de usuario para Windows · Versión 0.6.0
 
-## Requisitos e instalación
+CONFA significa **Controlador Facial y Asistente de voz**. El proyecto se conocía como HeadMouse. Con una webcam podés mover el puntero, elegir acciones con gestos y escribir. Si tenés micrófono, también podés dictar y pedirle a Gema que maneje funciones de Windows.
 
-Windows x64, versión 10 2004 o posterior, o Windows 11; webcam RGB y buena luz.
-El instalador incluye Python, Qt, MediaPipe, OpenCV, NumPy, PyAutoGUI y el modelo
-facial. No hace falta instalar Python ni usar una terminal. La primera versión
-se verificó en el equipo de desarrollo indicado en el informe de pruebas;
-la matriz completa de equipos y Windows 10/11 requiere pruebas adicionales.
+![Inicio con un perfil de ejemplo y el método Ojos seleccionado. El botón principal indica el próximo paso.](screenshots/guia-060/inicio.png)
 
-Abrir `CONFA-Setup-0.6.0-win64.exe` y seguir el asistente. Se instala para el
-usuario actual en `%LOCALAPPDATA%\Programs\CONFA`. Crea acceso en Inicio,
-ofrece acceso de escritorio y registra un desinstalador. Abrir al finalizar es
-opcional; la instalación no habilita el control ni el inicio con Windows.
-La compilación de tesis no está firmada digitalmente: Windows puede mostrar
-el aviso de editor desconocido. No se contrató un certificado de firma.
+### Propiedad intelectual
 
-## Exportar diagnóstico
+Bloj Gustavo Ivan
 
-Si algo no funciona bien, en **Diagnóstico → Exportar diagnóstico** se guarda un `.zip` con
-los registros y las señales numéricas de los ojos. No incluye imágenes de la cámara. Mandá ese
-archivo a quien te da soporte.
+Domfrocht Julian Davico
 
-## Primera ejecución
+Petrelli Maximo Francesco
 
-Inicio indica el siguiente paso. Crear o seleccionar un perfil personal, elegir
-Nariz u Ojos y entrar en Calibración. La navegación original sigue disponible:
-Inicio, Perfiles, Calibración, Diagnóstico, Configuración, Gestos y acciones,
-Experimentos y Métricas.
+Valdez Manuel Ricardo
 
-Cada persona conserva un perfil con bancos independientes por método. Cambiar
-de método no convierte ni aprueba automáticamente sus calibraciones.
+**Para detener el control y apagar la cámara**, usá **Detener control**. F8 permite hacerlo desde otra aplicación cuando está registrado en Windows.
 
-## Calibrar Nariz y los gestos
+## Instalar y crear el primer perfil
 
-En Calibración → Nariz, antes de empezar, marcá sólo los gestos que te salen
-cómodos y vas a usar. Con uno para hacer click y otro para pausar alcanza: para
-empezar vienen marcados el guiño izquierdo y ambas cejas. Al lado de cada gesto se
-ve qué hace. Cuantos menos gestos, más corta la calibración, y los demás se pueden
-sumar después. Mantené una postura cómoda y seguí los neutrales y tres repeticiones
-por gesto. Hacé la prueba de reconocimiento y guardá sólo cuando apruebe. Un gesto
-que no pueda calibrarse puede marcarse no disponible: no generará su acción.
+Necesitás Windows 10 de 64 bits (versión 2004 o posterior) o Windows 11, una webcam y luz suficiente para ver tu rostro. El micrófono se usa para las funciones de voz.
 
-Movimientos suaves: para quien tiene poca fuerza en la cara, se cansa o se mueve
-despacio (por ejemplo, con ELA). Pide dos intentos por gesto en vez de tres, da más
-tiempo, acepta gestos más chicos y aprueba un gesto por el promedio de sus intentos.
-A cambio, cada gesto se sostiene un tercio de segundo para que actúe, así un
-movimiento involuntario no hace click. Se guarda en el perfil.
+1. Abrí **CONFA-Setup-0.6.0-win64.exe** y seguí el asistente. Podés elegir un acceso en el escritorio. También vas a encontrar CONFA en el menú Inicio de Windows. El instalador incluye el entorno y los modelos necesarios para el uso local.
+2. Abrí CONFA. En **Inicio**, tocá **Crear mi perfil**, o entrá en **Perfiles → Nuevo perfil**. Usá un nombre que reconozcas. Si varias personas comparten el equipo, creá un perfil para cada una.
+3. Elegí **Nariz** u **Ojos**. Sentate de forma cómoda, con el rostro visible y la cámara estable. En **Calibración**, prepará el método elegido. Inicio te irá indicando cuándo podés empezar.
+4. Para ajustar los colores, tocá **Modo claro** o **Modo oscuro** en la barra superior. Podés cambiar el tema con el control en marcha. El teclado flotante conserva su fondo oscuro.
 
-Para rehacer un solo gesto, elegilo en «¿Ya calibraste y sólo querés rehacer uno?» y
-tocá «Recalibrar sólo ese gesto». Se mide y se prueba sólo ése; los demás conservan
-su calibración guardada. Así también se suma después un gesto que estaba apagado.
+![Perfiles en una instalación nueva. El botón Nuevo perfil está a la derecha.](screenshots/guia-060/perfiles.png)
 
-En Gestos y acciones se asignan las acciones del método seleccionado. Cambiar
-tiempos de reconocimiento puede exigir validar nuevamente. Diagnóstico muestra
-las señales y el comportamiento esperado sin mover el puntero del sistema.
+### Si aparece «Cargar licencia»
 
-## Calibrar Ojos
+En la edición que muestra ese botón, abrí **Cargar licencia** desde Inicio, o **Configuración → Licencia**. Cargá el archivo **.hmlic** que recibiste o pegá el texto de la licencia y tocá **Activar licencia**. Volvé a Inicio para continuar con el perfil. Este paso corresponde únicamente a las ediciones que muestran esa pantalla.
 
-Elegir Ambos ojos, Ojo izquierdo u Ojo derecho. No cambiar cámara, distancia,
-pantalla o fuente durante la captura. Calibrar movimiento y gestos por separado.
-La respuesta por posición utiliza nueve fijaciones de aprendizaje y cinco de
-validación independiente. Las respuestas históricas por dirección conservan su
-procedimiento y modelo: no se sustituyen silenciosamente.
+## Nariz y gestos cómodos
 
-Si la comprobación falla, revisar el objetivo o aprendizaje señalado y usar
-Guardar diagnóstico. No se habilita Guardar por una puntuación artificial.
-Probar la predicción segura antes de activar. Durante guiños o pérdida de iris
-se inhibe el movimiento y se espera recuperación estable. Ojos puede funcionar
-sólo con movimiento si sus gestos siguen pendientes; no se habilitan clics por
-tener aprobados los gestos de Nariz.
+Elegí **Nariz** en Inicio y abrí **Calibración → Nariz**. El movimiento parte de una postura de descanso. Los gestos que marques servirán para ejecutar acciones como hacer clic o pausar.
 
-## Iniciar, pausar y detener
+![Tarjeta de calibración. Cada casilla muestra el gesto y la acción que tiene asignada en el perfil.](screenshots/guia-060/gestos.png)
 
-Iniciar CONFA o Activar control muestra una confirmación antes de controlar
-el sistema. Las acciones requieren su calibración y autorización correspondientes.
-Ambas cejas permiten pausa/reanudación si ese gesto está habilitado y validado.
+1. Marcá los gestos que quieras usar. La selección inicial propone **guiño izquierdo** para hacer clic y **ambas cejas** para pausar o reanudar. Revisá la acción escrita al lado de cada casilla.
+2. Si te cansás o tenés poco recorrido facial, marcá **Movimientos suaves** antes de empezar. Pide dos intentos por gesto, da más tiempo y admite gestos más pequeños. Durante el uso, sostené el gesto alrededor de un tercio de segundo para ejecutar su acción.
+3. Tocá **Comenzar calibración**. Mirá la cámara en reposo cuando se indique y realizá el gesto pedido. En el modo habitual se miden tres repeticiones. Completá la prueba de reconocimiento y tocá **Guardar perfil** cuando esté disponible.
+4. Para cambiar una sola medición, elegí el gesto en el selector inferior y pulsá **Recalibrar sólo ese gesto**. Medí, validá y guardá. Los demás gestos conservan sus valores.
 
-Detener control, F8 y Escape detienen la salida y apagan la cámara, incluso en
-vista previa. F8 global se intenta registrar en Windows; Ver estado en bandeja
-informa si se consiguió. Si otra aplicación lo tiene reservado, F8 requiere foco
-en CONFA. Siempre hay Detener en la bandeja y en la ventana. El failsafe de
-PyAutoGUI permanece activo. El mouse y teclado físicos siguen disponibles.
+**Para empezar a mover el puntero**, volvé a Inicio, elegí **Iniciar CONFA** y confirmá. Mantené una postura cómoda mientras se fija el centro. La mini cámara opcional muestra la nariz y la zona quieta. En **Gestos y acciones** podés revisar qué hace cada gesto en ese método.
 
-## Inicio con Windows
+## Ojos · Directo y Joystick
 
-Después de guardar la primera calibración válida aparece una pregunta, una vez
-por equipo/usuario. Elegí Sí, iniciar automáticamente, o No, iniciar manualmente. También se puede
-cambiar en Configuración → Básico → Inicio y accesibilidad:
+En **Inicio → Ojos**, elegí cómo querés mover el puntero. En **Calibración → Ojos**, elegí **Ambos ojos**, **Ojo izquierdo** u **Ojo derecho**. Cada fuente conserva su propio ajuste. Mantené la misma pantalla, cámara y postura durante la medición.
 
-- Iniciar CONFA automáticamente con Windows.
-- Activar automáticamente el seguimiento.
-- Recordar el último perfil elegido.
-- Perfil para activación automática.
-- Iniciar minimizado en la bandeja del sistema.
+![Selector de movimiento ocular en Inicio.](screenshots/guia-060/metodo.png)
 
-Guardar preferencias modifica sólo la entrada CONFA del inicio del usuario.
-La segunda casilla requiere la primera y un perfil calibrado. Además muestra una
-confirmación explícita: autoriza movimiento y únicamente las acciones validadas
-de ese perfil. Se aplica al próximo inicio de sesión, no empieza a mover el
-puntero al guardar estas preferencias.
+### Directo · señalar una posición
 
-Con sólo apertura automática se recupera el último perfil si habilitaste recordarlo y se prepara la cámara,
-pero el control permanece desactivado. Con activación autorizada se comprueba
-el perfil, cámara, contexto y al menos diez frames faciales estables durante
-700 ms antes de solicitar activación. El controlador vuelve a validar la
-autorización y sus requisitos. Si falla, la ventana informa el problema.
+Mirá cada objetivo de pantalla cuando aparezca. Se usan nueve puntos para aprender el ajuste y cinco para comprobarlo. Revisá el resultado y guardalo cuando la aplicación lo permita. El puntero se dirige a la posición estimada de la mirada. El seguimiento ocular es experimental y la precisión puede variar entre personas y sesiones.
 
-Cambiar el perfil/calibración invalida la autorización anterior: volver a guardar
-las preferencias y autorizar. Nunca se controla la pantalla de bloqueo. Bloqueo
-y suspensión revocan salida y cierran captura; al regresar, sólo una autorización
-vigente permite repetir las comprobaciones. Detener manualmente impide reanudación
-automática durante esa ejecución.
+### Joystick · mover por dirección
 
-El estado de inicio se consulta en el registro de Windows. Si movés la carpeta
-portable, abrí CONFA desde la nueva ubicación, marcá la opción y guardá.
-Para iniciar el control con el teclado, poné CONFA en foco y presioná
-Ctrl+Mayús+Intro. Elegí Sí con Tab y confirmá con Espacio.
+Tocá **Calibrar joystick · 5 puntos** y seguí los cinco objetivos, uno por vez. Al activar, mirá primero la zona central. Después mirá hacia una de las cuatro marcas de los bordes para mover el puntero desde su posición actual. Volvé al centro para frenarlo. Si miraste fuera de la pantalla, volvé brevemente al centro para retomar.
 
-## Bandeja y cierre
+![Marcas del joystick distribuidas en la pantalla. En este ejemplo se reconoce la dirección derecha.](screenshots/guia-060/bordes.png)
 
-El menú de bandeja permite Abrir, Ver estado, Activar, Pausar, Detener,
-Configuración y Salir completamente. Si se eligió iniciar minimizado y existe
-bandeja disponible, X oculta la ventana y conserva el estado indicado en bandeja;
-puede seguir el control si ya estaba autorizado. Sin esa preferencia, X termina
-la aplicación. Salir y Salir completamente siempre cierran cámara y aplicación.
-Si la bandeja no está disponible, la ventana permanece accesible.
+Si una flecha queda gris, Inicio ofrece repetir ese eje con **tres puntos**. Una calibración parcial puede permitir movimiento reducido en el eje disponible, con los clics deshabilitados. **Recentrar mirada** ajusta el reposo y **Revertir recentrado** recupera el anterior. La calibración de gestos de Ojos se guarda por separado de la de Nariz.
 
-## Teclado virtual y diccionario personal
+## Escribir con el teclado virtual
 
-Con el control activo, seleccioná un campo editable con Nariz u Ojos. CONFA
-muestra el teclado sin quitarle el foco al campo. También podés abrirlo desde la
-bandeja o con Ctrl+Alt+K si Windows permite registrar el atajo. Elegí las teclas
-con el clic configurado de CONFA. Las pestañas ABC, ?123, símbolos, acentos
-y emoji permiten escribir sin mantener teclas presionadas. F8 oculta el teclado
-y detiene el control.
+Con el control activo, seleccioná un campo de texto. El teclado aparece cuando la aplicación reconoce el campo y está habilitada la apertura automática. También podés usar **Ctrl+Alt+K** o **Mostrar u ocultar teclado** en la bandeja.
 
-En Configuración → Básico → Teclado virtual y escritura podés ajustar la
-apertura automática, tamaño, posición y visibilidad del micrófono. El botón
-Dictar usa el módulo de voz del perfil cuando lo seleccionás. Durante la
-escucha podés terminar con tu gesto de clic o cancelar con el gesto de pausa
-o F8. Con la apertura automática del teclado desactivada, el dictado anterior
-por clic sigue disponible cuando el teclado está oculto.
+![Teclado con un campo de ejemplo. Al escribir «ho», la sugerencia «hola» se puede seleccionar sobre las teclas.](screenshots/guia-060/teclado.png)
 
-En Predicción y aprendizaje de palabras podés activar el aprendizaje local
-por perfil. El teclado aprende al terminar una palabra, no cada letra. Las
-tres sugerencias combinan el vocabulario personal, su uso reciente, el contexto
-de hasta dos palabras y una lista base en español. Las correcciones se marcan
-con ✓ y sólo se aplican al elegirlas. Administrar diccionario personal permite
-eliminar una palabra o borrar todo. Desactivar el aprendizaje conserva lo
-aprendido hasta que decidas borrarlo.
+1. Probalo en Bloc de notas. Elegí las letras con tu gesto de clic. **ABC**, **?123**, **Acentos** y **Emoji** cambian el grupo de teclas. Usá **Espacio**, **Enter** o retroceso como en un teclado físico.
+2. Si escribís **ho** y aparece **hola**, tocá la sugerencia. Completa la palabra en el campo activo. La vista superior te ayuda a revisar qué escribió el teclado y si pudo comprobar el cursor.
+3. En **Configuración → Básico → Predicción y aprendizaje de palabras**, marcá **Aprender palabras completas en este perfil** y guardá la configuración si querés que recuerde tu vocabulario. En **Administrar diccionario personal** podés eliminar una palabra o borrar el vocabulario del perfil.
+4. **Ocultar** deja un botón flotante para recuperar el teclado. En **Configuración → Básico → Teclado virtual y escritura** podés ajustar tamaño, posición, opacidad y vista previa. Para selección por permanencia con Ojos, revisá la opción de permanencia y sus requisitos en **Configuración → Ojos**.
 
-CONFA sólo aprende de sus propias teclas y en campos que identifican
-el foco y permiten verificar el cursor. Los campos de contraseña, los
-identificados como sensibles y los no verificables quedan en modo privado.
-El diccionario guarda frecuencias y combinaciones cortas en SQLite bajo
-`%LOCALAPPDATA%\CONFA\keyboard`, fuera de la instalación. El dictado
-no alimenta el diccionario. En aplicaciones que no exponen bien el foco,
-la apertura manual permite escritura directa sin aprendizaje.
+El aprendizaje es local y opcional. Los campos de contraseña o sensibles quedan en modo privado. Si un programa impide verificar el cursor, revisá el texto directamente en el destino. El dictado y el diccionario del teclado se configuran por separado.
 
-La zona superior muestra únicamente texto compuesto por el teclado durante esta
-sesión, con un cursor de composición y desplazamiento para textos largos. El
-indicador distingue texto enviado a Windows y cursor comprobado en el destino.
-La comprobación contrasta caracteres propios y no importa conversaciones. Si
-cambia el campo, el cursor externo o la autorización, la composición se limpia.
-Los campos sensibles no muestran vista previa. El texto de esta vista no se
-guarda. Una tecla azul está seleccionada; verde indica que Windows aceptó el
-envío; rojo indica que no se pudo enviar. Esto no garantiza que una aplicación
-externa haya conservado el texto.
+## Dictar en un campo de texto
 
-Ocultar deja disponible el botón flotante «Abrir teclado». También podés volver
-a seleccionar el mismo campo con el clic de CONFA, cambiar de campo, usar
-Ctrl+Alt+K, la bandeja o Mostrar u ocultar teclado en Configuración. Desactivar
-la apertura automática conserva la apertura manual. F8 revoca el control y
-oculta ambos elementos del teclado.
+En **Configuración → Básico → Dictado por voz**, activá el dictado, elegí el micrófono y guardá la configuración. Si cambiaste de dispositivo, tocá **Buscar micrófonos**. Windows debe permitir el micrófono para las aplicaciones de escritorio.
 
-Posición del teclado virtual ofrece Automática, Siempre arriba y Siempre abajo.
-Automática utiliza el rectángulo del campo y el monitor correspondiente para
-elegir espacio libre o menor superposición. El teclado conserva su posición
-mientras escribís. Cuando falta geometría se usa una ubicación inferior en el
-monitor disponible; las posiciones fijas permiten ajustar el caso particular.
-Un editor que ocupa toda la pantalla puede seguir parcialmente cubierto. El
-tamaño de las teclas se conserva y la vista previa permite ver la composición.
-La opacidad opcional de 70 a 100 % conserva los clics sobre el teclado.
+![Calibración de Voz antes de empezar. El botón Calibrar voz inicia las indicaciones.](screenshots/guia-060/voz.png)
 
-En Cámara flotante podés elegir esquina, tamaño y «Evitar que la cámara tape
-el cursor». La cámara se aparta a una esquina libre y regresa cuando la zona
-principal lleva despejada el intervalo elegido. Un margen de retorno mayor y
-una espera entre movimientos evitan oscilaciones. El teclado tiene prioridad
-de espacio sobre la cámara, incluso cuando desactivás la evasión del cursor.
-Estas preferencias visuales se guardan por equipo mediante la configuración
-existente; las preferencias del teclado se conservan en el perfil.
+### Preparar la voz
 
-## Dictado y calibración de voz
+En **Calibración → Voz**, pulsá **Calibrar voz**. Hacé tres segundos de silencio, leé las cuatro frases indicadas y tocá **Guardar en mi perfil** al terminar. La medición ayuda a reconocer tu voz y el ruido del ambiente. En Configuración, **Small** es el modelo recomendado en la aplicación. **Base** o **Tiny** son alternativas para equipos más lentos. Podés agregar nombres propios y palabras frecuentes.
 
-En Configuración → Básico → Dictado por voz, podés usar el micrófono
-predeterminado de Windows o buscar y elegir otro. Guardá la configuración.
-La aplicación incluye los cuatro modelos de Whisper y el reconocimiento de
-voz. Small es la opción recomendada. Base y Tiny consumen menos recursos.
+### Dictar y corregir
 
-En Calibración → Voz, tocá Calibrar voz. Quedate en silencio tres segundos y
-leé las cuatro frases que aparecen. Guardá el resultado en tu perfil. Se
-guardan medidas de ruido, precisión y una huella que ayuda a detectar el final
-de tu frase aunque haya otras voces de fondo. El audio se procesa en memoria.
+1. Iniciá el control manualmente. Abrí un borrador en Bloc de notas o WhatsApp, seleccioná el campo donde querés escribir y tocá **Dictar** en el teclado virtual. El botón usa el campo que reconoció el teclado, también en WhatsApp de escritorio.
+2. Cuando aparezca **Escuchando…**, decí una frase. Un silencio termina la captura. También podés terminarla con tu gesto de clic o cancelarla con tu gesto de pausa. F8 detiene el control y la escucha.
+3. Para editar, decí como frase independiente **«borrar dos palabras»**, **«borrar todo»** o **«deshacer»**. Revisá el texto antes de enviarlo. La opción de palabra final para pulsar Enter está vacía inicialmente.
 
-Para dictar, marcá la casilla de Dictado por voz y guardá. Iniciá el control
-manualmente, hacé click con CONFA en un campo editable y hablá al ver
-«Escuchando…». También podés asignar la acción Dictar a un gesto. Un silencio
-termina la frase. El gesto de click termina el dictado después de empezar a
-hablar. Ambas cejas cancelan el dictado. Pausar desde la bandeja o pulsar F8
-interrumpe la escucha. El arranque automático del control sólo habilita Nariz u Ojos.
+Si cambiaste de ventana o de campo mientras hablabas, seleccioná otra vez el destino antes de volver a dictar. La escucha y la transcripción se procesan en la PC.
 
-Decí sólo «borrar», «borrar dos palabras», «borrar tres letras», «borrar todo»
-o «deshacer» para editar. La palabra final que presiona Enter se puede configurar
-en Configuración. Por defecto está vacía. La ayuda completa está en Gestos y acciones.
+## Dar órdenes con Gema
 
-Si falta el micrófono, está ocupado o se desconecta, revisá la conexión y usá
-Buscar micrófonos. El botón Permisos de micrófono en Windows abre la configuración
-de privacidad. Activá el acceso al micrófono para aplicaciones de escritorio
-si querés dictar. Podés seguir usando Nariz y Ojos con el dictado desmarcado.
+Gema entiende comandos en español para manejar Windows. Para usarla, habilitá el dictado del perfil, guardá la configuración e iniciá el control manualmente.
 
-## Gema, la asistente de voz
+### Llamarla con la voz o con un gesto
 
-Gema maneja Windows con comandos dichos en español: abrir programas del menú
-Inicio, buscar en Google, cerrar o minimizar ventanas, cambiar el volumen, pausar
-la música, escribir un texto o decir la hora. Funciona sin Internet y sólo entiende
-una lista cerrada de comandos: nunca ejecuta otra cosa.
+En **Configuración → Básico → Dictado por voz**, marcá **Activar a Gema diciendo «Oye Gema»** y guardá. Con el control activo y sin pausa, decí **«Oye Gema»**, esperá el pitido y hacé el pedido. También podés decir la orden completa, por ejemplo **«Oye Gema, subí el volumen»**.
 
-Para usarla, el dictado por voz tiene que estar activado. En Gestos y acciones,
-asigná «Hablar con Gema» a un gesto. Con el control activo, hacé ese gesto: vas a
-ver «Gema te escucha…». Decí el comando, por ejemplo «abrir Bloc de notas», y
-Gema responde en el aviso («Gema: abriendo Bloc de notas.»). El gesto de click
-termina la escucha y el de pausa la cancela, igual que en el dictado. La lista
-completa de comandos está en Gestos y acciones.
+![La casilla que habilita «Oye Gema» está junto a las preferencias de dictado.](screenshots/guia-060/gema.png)
 
-También podés llamarla con la voz. En Configuración → Básico → Dictado por voz,
-marcá «Activar a Gema diciendo «Oye Gema»» y guardá. Con el control activo y sin
-pausa, decí «Oye Gema» y esperá el pitido, o decí todo junto: «Oye Gema, subí el
-volumen». Los pedidos simples (volumen, hora, ventanas, música) se hacen enseguida;
-abrir, buscar y escribir tardan unos segundos más porque Gema vuelve a escuchar la
-frase con más precisión. Mientras escucha, la línea de estado dice «Decí «Oye Gema»
-para hablarle a Gema» y Windows muestra el micrófono en uso. En pausa, con F8 o sin
-control activo, el micrófono se cierra. Sólo se revisan frases cortas, en esta PC,
-y nunca se guarda audio. Gema no distingue quién habla: cualquiera que diga
-«Oye Gema» cerca del micrófono la activa. Una charla o la tele de fondo no la activan
-si no dicen «Oye Gema», pero hacen trabajar más a la computadora.
+Si te resulta más cómodo, asigná **Hablar con Gema** a un gesto en **Gestos y acciones**. Hacé el gesto, esperá **Gema te escucha…** y decí el pedido. La respuesta aparece en el aviso de la aplicación.
 
-## Datos, importación y actualización
+### Comandos para empezar
 
-Los datos están en `%LOCALAPPDATA%\CONFA` (si venís de HeadMouse, la carpeta `%LOCALAPPDATA%\HeadMouse` se renombra sola la primera vez que abrís CONFA): profiles, último perfil, métricas,
-experimentos, diagnósticos, logs y startup.json. No se guardan fotos ni vídeo.
-El programa usa los modelos incluidos en la instalación y procesa el dictado
-sin conexión. Las descargas gráficas quedan disponibles para reparar modelos
-faltantes.
+- **«Abrir Bloc de notas»** abre una aplicación del menú Inicio. Para abrir otro programa, usá su nombre.
+- **«Minimizar»** actúa sobre la ventana que está adelante. **«Mostrar escritorio»** permite ver el escritorio de Windows.
+- **«Subir volumen»**, **«silenciar»** y **«siguiente canción»** controlan el sonido y la reproducción.
+- **«Qué hora es»** muestra la hora. **«Buscar recetas de empanadas»** abre una búsqueda web en el navegador.
 
-Desde el código fuente se copian los perfiles antiguos de data de forma verificable.
-En una instalación nueva, usar Importar perfiles anteriores en Inicio y accesibilidad
-y elegir la carpeta anterior de HeadMouse o data. Los originales no se borran.
-Si ya existe un perfil diferente con el mismo identificador, se conserva el
-existente y la copia en migration-conflicts; revisar antes de reemplazar manualmente.
+El reconocimiento de la orden se hace localmente. La búsqueda web usa Internet. Cuando la llamada por voz está habilitada y el control está activo, el micrófono escucha la frase de activación. Otra persona cercana también puede decirla. Pausar o detener el control interrumpe esa escucha.
 
-Para actualizar, cerrar CONFA y ejecutar el nuevo instalador. Conserva los
-datos del usuario. No copiar perfiles dentro de la carpeta de programa. Se puede
-hacer una copia de seguridad de la carpeta de datos con la aplicación cerrada.
+## Inicio con Windows y cierre
 
-## Prueba guiada después de actualizar
+Después de guardar la primera calibración válida, podés elegir que CONFA se abra al iniciar sesión. Para cambiarlo después, entrá en **Configuración → Básico → Inicio y accesibilidad**.
 
-1. Cerrá CONFA y conservá una copia de `%LOCALAPPDATA%\CONFA` antes de
-   actualizar. Abrí el instalador v0.6.0 y mantené la carpeta de la instalación
-   anterior. Los perfiles, las calibraciones y el diccionario están fuera de
-   esa carpeta.
-2. Abrí CONFA, elegí tu perfil y revisá Nariz y Ojos por separado. Confirmá
-   que aparece la calibración guardada. En Diagnóstico revisá la cámara y los
-   gestos. Activá el control sólo al confirmar y comprobá que F8 lo detiene.
-3. Abrí un documento temporal en Bloc de notas. Con el control activo, enfocá
-   el campo y probá ABC, números, símbolos, Ñ, tildes, Enter y retroceso.
-   Si habilitaste el aprendizaje, escribí `CONFA ` y después `CON`.
-   Elegí la sugerencia y comprobá el texto. El Bloc clásico usa la lectura
-   acotada de la línea cuando Windows no ofrece un patrón de cursor.
-4. Probá por separado un formulario del navegador y un borrador de WhatsApp
-   Web. Comprobá que el foco no cambia y que un campo de contraseña no muestra
-   sugerencias ni permite dictar. El comportamiento depende de lo que el
-   campo expone a Windows.
-5. Si querés usar voz, activá el dictado del perfil y seleccioná Dictar en
-   el teclado. Probá una frase inocua, cancelá con tu gesto de pausa y
-   comprobá que el indicador de escucha se apaga.
-6. Si elegís iniciar con Windows, verificá la opción en Inicio y
-   accesibilidad. En el próximo inicio de sesión comprobá que se abre con el
-   perfil esperado y que el control espera confirmación cuando sólo elegiste
-   la apertura automática.
+![Preferencias de inicio. La apertura, el perfil recordado y la activación del seguimiento tienen controles independientes.](screenshots/guia-060/inicio-windows.png)
 
-## Desinstalar y resolver problemas
+- **Iniciar CONFA automáticamente con Windows** abre el programa al entrar en tu sesión. **Recordar el último perfil elegido** recupera tu selección. Pulsá **Guardar preferencias de inicio**.
+- **Activar automáticamente el seguimiento** requiere autorización adicional, un perfil compatible y una señal estable. Elegí el perfil y confirmá si querés habilitarlo. El joystick ocular y el modo Directo requieren confirmación manual. Si movés la edición portable, abrila desde la nueva ruta y guardá de nuevo la preferencia de inicio.
+- **Pausar** deja el seguimiento en pausa. **Detener control** o **F8** detienen la salida y apagan la cámara. Con CONFA en foco también podés usar **Escape**. **Ctrl+Mayús+Intro** abre la confirmación de activación desde el teclado. Usá Tab y Espacio para elegir y confirmar.
+- **Salir completamente** en el menú de bandeja cierra la aplicación. Si elegiste iniciar minimizado, la X puede ocultar la ventana. Para volver, buscá CONFA entre los iconos de Windows. **Ver estado** indica si F8 está registrado globalmente.
 
-Usar Aplicaciones instaladas de Windows o Desinstalar CONFA en Inicio.
-Se elimina el programa y su entrada de inicio automático. Los datos personales
-se conservan para reinstalar; borrarlos manualmente sólo si se desea perderlos.
+## Diagnóstico, actualización y ayuda
 
-- Cámara ocupada: cerrar Cámara, videollamadas y otras instancias que la usen.
-- Cámara no detectada: revisar permisos de cámara y dispositivo en Configuración.
-- Calibración incompatible: recalibrar en el equipo/pantalla/cámara actuales.
-- Gestos rechazados: revisar Diagnóstico, fuente, neutral, señal y repeticiones;
-  no copiar umbrales de otra persona o método.
-- No inicia automáticamente: revisar casilla, perfil, autorización y permisos
-  de inicio en Administrador de tareas de Windows. Se inicia después de ingresar,
-  no antes de iniciar sesión; Windows puede demorar las aplicaciones de inicio.
-- No hay icono visible: revisar los iconos ocultos de notificaciones de Windows.
-- Error de arranque: conservar `%LOCALAPPDATA%\CONFA\logs\confa.log` y
-  los registros fault. Compartirlos sólo tras revisar los datos personales incluidos.
+En **Diagnóstico**, pulsá **Iniciar diagnóstico** para revisar la cámara y los gestos con el puntero del sistema detenido. Para pedir ayuda, **Exportar diagnóstico** guarda un ZIP con configuración, registros y señales numéricas. Revisá el contenido antes de compartirlo. Las capturas de esta guía usan un perfil y texto de ejemplo.
 
-## Elegir cómo se mueve el cursor con los ojos
+![Controles de Diagnóstico. Exportar diagnóstico permite elegir dónde guardar el ZIP.](screenshots/guia-060/diagnostico.png)
 
-En Inicio, elegí Ojos y luego Directo o Joystick. El cambio detiene el control y conserva las preferencias de cada modalidad. Ojos requiere confirmación cada vez que se inicia el control.
+### Si algo no responde
 
-- Directo mueve el puntero hacia la posición estimada de la mirada. En Calibración → Ojos, seguí los puntos de pantalla y completá la comprobación del ajuste.
-- Joystick mueve el puntero cuando mirás hacia un borde de la pantalla: izquierda, derecha, arriba o abajo. Se mueve desde donde esté y cada vez más rápido mientras sostenés la mirada. Mirar la zona central de la pantalla lo deja quieto, así que podés mirar lo que estás haciendo sin moverlo. Cuatro marcas chicas cerca de los bordes muestran qué dirección se está reconociendo; no reciben clics. En Calibración → Ojos → Calibrar movimiento, seguí una sola vez los cinco puntos: el centro de la pantalla y uno cerca de cada borde. Después de activar, o de mirar fuera de la pantalla, mirá un instante la zona central para habilitar el movimiento. Un eje que la cámara no distingue queda bloqueado. Si el otro es utilizable, el movimiento se limita a ese eje y sin clics. Podés repetir solo el eje pendiente.
-- Recentrar mirada ajusta el centro del joystick y permite revertirlo. Después de un cambio importante de postura, repetí la calibración.
-- Ctrl+Alt+K abre el teclado existente. La permanencia se habilita en Configuración → Ojos y se ofrece con calibración adecuada. F8 detiene el control y apaga la cámara.
+- **Cámara ocupada o sin imagen.** Cerrá videollamadas y la app Cámara. Revisá el permiso de cámara para aplicaciones de escritorio en Windows y el dispositivo elegido en Configuración.
+- **El joystick está activo y el cursor sigue quieto.** Mirá brevemente al centro, luego hacia una marca habilitada. Revisá si la flecha está gris y si Inicio pide repetir el eje. Si persiste, detené el control y exportá el diagnóstico.
+- **Un gesto cuesta demasiado.** Revisá que esté seleccionado en el método correcto. Probá **Movimientos suaves** o **Recalibrar sólo ese gesto**. En **Métricas** podés revisar tus sesiones y en **Experimentos** hacer las tareas de prueba que ofrezca tu edición.
+- **El teclado o el dictado no encuentran el campo.** Volvé a seleccionarlo y probá en Bloc de notas. Revisá el micrófono y sus permisos si la aplicación no recibe voz.
+
+### Conservar los perfiles
+
+Para actualizar, salí completamente y ejecutá el nuevo instalador. Los perfiles, calibraciones y diccionarios están en **%LOCALAPPDATA%\CONFA**, separados del programa. Con CONFA cerrado, podés copiar esa carpeta como respaldo. Al pasar desde HeadMouse, CONFA intenta adoptar la carpeta de datos anterior.
+
+Para recuperar perfiles de otra instalación, usá **Importar perfiles anteriores** en Inicio y accesibilidad. Para desinstalar, usá **Aplicaciones instaladas** de Windows. Los datos personales quedan disponibles para reinstalar.
