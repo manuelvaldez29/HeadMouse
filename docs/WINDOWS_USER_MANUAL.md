@@ -2,7 +2,7 @@
 
 Guía de usuario para Windows · Versión 0.6.0
 
-CONFA significa **Controlador Facial y Asistente de voz**. El proyecto se conocía como HeadMouse. Con una webcam podés mover el puntero, elegir acciones con gestos y escribir. Si tenés micrófono, también podés dictar y pedirle a Gema que maneje funciones de Windows.
+CONFA significa **Controlador Facial y Asistente de voz**. Con una webcam podés mover el puntero, elegir acciones con gestos y escribir. Si tenés micrófono, también podés dictar y pedirle a Gema que maneje funciones de Windows.
 
 ![Inicio con un perfil de ejemplo y el método Ojos seleccionado. El botón principal indica el próximo paso.](screenshots/guia-060/inicio.png)
 
@@ -142,6 +142,6 @@ En **Diagnóstico**, pulsá **Iniciar diagnóstico** para revisar la cámara y l
 
 ### Conservar los perfiles
 
-Para actualizar, salí completamente y ejecutá el nuevo instalador. Los perfiles, calibraciones y diccionarios están en **%LOCALAPPDATA%\CONFA**, separados del programa. Con CONFA cerrado, podés copiar esa carpeta como respaldo. Al pasar desde HeadMouse, CONFA intenta adoptar la carpeta de datos anterior.
+Para actualizar, salí completamente y ejecutá el nuevo instalador. Los perfiles, calibraciones y diccionarios están en **%LOCALAPPDATA%\CONFA**, separados del programa. Con CONFA cerrado, podés copiar esa carpeta como respaldo. Si actualizás desde una versión anterior, CONFA busca tus datos al abrirse por primera vez.
 
 Para recuperar perfiles de otra instalación, usá **Importar perfiles anteriores** en Inicio y accesibilidad. Para desinstalar, usá **Aplicaciones instaladas** de Windows. Los datos personales quedan disponibles para reinstalar.
